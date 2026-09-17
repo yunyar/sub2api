@@ -119,6 +119,11 @@ func RegisterUserRoutes(
 			announcements.POST("/:id/read", h.Announcement.MarkRead)
 		}
 
+		community := authenticated.Group("/community-qrcodes")
+		{
+			community.GET("", h.CommunityQRCode.List)
+		}
+
 		// 卡密兑换
 		redeem := authenticated.Group("/redeem")
 		{
