@@ -6,6 +6,7 @@ import batchImage from './batchImage'
 import admin from './admin'
 import misc from './misc'
 import community from './community'
+import playground from './playground'
 
 export default {
   ...landing,
@@ -15,6 +16,7 @@ export default {
   ...batchImage,
   admin,
   ...misc,
+  ...playground,
   ...community,
   nav: {
     ...common.nav,

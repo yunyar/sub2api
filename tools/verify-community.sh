@@ -17,7 +17,9 @@ fi
 
 "${pnpm_cmd[@]}" --dir frontend run check:i18n
 "${pnpm_cmd[@]}" --dir frontend run typecheck
-"${pnpm_cmd[@]}" --dir frontend exec vitest run src/api/__tests__/communityQRCodes.spec.ts
+"${pnpm_cmd[@]}" --dir frontend exec vitest run \
+  src/api/__tests__/communityQRCodes.spec.ts \
+  src/api/__tests__/playground.spec.ts
 
 if [[ -n "${GO_BIN:-}" ]]; then
   go_bin="$GO_BIN"
@@ -28,4 +30,5 @@ else
   exit 1
 fi
 
-(cd backend && "$go_bin" test -tags unit ./internal/service -run CommunityQRCodes)
+(cd backend && "$go_bin" test ./internal/server/routes -run Playground)
+(cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')
