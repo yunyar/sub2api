@@ -196,6 +196,17 @@ export interface CustomMenuItem {
   sort_order: number
 }
 
+export interface CommunityQRCode {
+  id: string
+  name: string
+  description: string
+  image_data: string
+  enabled: boolean
+  sort_order: number
+  starts_at?: string | null
+  expires_at?: string | null
+}
+
 export interface CustomEndpoint {
   name: string
   endpoint: string

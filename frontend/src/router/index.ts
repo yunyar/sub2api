@@ -289,6 +289,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/community',
+    name: 'CommunityQRCodes',
+    component: () => import('@/views/user/CommunityQRCodesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Community QR Codes',
+      titleKey: 'communityQRCodes.title'
+    }
+  },
+  {
     path: '/subscriptions',
     name: 'Subscriptions',
     component: () => import('@/views/user/SubscriptionsView.vue'),
@@ -547,6 +558,18 @@ const routes: RouteRecordRaw[] = [
       title: 'Announcements',
       titleKey: 'admin.announcements.title',
       descriptionKey: 'admin.announcements.description'
+    }
+  },
+  {
+    path: '/admin/community-qrcodes',
+    name: 'AdminCommunityQRCodes',
+    component: () => import('@/views/admin/CommunityQRCodesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Community QR Code Management',
+      titleKey: 'adminCommunityQRCodes.title',
+      descriptionKey: 'adminCommunityQRCodes.description'
     }
   },
   {

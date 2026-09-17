@@ -49,6 +49,12 @@ func RegisterAdminRoutes(
 		// 公告管理
 		registerAnnouncementRoutes(admin, h)
 
+		community := admin.Group("/community-qrcodes")
+		{
+			community.GET("", h.CommunityQRCode.AdminList)
+			community.PUT("", h.CommunityQRCode.AdminUpdate)
+		}
+
 		// OpenAI OAuth
 		registerOpenAIOAuthRoutes(admin, h)
 
