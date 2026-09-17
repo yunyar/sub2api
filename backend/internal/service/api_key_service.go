@@ -576,6 +576,48 @@ func (s *APIKeyService) List(ctx context.Context, userID int64, params paginatio
 	return keys, pagination, nil
 }
 
+// ResolvePlaygroundKey returns a usable persisted key for the authenticated
+// user and selected group. A persisted key is required because usage logs and
+// billing records reference api_keys by ID.
+func (s *APIKeyService) ResolvePlaygroundKey(ctx context.Context, userID, groupID int64) (*APIKey, error) {
+	groups, err := s.GetAvailableGroups(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	allowed := false
+	for i := range groups {
+		if groups[i].ID == groupID {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return nil, ErrGroupNotAllowed
+	}
+
+	keys, _, err := s.apiKeyRepo.ListByUserID(ctx, userID, pagination.PaginationParams{
+		Page:     1,
+		PageSize: 100,
+	}, APIKeyListFilters{GroupID: &groupID})
+	if err != nil {
+		return nil, fmt.Errorf("list playground api keys: %w", err)
+	}
+
+	for i := range keys {
+		key := &keys[i]
+		if key.Name == "Playground" && key.Status == StatusAPIKeyActive && !key.IsExpired() && !key.IsQuotaExhausted() {
+			return key, nil
+		}
+	}
+
+	return s.Create(ctx, userID, CreateAPIKeyRequest{
+		Name:    "Playground",
+		GroupID: &groupID,
+		Quota:   0,
+	})
+}
+
 func (s *APIKeyService) listByCurrentConcurrency(ctx context.Context, userID int64, params pagination.PaginationParams, filters APIKeyListFilters) ([]APIKey, *pagination.PaginationResult, error) {
 	repo, ok := s.apiKeyRepo.(apiKeyAllByUserIDLister)
 	if !ok {

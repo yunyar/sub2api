@@ -1,4 +1,4 @@
-name: Community image
+name: Custom image
 
 on:
   push:
@@ -66,6 +66,8 @@ jobs:
             VERSION=community-${{ github.sha }}
             COMMIT=${{ github.sha }}
           tags: |
+            ${{ steps.image.outputs.name }}:custom-latest
+            ${{ steps.image.outputs.name }}:custom-${{ github.sha }}
             ${{ steps.image.outputs.name }}:community-latest
             ${{ steps.image.outputs.name }}:community-${{ github.sha }}
           cache-from: type=gha
