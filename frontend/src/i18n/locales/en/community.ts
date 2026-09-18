@@ -4,6 +4,7 @@ export default {
     communityQRCodesAdmin: 'Community QR Codes'
   },
   communityQRCodes: {
+    enlarge: 'Click to enlarge. Touch and hold to save.',
     title: 'Community QR Codes',
     subtitle: 'Scan a QR code to join a community group.',
     emptyTitle: 'No active groups',

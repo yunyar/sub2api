@@ -297,7 +297,7 @@ func TestListPlazaGroups_GroupImagePriceOverridesChannelPricing(t *testing.T) {
 	require.InDelta(t, 0.3, tierPrices["4K"], 1e-9, "4K 分组未配,回落渠道档位价")
 
 	plain := byName["g-plain"]
-	require.False(t, plain.ImageRateIndependent)
+	require.True(t, plain.ImageRateIndependent)
 	require.Len(t, plain.Models, 1)
 	pp := plain.Models[0].Pricing
 	require.NotNil(t, pp)

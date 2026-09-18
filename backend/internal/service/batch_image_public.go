@@ -1013,24 +1013,7 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 		if !group.AllowBatchImageGeneration {
 			return nil, ErrBatchImageGroupDisabled
 		}
-		groupDefaultMultiplier := group.RateMultiplier
-		if groupDefaultMultiplier < 0 {
-			groupDefaultMultiplier = 0
-		}
-		effectiveGroupMultiplier := groupDefaultMultiplier
-		if s.UserGroupRateRepo != nil {
-			userRate, rateErr := s.UserGroupRateRepo.GetByUserAndGroup(ctx, owner.UserID, group.ID)
-			if rateErr != nil {
-				return nil, ErrBatchImageSettlementPricingMissing
-			}
-			if userRate != nil {
-				effectiveGroupMultiplier = *userRate
-			}
-		}
-		groupMultiplier = effectiveGroupMultiplier
-		if group.ImageRateIndependent {
-			groupMultiplier = group.ImageRateMultiplier
-		}
+		groupMultiplier = group.ImageRateMultiplier
 		if groupMultiplier < 0 {
 			groupMultiplier = 0
 		}

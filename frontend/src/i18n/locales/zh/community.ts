@@ -4,6 +4,7 @@ export default {
     communityQRCodesAdmin: '群聊二维码管理'
   },
   communityQRCodes: {
+    enlarge: '点击放大二维码，长按图片可保存',
     title: '群聊二维码',
     subtitle: '扫描二维码加入群聊，获取通知和交流支持。',
     emptyTitle: '暂无可用群聊',

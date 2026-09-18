@@ -1,164 +1,115 @@
 <template>
   <AppLayout>
-    <div class="playground-shell flex min-h-[calc(100vh-8rem)] flex-col overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-dark-700 dark:bg-dark-800">
-      <header class="flex flex-wrap items-end gap-3 border-b border-gray-200 px-4 py-3 dark:border-dark-700 sm:px-5">
-        <label class="min-w-[12rem] flex-1 sm:max-w-xs">
-          <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('playground.group') }}</span>
-          <select v-model.number="selectedGroupId" class="input h-10 w-full" :disabled="loadingGroups || busy">
-            <option :value="0" disabled>{{ t('playground.selectGroup') }}</option>
-            <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option>
-          </select>
-        </label>
-        <label class="min-w-[13rem] flex-[1.4] sm:max-w-md">
-          <span class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('playground.model') }}</span>
-          <select v-model="selectedModel" class="input h-10 w-full" :disabled="loadingModels || !selectedGroupId || busy">
-            <option value="" disabled>{{ loadingModels ? t('common.loading') : t('playground.selectModel') }}</option>
-            <option v-for="model in models" :key="model.id" :value="model.id">{{ model.id }}</option>
-          </select>
-        </label>
-        <div class="ml-auto pb-2 text-right">
-          <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t('playground.balance') }}</span>
-          <strong class="text-sm text-gray-900 dark:text-white">${{ balance.toFixed(4) }}</strong>
+    <div class="studio">
+      <aside class="history-panel" :class="{ 'mobile-open': historyOpen }">
+        <div class="flex items-center justify-between">
+          <h1 class="text-lg font-semibold">{{ t('playground.title') }}</h1>
+          <button class="text-sm lg:hidden" @click="historyOpen = false">{{ t('common.close') }}</button>
         </div>
-      </header>
-
-      <div class="flex items-center justify-between border-b border-gray-200 px-4 dark:border-dark-700 sm:px-5">
-        <div class="flex" role="tablist">
-          <button
-            v-for="tab in tabs"
-            :key="tab.value"
-            type="button"
-            class="border-b-2 px-4 py-3 text-sm font-medium transition-colors"
-            :class="activeTab === tab.value ? 'border-primary-500 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
-            :disabled="busy"
-            @click="activeTab = tab.value"
-          >{{ tab.label }}</button>
+        <button class="btn btn-primary mt-5 w-full" :disabled="busy" @click="newConversation">＋ {{ t('playground.newChat') }}</button>
+        <p class="mt-6 text-xs font-medium text-gray-400">{{ t('playground.history') }}</p>
+        <div class="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
+          <p v-if="!conversations.length" class="py-5 text-sm text-gray-400">{{ t('playground.noHistory') }}</p>
+          <div v-for="item in conversations" :key="item.id" class="history-item" :class="{ selected: current.id === item.id }">
+            <button class="min-w-0 flex-1 text-left" :disabled="busy" @click="openConversation(item)">
+              <span class="block truncate text-sm font-medium">{{ item.title }}</span>
+              <span class="mt-1 block truncate text-xs text-gray-400">{{ formatExpiry(item.expiresAt) }}</span>
+            </button>
+            <button class="rounded p-2 text-gray-400 hover:text-red-500" :disabled="busy" :aria-label="t('common.delete')" @click="deleteTarget = item.id">×</button>
+          </div>
         </div>
-        <button
-          v-if="activeTab === 'chat' && messages.length"
-          type="button"
-          class="rounded p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white"
-          :title="t('playground.clear')"
-          :aria-label="t('playground.clear')"
-          :disabled="streaming"
-          @click="messages = []"
-        >
-          <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673A2.25 2.25 0 0115.916 21H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-        </button>
-      </div>
+        <p class="retention-note">{{ t('playground.retention') }}</p>
+        <button class="mt-3 text-left text-xs text-gray-500 hover:text-primary-500" :disabled="busy" @click="refreshHistory">{{ t('playground.refreshHistory') }}</button>
+      </aside>
 
-      <section v-if="activeTab === 'chat'" class="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_17rem]">
-        <div class="flex min-h-[34rem] min-w-0 flex-col">
-          <div ref="messageViewport" class="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7">
-            <div v-if="!messages.length" class="flex h-full min-h-72 items-center justify-center text-center text-sm text-gray-400">
-              {{ selectedModel ? t('playground.emptyChat') : t('playground.selectModel') }}
+      <main class="conversation-panel">
+        <header class="studio-toolbar">
+          <button class="btn btn-secondary lg:hidden" @click="historyOpen = !historyOpen">☰</button>
+          <label class="min-w-0 flex-1 sm:flex-none">
+            <span class="toolbar-label">{{ t('playground.group') }}</span>
+            <select v-model.number="current.groupId" class="toolbar-select" :disabled="busy || loadingGroups">
+              <option :value="0" disabled>{{ t('playground.selectGroup') }}</option>
+              <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option>
+            </select>
+          </label>
+          <label class="min-w-0 flex-1">
+            <span class="toolbar-label">{{ t('playground.model') }}</span>
+            <select v-model="current.model" class="toolbar-select w-full" :disabled="busy || loadingModels">
+              <option value="" disabled>{{ loadingModels ? t('common.loading') : t('playground.selectModel') }}</option>
+              <option v-for="model in models" :key="model.id" :value="model.id">{{ model.id }}</option>
+            </select>
+          </label>
+          <div class="ml-auto hidden text-right sm:block"><span class="toolbar-label">{{ t('playground.balance') }}</span><span class="text-sm font-medium tabular-nums">${{ (authStore.user?.balance ?? 0).toFixed(4) }}</span></div>
+        </header>
+
+        <div ref="viewport" class="conversation-scroll">
+          <div v-if="!current.messages.length && !currentImages.length" class="welcome">
+            <div class="welcome-icon">✦</div>
+            <h2 class="text-2xl font-semibold tracking-tight sm:text-3xl">{{ t('playground.welcome') }}</h2>
+            <p class="mt-3 max-w-md text-sm leading-6 text-gray-500">{{ t('playground.welcomeDescription') }}</p>
+            <div class="mt-8 grid w-full max-w-lg gap-3 sm:grid-cols-2">
+              <button class="suggestion" @click="mode = 'chat'; draft = t('playground.chatSuggestion')">{{ t('playground.chatSuggestion') }} ↗</button>
+              <button class="suggestion" @click="mode = 'images'; draft = t('playground.imageSuggestion')">{{ t('playground.imageSuggestion') }} ↗</button>
             </div>
-            <div v-else class="mx-auto max-w-3xl space-y-6">
-              <article v-for="message in messages" :key="message.id" :class="message.role === 'user' ? 'flex justify-end' : ''">
-                <div v-if="message.role === 'user'" class="max-w-[85%] whitespace-pre-wrap break-words rounded-lg bg-primary-600 px-4 py-3 text-sm leading-6 text-white">{{ message.content }}</div>
-                <div v-else class="group min-w-0 max-w-none text-sm leading-7 text-gray-800 dark:text-gray-100">
+          </div>
+          <div v-else class="mx-auto w-full max-w-3xl space-y-7">
+            <template v-for="message in current.messages" :key="message.id">
+              <article :class="message.role === 'user' ? 'flex justify-end' : 'assistant-message'">
+                <div v-if="message.role === 'user'" class="user-bubble">{{ message.content }}</div>
+                <div v-else>
+                  <span class="mb-2 block text-xs font-semibold text-gray-400">{{ current.model }}</span>
                   <div class="playground-markdown" v-html="renderMarkdown(message.content || (streaming ? '…' : ''))"></div>
-                  <button
-                    v-if="message.content && !streaming"
-                    type="button"
-                    class="mt-2 rounded p-1.5 text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-700 group-hover:opacity-100 dark:hover:bg-dark-700 dark:hover:text-gray-200"
-                    :title="t('playground.copy')"
-                    :aria-label="t('playground.copy')"
-                    @click="copyMessage(message.content)"
-                  >
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V10.875c0-.621.504-1.125 1.125-1.125H8.25m7.5 7.5h3.375c.621 0 1.125-.504 1.125-1.125V6.108c0-.298-.119-.585-.33-.796l-4.232-4.232a1.125 1.125 0 00-.796-.33H9.375c-.621 0-1.125.504-1.125 1.125V6.75m7.5 10.5H9.375A1.125 1.125 0 018.25 16.125V6.75m12 0h-3.375a1.125 1.125 0 01-1.125-1.125V2.25" /></svg>
-                  </button>
+                  <button v-if="message.content" class="mt-2 text-xs text-gray-400 hover:text-primary-500" @click="copyMessage(message.content)">{{ t('playground.copy') }}</button>
                 </div>
               </article>
-              <p v-if="chatError" class="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">{{ chatError }}</p>
-            </div>
-          </div>
-
-          <form class="border-t border-gray-200 p-4 dark:border-dark-700 sm:px-7" @submit.prevent="sendMessage">
-            <div class="mx-auto flex max-w-3xl items-end gap-2 rounded-lg border border-gray-300 bg-white p-2 focus-within:border-primary-500 focus-within:ring-2 focus-within:ring-primary-500/15 dark:border-dark-600 dark:bg-dark-900">
-              <textarea
-                v-model="draft"
-                rows="1"
-                class="max-h-40 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
-                :placeholder="t('playground.messagePlaceholder')"
-                :disabled="streaming"
-                @keydown.enter.exact.prevent="sendMessage"
-              ></textarea>
-              <button
-                v-if="streaming"
-                type="button"
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-900"
-                :title="t('playground.stop')"
-                :aria-label="t('playground.stop')"
-                @click="stopStream"
-              ><span class="h-3 w-3 rounded-sm bg-current"></span></button>
-              <button
-                v-else
-                type="submit"
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary-600 text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
-                :disabled="!canSend"
-                :title="t('playground.send')"
-                :aria-label="t('playground.send')"
-              ><svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.27 3.125A59.77 59.77 0 0121.485 12 59.768 59.768 0 013.27 20.875L6 12zm0 0h7.5" /></svg></button>
-            </div>
-          </form>
-        </div>
-
-        <aside class="border-t border-gray-200 p-4 dark:border-dark-700 lg:border-l lg:border-t-0">
-          <label class="block">
-            <span class="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('playground.systemPrompt') }}</span>
-            <textarea v-model="systemPrompt" rows="5" class="input w-full resize-y text-sm" :placeholder="t('playground.systemPromptPlaceholder')" :disabled="streaming"></textarea>
-          </label>
-          <label class="mt-5 block">
-            <span class="mb-2 flex justify-between text-xs font-medium text-gray-600 dark:text-gray-300"><span>{{ t('playground.temperature') }}</span><span>{{ temperature.toFixed(1) }}</span></span>
-            <input v-model.number="temperature" type="range" min="0" max="2" step="0.1" class="w-full accent-primary-600" :disabled="streaming" />
-          </label>
-        </aside>
-      </section>
-
-      <section v-else class="grid min-h-0 flex-1 lg:grid-cols-[20rem_minmax(0,1fr)]">
-        <form class="border-b border-gray-200 p-5 dark:border-dark-700 lg:border-b-0 lg:border-r" @submit.prevent="generateImages">
-          <label class="block">
-            <span class="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('playground.imagePrompt') }}</span>
-            <textarea v-model="imagePrompt" rows="7" class="input w-full resize-y text-sm" :placeholder="t('playground.imagePromptPlaceholder')" :disabled="generating"></textarea>
-          </label>
-          <div class="mt-4 grid grid-cols-2 gap-3">
-            <label>
-              <span class="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('playground.size') }}</span>
-              <select v-model="imageSize" class="input h-10 w-full" :disabled="generating"><option>1024x1024</option><option>1536x1024</option><option>1024x1536</option></select>
-            </label>
-            <label>
-              <span class="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('playground.quality') }}</span>
-              <select v-model="imageQuality" class="input h-10 w-full" :disabled="generating"><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
-            </label>
-            <label>
-              <span class="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('playground.count') }}</span>
-              <input v-model.number="imageCount" type="number" min="1" max="4" class="input h-10 w-full" :disabled="generating" />
-            </label>
-          </div>
-          <button type="submit" class="btn btn-primary mt-5 w-full" :disabled="!canGenerate">
-            {{ generating ? t('playground.generating') : t('playground.generate') }}
-          </button>
-          <p v-if="imageError" class="mt-3 text-sm text-red-600 dark:text-red-400">{{ imageError }}</p>
-        </form>
-
-        <div class="min-h-[30rem] overflow-y-auto p-5 sm:p-7">
-          <div v-if="generating" class="flex min-h-72 items-center justify-center"><LoadingSpinner /></div>
-          <div v-else-if="!images.length" class="flex min-h-72 items-center justify-center text-sm text-gray-400">{{ t('playground.noImages') }}</div>
-          <div v-else class="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-            <figure v-for="(image, index) in images" :key="image.url.slice(0, 80) + index" class="overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-900">
-              <img :src="image.url" :alt="image.revisedPrompt || imagePrompt" class="aspect-square w-full object-contain" />
-              <figcaption class="flex items-start gap-2 p-3">
-                <p class="line-clamp-2 min-w-0 flex-1 text-xs leading-5 text-gray-500 dark:text-gray-400">{{ image.revisedPrompt || imagePrompt }}</p>
-                <a :href="image.url" :download="`playground-${index + 1}.png`" class="rounded p-2 text-gray-500 hover:bg-gray-200 hover:text-gray-800 dark:hover:bg-dark-700 dark:hover:text-white" :title="t('playground.download')" :aria-label="t('playground.download')">
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-4.5-6L12 15m0 0-4.5-4.5M12 15V3" /></svg>
-                </a>
-              </figcaption>
-            </figure>
+              <div v-if="currentImages.some(image => image.messageId === message.id)" class="grid gap-4 sm:grid-cols-2">
+                <figure v-for="image in currentImages.filter(entry => entry.messageId === message.id)" :key="image.id" class="image-card">
+                  <button class="block w-full cursor-zoom-in bg-gray-50" :aria-label="t('playground.preview')" @click="preview = image"><img :src="image.url" :alt="image.prompt" class="max-h-96 w-full object-contain" /></button>
+                  <figcaption class="flex items-center justify-between gap-2 p-3">
+                    <span class="text-xs tabular-nums text-gray-500">{{ remaining(image.expiresAt) }}</span>
+                    <button class="text-sm font-medium text-primary-600" @click="downloadImage(image)">{{ t('playground.download') }}</button>
+                  </figcaption>
+                </figure>
+              </div>
+            </template>
+            <p v-if="generating" class="animate-pulse text-sm text-gray-500">{{ t('playground.generating') }}…</p>
           </div>
         </div>
-      </section>
+
+        <div class="composer-area">
+          <div class="mx-auto max-w-3xl">
+            <p v-if="error" role="alert" class="mb-3 text-sm text-red-500">{{ error }}</p>
+            <p v-if="saveError" role="alert" class="mb-3 text-sm text-amber-600">{{ saveError }} <button class="underline" :disabled="busy" @click="saveConversation">{{ t('playground.retrySave') }}</button></p>
+            <div v-if="settingsOpen" class="settings-panel">
+              <template v-if="mode === 'chat'">
+                <label class="col-span-2 text-xs">{{ t('playground.systemPrompt') }}<textarea v-model="current.systemPrompt" class="input mt-2 w-full" rows="2" :disabled="busy" /></label>
+                <label class="col-span-2 text-xs">{{ t('playground.temperature') }} · {{ current.temperature.toFixed(1) }}<input v-model.number="current.temperature" class="mt-3 w-full accent-primary-500" type="range" min="0" max="2" step="0.1" :disabled="busy" /></label>
+              </template>
+              <template v-else>
+                <label class="text-xs">{{ t('playground.size') }}<select v-model="imageSize" class="input mt-2 w-full" :disabled="busy"><option>1024x1024</option><option>1536x1024</option><option>1024x1536</option></select></label>
+                <label class="text-xs">{{ t('playground.quality') }}<select v-model="imageQuality" class="input mt-2 w-full" :disabled="busy"><option>auto</option><option>low</option><option>medium</option><option>high</option></select></label>
+              </template>
+            </div>
+            <form class="composer" @submit.prevent="send">
+              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t(mode === 'chat' ? 'playground.messagePlaceholder' : 'playground.imagePromptPlaceholder')" :disabled="busy" @keydown.enter.exact="onEnter" />
+              <div class="flex items-center justify-between gap-3 px-3 pb-3">
+                <div class="flex items-center gap-1">
+                  <button v-for="option in (['chat', 'images'] as const)" :key="option" type="button" class="mode-button" :class="{ active: mode === option }" :disabled="busy" @click="mode = option">{{ t(`playground.${option}`) }}</button>
+                  <button type="button" class="mode-button" :aria-expanded="settingsOpen" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
+                </div>
+                <button v-if="streaming" type="button" class="btn btn-secondary" @click="controller?.abort()">{{ t('playground.stop') }}</button>
+                <button v-else class="btn btn-primary" type="submit" :disabled="!canSend">{{ t(mode === 'images' ? 'playground.generate' : 'playground.send') }} ↑</button>
+              </div>
+            </form>
+            <p class="mt-3 text-center text-xs leading-5 text-gray-400">{{ t(mode === 'images' ? 'playground.imageRetention' : 'playground.retention') }}</p>
+          </div>
+        </div>
+      </main>
     </div>
+    <BaseDialog :show="Boolean(preview)" :title="t('playground.preview')" width="wide" :close-on-click-outside="true" @close="preview = null">
+      <template v-if="preview"><img :src="preview.url" :alt="preview.prompt" class="max-h-[65vh] w-full object-contain" /><button class="btn btn-primary mt-4" @click="downloadImage(preview)">{{ t('playground.download') }}</button></template>
+    </BaseDialog>
+    <BaseDialog :show="Boolean(deleteTarget)" :title="t('common.delete')" @close="deleteTarget = ''"><p>{{ t('playground.deleteConfirm') }}</p><button class="btn btn-primary mt-4" @click="deleteConversation">{{ t('common.delete') }}</button></BaseDialog>
   </AppLayout>
 </template>
 
@@ -168,180 +119,216 @@ import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { userGroupsAPI } from '@/api/groups'
-import { playgroundAPI, type PlaygroundImage, type PlaygroundMessage, type PlaygroundModel } from '@/api/playground'
+import { playgroundAPI, type PlaygroundModel, type PlaygroundMessage } from '@/api/playground'
+import { playgroundHistory, type Conversation } from '@/api/playgroundHistory'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
 
-type Tab = 'chat' | 'images'
-type UIMessage = { id: number; role: 'user' | 'assistant'; content: string }
-
+type ImageEntry = { id: string; conversationId: string; messageId: number; url: string; prompt: string; expiresAt: number }
 const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const groups = ref<Group[]>([])
 const models = ref<PlaygroundModel[]>([])
-const selectedGroupId = ref(0)
-const selectedModel = ref('')
+const conversations = ref<Conversation[]>([])
+const current = ref<Conversation>(emptyConversation())
+const mode = ref<'chat' | 'images'>('chat')
+const draft = ref('')
+const error = ref('')
+const saveError = ref('')
 const loadingGroups = ref(false)
 const loadingModels = ref(false)
-const activeTab = ref<Tab>('chat')
-const messages = ref<UIMessage[]>([])
-const draft = ref('')
-const systemPrompt = ref('')
-const temperature = ref(0.7)
 const streaming = ref(false)
-const chatError = ref('')
-const messageViewport = ref<HTMLElement | null>(null)
-const imagePrompt = ref('')
+const generating = ref(false)
+const saving = ref(false)
+const settingsOpen = ref(false)
+const historyOpen = ref(false)
+const deleteTarget = ref('')
 const imageSize = ref('1024x1024')
 const imageQuality = ref('auto')
-const imageCount = ref(1)
-const images = ref<PlaygroundImage[]>([])
-const generating = ref(false)
-const imageError = ref('')
-let messageId = 0
-let streamController: AbortController | null = null
+const images = ref<ImageEntry[]>([])
+const preview = ref<ImageEntry | null>(null)
+const viewport = ref<HTMLElement | null>(null)
+const now = ref(Date.now())
+let controller: AbortController | null = null
+let timer: ReturnType<typeof setInterval> | undefined
+let modelRequest = 0
+let disposed = false
+const busy = computed(() => streaming.value || generating.value || saving.value)
+const canSend = computed(() => !busy.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId && current.value.model))
+const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && image.expiresAt > now.value))
 
-const tabs = computed(() => [
-  { value: 'chat' as const, label: t('playground.chat') },
-  { value: 'images' as const, label: t('playground.images') }
-])
-const balance = computed(() => authStore.user?.balance ?? 0)
-const busy = computed(() => streaming.value || generating.value)
-const canSend = computed(() => Boolean(draft.value.trim() && selectedGroupId.value && selectedModel.value))
-const canGenerate = computed(() => Boolean(imagePrompt.value.trim() && selectedGroupId.value && selectedModel.value && !generating.value))
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message
-  if (error && typeof error === 'object' && 'message' in error) {
-    const message = String((error as { message?: unknown }).message || '').trim()
-    if (message) return message
-  }
-  return fallback
+function emptyConversation(): Conversation {
+  return { id: crypto.randomUUID(), title: '', groupId: 0, model: '', systemPrompt: '', temperature: 0.7, messages: [], revision: 0, expiresAt: 0 }
 }
-
-function renderMarkdown(content: string): string {
+function renderMarkdown(content: string) {
   return DOMPurify.sanitize(marked.parse(content, { async: false, gfm: true, breaks: true }) as string)
 }
-
-async function scrollToBottom() {
-  await nextTick()
-  if (messageViewport.value) messageViewport.value.scrollTop = messageViewport.value.scrollHeight
+function formatExpiry(expiry: number) { return t('playground.expires', { time: new Date(expiry).toLocaleString() }) }
+function remaining(expiry: number) {
+  const seconds = Math.max(0, Math.ceil((expiry - now.value) / 1000))
+  return t('playground.remaining', { time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` })
 }
-
-async function loadGroups() {
-  loadingGroups.value = true
+async function scrollBottom() { await nextTick(); if (viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight }
+function newConversation() {
+  if (busy.value) return
+  const { groupId, model } = current.value
+  current.value = { ...emptyConversation(), groupId, model }
+  draft.value = ''; error.value = ''; saveError.value = ''; historyOpen.value = false
+}
+function openConversation(item: Conversation) {
+  if (busy.value) return
+  current.value = JSON.parse(JSON.stringify(item))
+  draft.value = ''; error.value = ''; saveError.value = ''; historyOpen.value = false
+  scrollBottom()
+}
+async function refreshHistory() {
+  try { conversations.value = (await playgroundHistory.list()).sort((first, second) => second.expiresAt - first.expiresAt) }
+  catch { appStore.showError(t('playground.historyFailed')) }
+}
+async function saveConversation() {
+  if (!current.value.messages.length || saving.value) return true
+  saving.value = true
   try {
-    groups.value = await userGroupsAPI.getAvailable()
-    if (!selectedGroupId.value && groups.value.length) selectedGroupId.value = groups.value[0].id
-  } catch (error) {
-    appStore.showError(errorMessage(error, t('playground.loadModelsFailed')))
-  } finally {
-    loadingGroups.value = false
-  }
+    const saved = await playgroundHistory.save(JSON.parse(JSON.stringify(current.value)))
+    current.value.revision = saved.revision; current.value.expiresAt = saved.expiresAt
+    conversations.value = [saved, ...conversations.value.filter(item => item.id !== saved.id)]
+    saveError.value = ''
+    return true
+  } catch { saveError.value = t('playground.saveFailed'); return false }
+  finally { saving.value = false }
 }
-
+async function deleteConversation() {
+  if (busy.value) return
+  const id = deleteTarget.value
+  try {
+    await playgroundHistory.delete(id)
+    conversations.value = conversations.value.filter(item => item.id !== id)
+    images.value = images.value.filter(image => image.conversationId !== id)
+    if (current.value.id === id) newConversation()
+    deleteTarget.value = ''
+  } catch { appStore.showError(t('playground.historyFailed')) }
+}
 async function loadModels(groupId: number) {
-  models.value = []
-  selectedModel.value = ''
-  if (!groupId) return
-  loadingModels.value = true
+  const request = ++modelRequest
+  const preferred = current.value.model
+  models.value = []; loadingModels.value = true
   try {
-    models.value = await playgroundAPI.listModels(groupId)
-    if (models.value.length) selectedModel.value = models.value[0].id
-    else appStore.showError(t('playground.noModels'))
-  } catch (error) {
-    appStore.showError(errorMessage(error, t('playground.loadModelsFailed')))
-  } finally {
-    loadingModels.value = false
+    const result = groupId ? await playgroundAPI.listModels(groupId) : []
+    if (request !== modelRequest) return
+    models.value = result
+    current.value.model = result.some(item => item.id === preferred) ? preferred : (result[0]?.id ?? '')
+  } catch { if (request === modelRequest) { current.value.model = ''; error.value = t('playground.loadModelsFailed') } }
+  finally { if (request === modelRequest) loadingModels.value = false }
+}
+function onEnter(event: KeyboardEvent) { if (!event.isComposing) { event.preventDefault(); send() } }
+async function send() {
+  if (!canSend.value) return
+  if (current.value.expiresAt && current.value.expiresAt <= Date.now()) { newConversation(); error.value = t('playground.expired'); return }
+  const prompt = draft.value.trim()
+  const userId = Date.now()
+  const conversationId = current.value.id
+  current.value.messages.push({ id: userId, role: 'user', content: prompt })
+  if (!current.value.title) current.value.title = prompt.slice(0, 60)
+  if (!(await saveConversation())) { current.value.messages.pop(); return }
+  draft.value = ''; error.value = ''
+  if (mode.value === 'images') {
+    generating.value = true
+    try {
+      const generated = await playgroundAPI.generateImages({ groupId: current.value.groupId, model: current.value.model, prompt, size: imageSize.value, quality: imageQuality.value, count: 1 })
+      if (!disposed) images.value.push(...generated.map(image => ({ id: crypto.randomUUID(), conversationId, messageId: userId, url: image.url, prompt, expiresAt: Date.now() + 600000 })))
+      current.value.messages.push({ id: userId + 1, role: 'assistant', content: t('playground.imageRetention') })
+    } catch (caught) { error.value = caught instanceof Error ? caught.message : t('playground.imageFailed') }
+    finally { generating.value = false }
+  } else {
+    const history: PlaygroundMessage[] = current.value.messages.map(message => ({ role: message.role, content: message.content }))
+    if (current.value.systemPrompt) history.unshift({ role: 'system', content: current.value.systemPrompt })
+    const assistantId = userId + 1
+    current.value.messages.push({ id: assistantId, role: 'assistant', content: '' })
+    streaming.value = true; controller = new AbortController()
+    try {
+      await playgroundAPI.streamChat({ groupId: current.value.groupId, model: current.value.model, messages: history, temperature: current.value.temperature, signal: controller.signal, onDelta(delta) {
+        const assistant = current.value.messages.find(message => message.id === assistantId)
+        if (assistant) assistant.content += delta
+        scrollBottom()
+      } })
+    } catch (caught) { if ((caught as Error).name !== 'AbortError') error.value = caught instanceof Error ? caught.message : t('playground.requestFailed') }
+    finally { streaming.value = false; controller = null; current.value.messages = current.value.messages.filter(message => message.content) }
   }
+  await saveConversation()
+  await authStore.refreshUser().catch(() => {})
+  scrollBottom()
 }
-
-async function sendMessage() {
-  const content = draft.value.trim()
-  if (!content || !canSend.value || streaming.value) return
-  chatError.value = ''
-  draft.value = ''
-  messages.value.push({ id: ++messageId, role: 'user', content })
-  const assistant = { id: ++messageId, role: 'assistant' as const, content: '' }
-  messages.value.push(assistant)
-  const assistantIndex = messages.value.length - 1
-  streaming.value = true
-  streamController = new AbortController()
-  await scrollToBottom()
-
-  const history: PlaygroundMessage[] = messages.value.slice(0, -1).map(message => ({ role: message.role, content: message.content }))
-  if (systemPrompt.value.trim()) history.unshift({ role: 'system', content: systemPrompt.value.trim() })
-
-  try {
-    await playgroundAPI.streamChat({
-      groupId: selectedGroupId.value,
-      model: selectedModel.value,
-      messages: history,
-      temperature: temperature.value,
-      signal: streamController.signal,
-      onDelta(delta) {
-        const current = messages.value[assistantIndex]
-        if (current?.id === assistant.id) current.content += delta
-        scrollToBottom()
-      }
-    })
-    await authStore.refreshUser()
-  } catch (error) {
-    if ((error as Error).name !== 'AbortError') {
-      chatError.value = errorMessage(error, t('playground.requestFailed'))
-      if (!assistant.content) messages.value = messages.value.filter(message => message.id !== assistant.id)
-    }
-  } finally {
-    streaming.value = false
-    streamController = null
-  }
-}
-
-function stopStream() {
-  streamController?.abort()
-}
-
 async function copyMessage(content: string) {
-  await navigator.clipboard.writeText(content)
-  appStore.showSuccess(t('playground.copied'))
+  try { await navigator.clipboard.writeText(content); appStore.showSuccess(t('playground.copied')) }
+  catch { appStore.showError(t('playground.copyFailed')) }
 }
-
-async function generateImages() {
-  if (!canGenerate.value) return
-  generating.value = true
-  imageError.value = ''
+async function downloadImage(image: ImageEntry) {
+  if (image.expiresAt <= Date.now()) return
   try {
-    images.value = await playgroundAPI.generateImages({
-      groupId: selectedGroupId.value,
-      model: selectedModel.value,
-      prompt: imagePrompt.value.trim(),
-      size: imageSize.value,
-      quality: imageQuality.value,
-      count: Math.min(4, Math.max(1, imageCount.value))
-    })
-    await authStore.refreshUser()
-  } catch (error) {
-    imageError.value = errorMessage(error, t('playground.imageFailed'))
-  } finally {
-    generating.value = false
-  }
+    const result = await fetch(image.url)
+    if (!result.ok) throw new Error('download')
+    const blob = await result.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a'); link.href = url; link.download = `playground-${image.id}.png`; link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch { appStore.showError(t('playground.downloadFailed')) }
 }
-
-watch(selectedGroupId, loadModels)
-onMounted(loadGroups)
-onBeforeUnmount(stopStream)
+watch(() => current.value.groupId, loadModels)
+onMounted(async () => {
+  timer = setInterval(() => {
+    now.value = Date.now()
+    images.value = images.value.filter(image => image.expiresAt > now.value)
+    if (preview.value && preview.value.expiresAt <= now.value) preview.value = null
+    conversations.value = conversations.value.filter(item => item.expiresAt > now.value)
+    if (!busy.value && current.value.expiresAt && current.value.expiresAt <= now.value) { newConversation(); error.value = t('playground.expired') }
+  }, 1000)
+  loadingGroups.value = true
+  try { groups.value = await userGroupsAPI.getAvailable(); current.value.groupId = groups.value[0]?.id ?? 0 }
+  catch { error.value = t('playground.loadModelsFailed') }
+  finally { loadingGroups.value = false }
+  await refreshHistory()
+})
+onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(timer); images.value = []; preview.value = null })
 </script>
 
 <style scoped>
-.playground-markdown :deep(p) { margin: 0 0 0.75rem; }
-.playground-markdown :deep(p:last-child) { margin-bottom: 0; }
-.playground-markdown :deep(pre) { margin: 0.75rem 0; overflow-x: auto; border-radius: 0.375rem; background: #111827; padding: 0.875rem; color: #f3f4f6; }
-.playground-markdown :deep(code:not(pre code)) { border-radius: 0.25rem; background: rgb(243 244 246); padding: 0.125rem 0.3rem; font-size: 0.85em; }
-:global(.dark) .playground-markdown :deep(code:not(pre code)) { background: rgb(55 65 81); }
-.playground-markdown :deep(ul), .playground-markdown :deep(ol) { margin: 0.5rem 0; padding-left: 1.5rem; }
-.playground-markdown :deep(ul) { list-style: disc; }
-.playground-markdown :deep(ol) { list-style: decimal; }
+.studio { display:flex; height:calc(100dvh - 8rem); min-height:540px; overflow:hidden; border:1px solid #e5e7eb; border-radius:20px; background:#fff; color:#1f2937; }
+.history-panel { display:flex; flex-direction:column; width:244px; flex-shrink:0; padding:24px 16px; border-right:1px solid #e5e7eb; background:#f8f9fb; }
+.history-item { display:flex; align-items:center; gap:4px; padding:12px 8px; border-radius:10px; }
+.history-item:hover,.history-item.selected { background:#eaeef5; }
+.retention-note { margin-top:20px; font-size:11px; line-height:1.8; color:#9ca3af; }
+.conversation-panel { display:flex; flex:1; min-width:0; flex-direction:column; }
+.studio-toolbar { display:flex; align-items:center; gap:20px; padding:18px 24px; border-bottom:1px solid #f0f1f3; }
+.toolbar-label { display:block; margin-bottom:4px; color:#9ca3af; font-size:10px; }
+.toolbar-select { max-width:280px; background:transparent; font-size:13px; font-weight:500; outline-offset:3px; }
+.conversation-scroll { flex:1; min-height:0; overflow:auto; padding:32px; }
+.welcome { display:flex; height:100%; min-height:280px; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
+.welcome-icon { display:grid; place-items:center; width:56px; height:56px; margin-bottom:24px; border-radius:18px; background:#eef2ff; color:#6366f1; font-size:30px; }
+.suggestion { border:1px solid #e5e7eb; border-radius:12px; padding:18px; text-align:left; font-size:13px; color:#6b7280; transition:background .2s; }
+.suggestion:hover { background:#f8f9fb; }
+.user-bubble { max-width:85%; border-radius:18px 18px 4px 18px; padding:12px 18px; background:#f0f2f6; white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.8; }
+.assistant-message { font-size:14px; line-height:1.9; overflow-wrap:anywhere; }
+.composer-area { padding:12px 32px 20px; }
+.composer { border:1px solid #dfe3ea; border-radius:18px; box-shadow:0 4px 20px #00000005; }
+.composer:focus-within { border-color:#a5b4fc; }
+.composer-input { display:block; width:100%; resize:none; padding:16px 18px 8px; background:transparent; outline:none; font-size:14px; }
+.mode-button { border-radius:8px; padding:7px 10px; color:#9ca3af; font-size:12px; }
+.mode-button.active { background:#eef2ff; color:#6366f1; }
+.settings-panel { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:12px; padding:16px; border:1px solid #e5e7eb; border-radius:12px; }
+.image-card { overflow:hidden; border:1px solid #e5e7eb; border-radius:14px; }
+.playground-markdown :deep(p) { margin-bottom:12px; }
+.playground-markdown :deep(pre) { overflow:auto; padding:16px; margin:16px 0; border-radius:12px; background:#111827; color:#f3f4f6; }
+.playground-markdown :deep(ul),.playground-markdown :deep(ol) { padding-left:24px; list-style:revert; }
+.playground-markdown :deep(table) { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }
+.playground-markdown :deep(td),.playground-markdown :deep(th) { border:1px solid #d1d5db; padding:8px; }
+:global(.dark) .studio { background:#151b26; color:#e5e7eb; border-color:#303747; }
+:global(.dark) .history-panel { background:#111721; border-color:#303747; }
+:global(.dark) .history-item.selected,:global(.dark) .history-item:hover,:global(.dark) .user-bubble { background:#252e3f; }
+:global(.dark) .composer,:global(.dark) .settings-panel,:global(.dark) .image-card,:global(.dark) .suggestion,:global(.dark) .studio-toolbar { border-color:#303747; }
+:global(.dark) .toolbar-select option { background:#151b26; }
+@media(max-width:1023px) { .history-panel { display:none; } .history-panel.mobile-open { display:flex; position:absolute; inset:0; width:min(300px,85%); z-index:20; box-shadow:12px 0 30px #0002; } .studio { position:relative; } }
+@media(max-width:640px) { .studio { height:calc(100dvh - 7rem); min-height:440px; border-radius:12px; } .studio-toolbar { padding:12px; gap:10px; } .toolbar-select { max-width:100%; } .conversation-scroll { padding:20px 14px; } .composer-area { padding:8px 12px 14px; } .mode-button { padding:6px; } }
 </style>

@@ -306,9 +306,10 @@ func TestGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersist
 			ID:      801,
 			GroupID: i64p(groupID),
 			Group: &Group{
-				ID:             groupID,
-				RateMultiplier: 1.0,
-				ImagePrice2K:   &imagePrice2K,
+				ID:                  groupID,
+				RateMultiplier:      1.0,
+				ImagePrice2K:        &imagePrice2K,
+				ImageRateMultiplier: 1,
 			},
 		},
 		User:    &User{ID: 601},
@@ -328,7 +329,7 @@ func TestGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersist
 	require.InDelta(t, 0.19, usageRepo.lastLog.ActualCost, 1e-12)
 }
 
-func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *testing.T) {
+func TestGatewayServiceRecordUsage_ImageCountOverridesChannelTokenPricingAndPeakRate(t *testing.T) {
 	groupID := int64(902)
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	userRepo := &openAIRecordUsageUserRepoStub{}
@@ -351,13 +352,15 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 			ID:      802,
 			GroupID: i64p(groupID),
 			Group: &Group{
-				ID:                 groupID,
-				RateMultiplier:     1.0,
-				SubscriptionType:   SubscriptionTypeSubscription,
-				PeakRateEnabled:    true,
-				PeakStart:          "00:00",
-				PeakEnd:            "23:59",
-				PeakRateMultiplier: 3.0,
+				ID:                  groupID,
+				RateMultiplier:      1.0,
+				ImageRateMultiplier: 1.8,
+				ImagePrice2K:        func() *float64 { price := 0.1; return &price }(),
+				SubscriptionType:    SubscriptionTypeSubscription,
+				PeakRateEnabled:     true,
+				PeakStart:           "00:00",
+				PeakEnd:             "23:59",
+				PeakRateMultiplier:  3.0,
 			},
 		},
 		User:    &User{ID: 602},
@@ -367,18 +370,12 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.NotNil(t, usageRepo.lastLog.BillingMode)
-	require.Equal(t, string(BillingModeToken), *usageRepo.lastLog.BillingMode)
-	require.Equal(t, 3.0, usageRepo.lastLog.RateMultiplier)
-
-	textInput := 1000 * 3e-6
-	textOutput := 500 * 15e-6
-	imageOutput := 100 * 15e-6
-	expectedActual := (textInput + textOutput + imageOutput) * 3.0
-
-	require.InDelta(t, textInput+textOutput+imageOutput, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, imageOutput, usageRepo.lastLog.ImageOutputCost, 1e-12)
-	require.InDelta(t, expectedActual, usageRepo.lastLog.ActualCost, 1e-12)
-	require.InDelta(t, expectedActual, userRepo.lastAmount, 1e-12)
+	require.Equal(t, string(BillingModeImage), *usageRepo.lastLog.BillingMode)
+	require.Equal(t, 1.8, usageRepo.lastLog.RateMultiplier)
+	require.InDelta(t, 0.1, usageRepo.lastLog.TotalCost, 1e-12)
+	require.Zero(t, usageRepo.lastLog.ImageOutputCost)
+	require.InDelta(t, 0.18, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, 0.18, userRepo.lastAmount, 1e-12)
 }
 
 func TestGatewayServiceRecordUsage_TimePricingUsesPricingAt(t *testing.T) {
@@ -427,7 +424,7 @@ func TestGatewayServiceRecordUsage_UsesExplicitPricingAtForPeakRate(t *testing.T
 				Result: &ForwardResult{
 					RequestID:  "gateway_explicit_pricing_at_" + platform,
 					Model:      "gemini-image",
-					ImageCount: 1,
+					ImageCount: 0,
 					Usage: ClaudeUsage{
 						InputTokens:       1000,
 						OutputTokens:      600,

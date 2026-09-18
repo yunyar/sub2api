@@ -913,7 +913,8 @@
             </label>
             <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
-                v-model="createForm.image_rate_independent"
+                :checked="true"
+                disabled
                 type="checkbox"
                 class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
@@ -921,7 +922,6 @@
             </label>
           </div>
           <div
-            v-if="createForm.image_rate_independent"
             class="mb-4"
           >
             <label class="input-label">{{
@@ -2553,7 +2553,8 @@
             </label>
             <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
-                v-model="editForm.image_rate_independent"
+                :checked="true"
+                disabled
                 type="checkbox"
                 class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
@@ -2561,7 +2562,6 @@
             </label>
           </div>
           <div
-            v-if="editForm.image_rate_independent"
             class="mb-4"
           >
             <label class="input-label">{{
@@ -4945,7 +4945,7 @@ const createForm = reactive({
   // 图片生成计费配置
   allow_image_generation: false,
   allow_batch_image_generation: false,
-  image_rate_independent: false,
+  image_rate_independent: true,
   image_rate_multiplier: 1,
   batch_image_discount_multiplier: 0.5,
   batch_image_hold_multiplier: 0.6,
@@ -5310,7 +5310,7 @@ const editForm = reactive({
   // 图片生成计费配置
   allow_image_generation: false,
   allow_batch_image_generation: false,
-  image_rate_independent: false,
+  image_rate_independent: true,
   image_rate_multiplier: 1,
   batch_image_discount_multiplier: 0.5,
   batch_image_hold_multiplier: 0.6,
@@ -5448,9 +5448,7 @@ const formatVideoPricePreview = (value: number | string | null | undefined) => {
 };
 
 const buildImageFinalPricePreview = (form: ImagePricingFormState) => {
-  const imageMultiplier = form.image_rate_independent
-    ? normalizePreviewNumber(form.image_rate_multiplier, 1)
-    : normalizePreviewNumber(form.rate_multiplier, 1);
+  const imageMultiplier = normalizePreviewNumber(form.image_rate_multiplier, 1);
   const multiplier = imageMultiplier;
   return imagePricingTiers.map((tier) => {
     const basePrice =
@@ -5767,7 +5765,7 @@ const closeCreateModal = () => {
   createForm.monthly_limit_usd = null;
   createForm.allow_image_generation = false;
   createForm.allow_batch_image_generation = false;
-  createForm.image_rate_independent = false;
+  createForm.image_rate_independent = true;
   createForm.image_rate_multiplier = 1;
   createForm.batch_image_discount_multiplier = 0.5;
   createForm.batch_image_hold_multiplier = 0.6;
@@ -6043,7 +6041,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
     group.allow_batch_image_generation ?? false;
-  editForm.image_rate_independent = group.image_rate_independent ?? false;
+  editForm.image_rate_independent = true;
   editForm.image_rate_multiplier = group.image_rate_multiplier ?? 1;
   editForm.batch_image_discount_multiplier =
     group.batch_image_discount_multiplier ?? 0.5;

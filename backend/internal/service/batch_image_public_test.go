@@ -95,7 +95,7 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 		require.Equal(t, "batch-session-123", batchImageDerefString(job.SessionID))
 	})
 
-	t.Run("combines user group image rate account rate discount and hold margin", func(t *testing.T) {
+	t.Run("uses image rate independently of user text rate", func(t *testing.T) {
 		svc, repo, _, _, _ := newTestBatchImagePublicService(true)
 		groupID := int64(7)
 		accountMultiplier := 1.25
@@ -109,11 +109,12 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 				AllowImageGeneration:         true,
 				AllowBatchImageGeneration:    true,
 				ImageRateIndependent:         false,
+				ImageRateMultiplier:          0.5,
 				BatchImageDiscountMultiplier: 0.8,
 				BatchImageHoldMultiplier:     0.6,
 			},
 		}}
-		userRate := 0.5
+		userRate := 0.9
 		svc.UserGroupRateRepo = &publicBatchImageUserGroupRateRepo{rates: map[int64]*float64{groupID: &userRate}}
 
 		got, err := svc.Submit(ctx, BatchImageOwner{UserID: 11, APIKeyID: 22, GroupID: &groupID}, validBatchImageSubmitRequest(), "")
@@ -145,6 +146,7 @@ func TestBatchImagePublicService_Submit(t *testing.T) {
 				AllowImageGeneration:         true,
 				AllowBatchImageGeneration:    true,
 				ImagePrice1K:                 &imagePrice,
+				ImageRateMultiplier:          1,
 				BatchImageDiscountMultiplier: 0.5,
 				BatchImageHoldMultiplier:     0.6,
 			},

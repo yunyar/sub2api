@@ -32,9 +32,10 @@
           :key="item.id"
           class="card flex flex-col p-5"
         >
-          <div class="mx-auto aspect-square w-full max-w-64 overflow-hidden rounded border border-gray-200 bg-white p-3 dark:border-dark-600">
+          <button type="button" :aria-label="t('communityQRCodes.enlarge')" class="mx-auto aspect-square w-full max-w-64 cursor-zoom-in overflow-hidden rounded border border-gray-200 bg-white p-3 transition hover:shadow-lg focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-dark-600" @click="preview = item">
             <img :src="item.image_data" :alt="item.name" class="h-full w-full object-contain" />
-          </div>
+          </button>
+          <p class="mt-2 text-center text-xs text-gray-400">{{ t('communityQRCodes.enlarge') }}</p>
           <h2 class="mt-4 text-center text-base font-semibold text-gray-900 dark:text-white">
             {{ item.name }}
           </h2>
@@ -51,6 +52,13 @@
         </article>
       </div>
     </div>
+    <BaseDialog :show="Boolean(preview)" :title="preview?.name || ''" :close-on-click-outside="true" @close="preview = null">
+      <template v-if="preview">
+        <img :src="preview.image_data" :alt="preview.name" class="mx-auto max-h-[65vh] w-full rounded-lg bg-white p-4 object-contain" />
+        <p class="mt-4 text-center text-sm text-gray-500">{{ preview.description }}</p>
+        <button type="button" class="btn btn-primary mt-4 w-full" @click="downloadQRCode(preview)">{{ t('communityQRCodes.download') }}</button>
+      </template>
+    </BaseDialog>
   </AppLayout>
 </template>
 
@@ -59,6 +67,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import { communityQRCodesAPI } from '@/api'
 import { useAppStore } from '@/stores'
 import type { CommunityQRCode } from '@/types'
@@ -67,6 +76,7 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const items = ref<CommunityQRCode[]>([])
 const loading = ref(true)
+const preview = ref<CommunityQRCode | null>(null)
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
