@@ -23,6 +23,7 @@ export default {
     downloadFailed: 'Download failed. Retry before the image expires.',
     title: 'Playground',
     description: 'Chat and create images using your account balance',
+    insufficientBalance: 'Insufficient balance. Please top up before using the playground.',
     chat: 'Chat',
     images: 'Images',
     group: 'Group',
