@@ -7,19 +7,19 @@
           <button class="text-sm lg:hidden" @click="historyOpen = false">{{ t('common.close') }}</button>
         </div>
         <button class="btn btn-primary mt-5 w-full" :disabled="busy" @click="newConversation">＋ {{ t('playground.newChat') }}</button>
-        <p class="mt-6 text-xs font-medium text-gray-400">{{ t('playground.history') }}</p>
+        <p class="mt-6 text-xs font-medium text-gray-400 dark:text-dark-400">{{ t('playground.history') }}</p>
         <div class="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
-          <p v-if="!conversations.length" class="py-5 text-sm text-gray-400">{{ t('playground.noHistory') }}</p>
+          <p v-if="!conversations.length" class="py-5 text-sm text-gray-400 dark:text-dark-400">{{ t('playground.noHistory') }}</p>
           <div v-for="item in conversations" :key="item.id" class="history-item" :class="{ selected: current.id === item.id }">
             <button class="min-w-0 flex-1 text-left" :disabled="busy" @click="openConversation(item)">
               <span class="block truncate text-sm font-medium">{{ item.title }}</span>
-              <span class="mt-1 block truncate text-xs text-gray-400">{{ formatExpiry(item.expiresAt) }}</span>
+              <span class="mt-1 block truncate text-xs text-gray-400 dark:text-dark-400">{{ formatExpiry(item.expiresAt) }}</span>
             </button>
-            <button class="rounded p-2 text-gray-400 hover:text-red-500" :disabled="busy" :aria-label="t('common.delete')" @click="deleteTarget = item.id">×</button>
+            <button class="rounded p-2 text-gray-400 hover:text-red-500 dark:text-dark-400" :disabled="busy" :aria-label="t('common.delete')" @click="deleteTarget = item.id">×</button>
           </div>
         </div>
         <p class="retention-note">{{ t('playground.retention') }}</p>
-        <button class="mt-3 text-left text-xs text-gray-500 hover:text-primary-500" :disabled="busy" @click="refreshHistory">{{ t('playground.refreshHistory') }}</button>
+        <button class="mt-3 text-left text-xs text-gray-500 hover:text-primary-500 dark:text-dark-400" :disabled="busy" @click="refreshHistory">{{ t('playground.refreshHistory') }}</button>
       </aside>
 
       <main class="conversation-panel">
@@ -46,7 +46,7 @@
           <div v-if="!current.messages.length && !currentImages.length" class="welcome">
             <div class="welcome-icon">✦</div>
             <h2 class="text-2xl font-semibold tracking-tight sm:text-3xl">{{ t('playground.welcome') }}</h2>
-            <p class="mt-3 max-w-md text-sm leading-6 text-gray-500">{{ t('playground.welcomeDescription') }}</p>
+            <p class="mt-3 max-w-md text-sm leading-6 text-gray-500 dark:text-dark-300">{{ t('playground.welcomeDescription') }}</p>
             <div class="mt-8 grid w-full max-w-lg gap-3 sm:grid-cols-2">
               <button class="suggestion" @click="mode = 'chat'; draft = t('playground.chatSuggestion')">{{ t('playground.chatSuggestion') }} ↗</button>
               <button class="suggestion" @click="mode = 'images'; draft = t('playground.imageSuggestion')">{{ t('playground.imageSuggestion') }} ↗</button>
@@ -57,28 +57,29 @@
               <article :class="message.role === 'user' ? 'flex justify-end' : 'assistant-message'">
                 <div v-if="message.role === 'user'" class="user-bubble">{{ message.content }}</div>
                 <div v-else>
-                  <span class="mb-2 block text-xs font-semibold text-gray-400">{{ current.model }}</span>
+                  <span class="mb-2 block text-xs font-semibold text-gray-400 dark:text-dark-400">{{ current.model }}</span>
                   <div class="playground-markdown" v-html="renderMarkdown(message.content || (streaming ? '…' : ''))"></div>
-                  <button v-if="message.content" class="mt-2 text-xs text-gray-400 hover:text-primary-500" @click="copyMessage(message.content)">{{ t('playground.copy') }}</button>
+                  <button v-if="message.content" class="mt-2 text-xs text-gray-400 hover:text-primary-500 dark:text-dark-400" @click="copyMessage(message.content)">{{ t('playground.copy') }}</button>
                 </div>
               </article>
               <div v-if="currentImages.some(image => image.messageId === message.id)" class="grid gap-4 sm:grid-cols-2">
                 <figure v-for="image in currentImages.filter(entry => entry.messageId === message.id)" :key="image.id" class="image-card">
-                  <button class="block w-full cursor-zoom-in bg-gray-50" :aria-label="t('playground.preview')" @click="preview = image"><img :src="image.url" :alt="image.prompt" class="max-h-96 w-full object-contain" /></button>
+                  <button class="image-preview block w-full cursor-zoom-in" :aria-label="t('playground.preview')" @click="preview = image"><img :src="image.url" :alt="image.prompt" class="max-h-96 w-full object-contain" /></button>
                   <figcaption class="flex items-center justify-between gap-2 p-3">
-                    <span class="text-xs tabular-nums text-gray-500">{{ remaining(image.expiresAt) }}</span>
+                    <span class="text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ remaining(image.expiresAt) }}</span>
                     <button class="text-sm font-medium text-primary-600" @click="downloadImage(image)">{{ t('playground.download') }}</button>
                   </figcaption>
                 </figure>
               </div>
             </template>
-            <p v-if="generating" class="animate-pulse text-sm text-gray-500">{{ t('playground.generating') }}…</p>
+            <p v-if="generating" class="animate-pulse text-sm text-gray-500 dark:text-dark-400">{{ t('playground.generating') }}…</p>
           </div>
         </div>
 
         <div class="composer-area">
           <div class="mx-auto max-w-3xl">
             <p v-if="error" role="alert" class="mb-3 text-sm text-red-500">{{ error }}</p>
+            <p v-else-if="!hasBalance" role="alert" class="mb-3 text-sm text-amber-600 dark:text-amber-400">{{ t('playground.insufficientBalance') }}</p>
             <p v-if="saveError" role="alert" class="mb-3 text-sm text-amber-600">{{ saveError }} <button class="underline" :disabled="busy" @click="saveConversation">{{ t('playground.retrySave') }}</button></p>
             <div v-if="settingsOpen" class="settings-panel">
               <template v-if="mode === 'chat'">
@@ -101,7 +102,7 @@
                 <button v-else class="btn btn-primary" type="submit" :disabled="!canSend">{{ t(mode === 'images' ? 'playground.generate' : 'playground.send') }} ↑</button>
               </div>
             </form>
-            <p class="mt-3 text-center text-xs leading-5 text-gray-400">{{ t(mode === 'images' ? 'playground.imageRetention' : 'playground.retention') }}</p>
+            <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t(mode === 'images' ? 'playground.imageRetention' : 'playground.retention') }}</p>
           </div>
         </div>
       </main>
@@ -157,7 +158,8 @@ let timer: ReturnType<typeof setInterval> | undefined
 let modelRequest = 0
 let disposed = false
 const busy = computed(() => streaming.value || generating.value || saving.value)
-const canSend = computed(() => !busy.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId && current.value.model))
+const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
+const canSend = computed(() => hasBalance.value && !busy.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId && current.value.model))
 const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && image.expiresAt > now.value))
 
 function emptyConversation(): Conversation {
@@ -225,6 +227,7 @@ async function loadModels(groupId: number) {
 }
 function onEnter(event: KeyboardEvent) { if (!event.isComposing) { event.preventDefault(); send() } }
 async function send() {
+  if (!hasBalance.value) { error.value = t('playground.insufficientBalance'); return }
   if (!canSend.value) return
   if (current.value.expiresAt && current.value.expiresAt <= Date.now()) { newConversation(); error.value = t('playground.expired'); return }
   const prompt = draft.value.trim()
@@ -318,7 +321,8 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(time
 .mode-button { border-radius:8px; padding:7px 10px; color:#9ca3af; font-size:12px; }
 .mode-button.active { background:#eef2ff; color:#6366f1; }
 .settings-panel { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:12px; padding:16px; border:1px solid #e5e7eb; border-radius:12px; }
-.image-card { overflow:hidden; border:1px solid #e5e7eb; border-radius:14px; }
+.image-card { overflow:hidden; border:1px solid #e5e7eb; border-radius:14px; background:#fff; }
+.image-preview { background:#f9fafb; }
 .playground-markdown :deep(p) { margin-bottom:12px; }
 .playground-markdown :deep(pre) { overflow:auto; padding:16px; margin:16px 0; border-radius:12px; background:#111827; color:#f3f4f6; }
 .playground-markdown :deep(ul),.playground-markdown :deep(ol) { padding-left:24px; list-style:revert; }
@@ -328,7 +332,12 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(time
 :global(.dark) .history-panel { background:#111721; border-color:#303747; }
 :global(.dark) .history-item.selected,:global(.dark) .history-item:hover,:global(.dark) .user-bubble { background:#252e3f; }
 :global(.dark) .composer,:global(.dark) .settings-panel,:global(.dark) .image-card,:global(.dark) .suggestion,:global(.dark) .studio-toolbar { border-color:#303747; }
-:global(.dark) .toolbar-select option { background:#151b26; }
+:global(.dark) .suggestion { background:#1b2432; color:#cbd5e1; }
+:global(.dark) .suggestion:hover { background:#252e3f; }
+:global(.dark) .image-preview { background:#111721; }
+:global(.dark) .playground-markdown :deep(td),:global(.dark) .playground-markdown :deep(th) { border-color:#475569; }
+:global(.dark) .toolbar-select option { background:#151b26; color:#e5e7eb; }
+:global(.dark) .composer-input::placeholder { color:#64748b; }
 @media(max-width:1023px) { .history-panel { display:none; } .history-panel.mobile-open { display:flex; position:absolute; inset:0; width:min(300px,85%); z-index:20; box-shadow:12px 0 30px #0002; } .studio { position:relative; } }
 @media(max-width:640px) { .studio { height:calc(100dvh - 7rem); min-height:440px; border-radius:12px; } .studio-toolbar { padding:12px; gap:10px; } .toolbar-select { max-width:100%; } .conversation-scroll { padding:20px 14px; } .composer-area { padding:8px 12px 14px; } .mode-button { padding:6px; } }
 </style>

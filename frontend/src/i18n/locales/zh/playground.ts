@@ -23,6 +23,7 @@ export default {
     downloadFailed: '下载失败，请在图片到期前重试',
     title: '游乐场',
     description: '使用当前账户余额进行聊天和图片生成',
+    insufficientBalance: '目前余额不足，请充值后再使用游乐场',
     chat: '聊天',
     images: '生图',
     group: '分组',
