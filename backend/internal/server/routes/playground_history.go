@@ -72,7 +72,7 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 	})
 	history.GET("", func(c *gin.Context) {
 		prefix := c.GetString("playgroundHistoryPrefix")
-		ids, err := client.ZRangeByScore(c.Request.Context(), prefix+"index", &redis.ZRangeBy{Min: fmt.Sprintf("(%d", time.Now().UnixMilli()), Max: "+inf", Count: 30}).Result()
+		ids, err := client.ZRangeArgs(c.Request.Context(), redis.ZRangeArgs{Key: prefix + "index", Start: fmt.Sprintf("(%d", time.Now().UnixMilli()), Stop: "+inf", ByScore: true, Count: 30}).Result()
 		if err != nil {
 			response.InternalError(c, "Failed to load conversations")
 			return
