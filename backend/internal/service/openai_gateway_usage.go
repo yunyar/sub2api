@@ -163,7 +163,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
 	}
 
-	apiKey := input.APIKey
+	apiKey := s.apiKeyWithFreshGroupMediaPricing(ctx, input.APIKey)
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
@@ -598,10 +598,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 	}
 
 	if result != nil && result.ImageCount > 0 {
-		// 渠道定价为 token 计费时走 token 路径，否则走图片计费
-		if resolved := s.resolveOpenAIChannelPricing(ctx, billingModel, apiKey); resolved == nil || resolved.Mode != BillingModeToken {
-			return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
-		}
+		return s.calculateOpenAIImageCost(ctx, billingModel, apiKey, result, imageMultiplier), nil
 	}
 
 	// Token path (optional search surcharge is additive — never replaces token cost).
@@ -755,6 +752,7 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 			ReasoningEffort: optionalStringValue(result.ReasoningEffort),
 		})
 		if err == nil {
+			cost.BillingMode = string(BillingModeImage)
 			return cost
 		}
 	}
@@ -785,6 +783,7 @@ func (s *OpenAIGatewayService) calculateOpenAIImageCost(
 			Resolved:        resolved,
 		})
 		if err == nil {
+			cost.BillingMode = string(BillingModeImage)
 			return cost
 		}
 		logger.LegacyPrintf("service.openai_gateway", "Calculate image channel cost failed: %v", err)

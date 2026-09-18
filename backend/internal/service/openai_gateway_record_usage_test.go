@@ -438,7 +438,7 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 	require.Equal(t, 1, userRepo.deductCalls)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_ImageCountOverridesChannelTokenPricingAndPeakRate(t *testing.T) {
 	groupID := int64(14)
 	groupRate := 1.0
 	usage := OpenAIUsage{
@@ -465,13 +465,15 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 			ID:      1004,
 			GroupID: i64p(groupID),
 			Group: &Group{
-				ID:                 groupID,
-				RateMultiplier:     groupRate,
-				SubscriptionType:   "subscription",
-				PeakRateEnabled:    true,
-				PeakStart:          "00:00",
-				PeakEnd:            "23:59",
-				PeakRateMultiplier: 3.0,
+				ID:                  groupID,
+				RateMultiplier:      groupRate,
+				ImageRateMultiplier: 1.8,
+				ImagePrice2K:        func() *float64 { price := 0.1; return &price }(),
+				SubscriptionType:    "subscription",
+				PeakRateEnabled:     true,
+				PeakStart:           "00:00",
+				PeakEnd:             "23:59",
+				PeakRateMultiplier:  3.0,
 			},
 		},
 		User:    &User{ID: 2004},
@@ -480,28 +482,12 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
-	require.Equal(t, 3.0, usageRepo.lastLog.RateMultiplier)
-	require.Equal(t, usage.ImageOutputTokens, usageRepo.lastLog.ImageOutputTokens)
-
-	expected, err := svc.billingService.CalculateCostUnified(CostInput{
-		Ctx:     context.Background(),
-		Model:   "gpt-5.1",
-		GroupID: i64p(groupID),
-		Tokens: UsageTokens{
-			InputTokens:       usage.InputTokens,
-			OutputTokens:      usage.OutputTokens,
-			ImageOutputTokens: usage.ImageOutputTokens,
-		},
-		RateMultiplier: 1.0,
-		Resolver:       svc.resolver,
-	})
-	require.NoError(t, err)
-	expectedActual := expected.TotalCost * 3.0
-
-	require.InDelta(t, expected.TotalCost, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, expected.ImageOutputCost, usageRepo.lastLog.ImageOutputCost, 1e-12)
-	require.InDelta(t, expectedActual, usageRepo.lastLog.ActualCost, 1e-12)
-	require.InDelta(t, expectedActual, userRepo.lastAmount, 1e-12)
+	require.Equal(t, 1.8, usageRepo.lastLog.RateMultiplier)
+	require.Equal(t, string(BillingModeImage), *usageRepo.lastLog.BillingMode)
+	require.InDelta(t, 0.1, usageRepo.lastLog.TotalCost, 1e-12)
+	require.Zero(t, usageRepo.lastLog.ImageOutputCost)
+	require.InDelta(t, 0.18, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, 0.18, userRepo.lastAmount, 1e-12)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_TimePricingUsesPricingAt(t *testing.T) {
@@ -2098,9 +2084,10 @@ func TestOpenAIGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndP
 			ID:      11201,
 			GroupID: i64p(groupID),
 			Group: &Group{
-				ID:             groupID,
-				RateMultiplier: 1.0,
-				ImagePrice2K:   &imagePrice2K,
+				ID:                  groupID,
+				RateMultiplier:      1.0,
+				ImageRateMultiplier: 1,
+				ImagePrice2K:        &imagePrice2K,
 			},
 		},
 		User:    &User{ID: 21201},
@@ -2145,10 +2132,11 @@ func TestOpenAIGatewayServiceRecordUsage_OutputImageSizeWinsBeforeBillingAndPers
 			ID:      11202,
 			GroupID: i64p(groupID),
 			Group: &Group{
-				ID:             groupID,
-				RateMultiplier: 1.0,
-				ImagePrice1K:   &imagePrice1K,
-				ImagePrice4K:   &imagePrice4K,
+				ID:                  groupID,
+				RateMultiplier:      1.0,
+				ImageRateMultiplier: 1,
+				ImagePrice1K:        &imagePrice1K,
+				ImagePrice4K:        &imagePrice4K,
 			},
 		},
 		User:    &User{ID: 21202},
@@ -2196,9 +2184,10 @@ func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTo
 			ID:      1008,
 			GroupID: i64p(groupID),
 			Group: &Group{
-				ID:             groupID,
-				RateMultiplier: 1.0,
-				ImagePrice1K:   &imagePrice,
+				ID:                  groupID,
+				RateMultiplier:      1.0,
+				ImageRateMultiplier: 1,
+				ImagePrice1K:        &imagePrice,
 			},
 		},
 		User:    &User{ID: 2008},
@@ -2217,7 +2206,7 @@ func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTo
 	require.InDelta(t, 0.0, usageRepo.lastLog.ImageOutputCost, 1e-12)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingBehavior(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_ImageMultiplierIgnoresLegacySharedSwitch(t *testing.T) {
 	imagePrice := 0.2
 	groupID := int64(121)
 
@@ -2250,13 +2239,13 @@ func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingB
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.InDelta(t, 0.2, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, 0.03, usageRepo.lastLog.ActualCost, 1e-12)
-	require.InDelta(t, 0.15, usageRepo.lastLog.RateMultiplier, 1e-12)
+	require.InDelta(t, 0.2, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, 1.0, usageRepo.lastLog.RateMultiplier, 1e-12)
 	require.NotNil(t, usageRepo.lastLog.BillingMode)
 	require.Equal(t, string(BillingModeImage), *usageRepo.lastLog.BillingMode)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierUsesUserGroupOverride(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_ImageMultiplierIgnoresUserTextOverride(t *testing.T) {
 	imagePrice := 0.5
 	userRate := 0.2
 	groupID := int64(125)
@@ -2295,8 +2284,8 @@ func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierUsesUserGroupOverr
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.InDelta(t, 0.5, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, 0.1, usageRepo.lastLog.ActualCost, 1e-12)
-	require.InDelta(t, 0.2, usageRepo.lastLog.RateMultiplier, 1e-12)
+	require.InDelta(t, 0.5, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, 1.0, usageRepo.lastLog.RateMultiplier, 1e-12)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_ImageIndependentMultiplierUsesImageRate(t *testing.T) {
@@ -2579,10 +2568,11 @@ func TestOpenAIGatewayServiceRecordUsage_HydratesGroupImagePriceWhenAuthSnapshot
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
 	channelService := &ChannelService{groupRepo: &openAIMediaPriceGroupRepoStub{group: &Group{
-		ID:             groupID,
-		Platform:       PlatformGrok,
-		RateMultiplier: 1,
-		ImagePrice2K:   &groupImagePrice2K,
+		ID:                  groupID,
+		Platform:            PlatformGrok,
+		RateMultiplier:      1,
+		ImageRateMultiplier: 1,
+		ImagePrice2K:        &groupImagePrice2K,
 	}}}
 	channelCache := newEmptyChannelCache()
 	channelCache.loadedAt = time.Now()
@@ -2717,7 +2707,7 @@ func TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenChannelPricingKeepsVi
 	require.Equal(t, 5, *usageRepo.lastLog.VideoDurationSeconds)
 }
 
-func TestOpenAIGatewayServiceRecordUsage_ChannelImageBillingUsesImageCountAndSharedMultiplier(t *testing.T) {
+func TestOpenAIGatewayServiceRecordUsage_ChannelImageBillingUsesImageCountAndImageMultiplier(t *testing.T) {
 	groupID := int64(123)
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
@@ -2748,8 +2738,8 @@ func TestOpenAIGatewayServiceRecordUsage_ChannelImageBillingUsesImageCountAndSha
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.InDelta(t, 0.75, usageRepo.lastLog.TotalCost, 1e-12)
-	require.InDelta(t, 0.1125, usageRepo.lastLog.ActualCost, 1e-12)
-	require.InDelta(t, 0.15, usageRepo.lastLog.RateMultiplier, 1e-12)
+	require.InDelta(t, 0.75, usageRepo.lastLog.ActualCost, 1e-12)
+	require.InDelta(t, 1.0, usageRepo.lastLog.RateMultiplier, 1e-12)
 	require.Equal(t, 3, usageRepo.lastLog.ImageCount)
 	require.NotNil(t, usageRepo.lastLog.BillingMode)
 	require.Equal(t, string(BillingModeImage), *usageRepo.lastLog.BillingMode)

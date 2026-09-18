@@ -153,6 +153,7 @@ func TestPeakMultiplierAt_StandardTypeDegradesToOne(t *testing.T) {
 func TestPeakMultiplier_GatewayBillingSequence(t *testing.T) {
 	const baseMultiplier = 0.8
 	apiKey := &APIKey{Group: newPeakGroup(true, "14:00", "18:00", 3.0)}
+	apiKey.Group.ImageRateMultiplier = baseMultiplier
 	approxEq := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 	t.Run("peak hour amplifies token multiplier only", func(t *testing.T) {

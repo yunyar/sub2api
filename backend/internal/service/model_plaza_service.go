@@ -130,7 +130,7 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 			PeakEnd:                   g.PeakEnd,
 			PeakRateMultiplier:        g.PeakRateMultiplier,
 			IsExclusive:               g.IsExclusive,
-			ImageRateIndependent:      g.ImageRateIndependent,
+			ImageRateIndependent:      true,
 			ImageRateMultiplier:       g.ImageRateMultiplier,
 			LongContextPricingEnabled: g.LongContextPricingEnabled,
 		}
