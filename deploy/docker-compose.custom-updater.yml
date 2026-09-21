@@ -1,0 +1,18 @@
+services:
+  sub2api:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${UPDATE_DOCKER_HOST_DEPLOY_DIR:-/root/sub2api-deploy}:/app/update-host:ro
+    environment:
+      - UPDATE_MODE=docker
+      - UPDATE_GITHUB_REPO=${UPDATE_GITHUB_REPO:-yunyar/sub2api}
+      - UPDATE_GITHUB_BRANCH=${UPDATE_GITHUB_BRANCH:-custom/community-qrcode}
+      - UPDATE_DOCKER_IMAGE=${UPDATE_DOCKER_IMAGE:-ghcr.io/yunyar/sub2api}
+      - UPDATE_DOCKER_HOST_DEPLOY_DIR=${UPDATE_DOCKER_HOST_DEPLOY_DIR:-/root/sub2api-deploy}
+      - UPDATE_DOCKER_COMPOSE_FILE=${UPDATE_DOCKER_COMPOSE_FILE:-${UPDATE_DOCKER_HOST_DEPLOY_DIR:-/root/sub2api-deploy}/docker-compose.yml}
+      - UPDATE_DOCKER_COMPOSE_OVERLAY_FILE=${UPDATE_DOCKER_COMPOSE_OVERLAY_FILE:-}
+      - UPDATE_DOCKER_COMPOSE_SERVICE=${UPDATE_DOCKER_COMPOSE_SERVICE:-sub2api}
+      - UPDATE_DOCKER_COMPOSE_PROJECT_NAME=${UPDATE_DOCKER_COMPOSE_PROJECT_NAME:-}
+      - UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS=${UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS:-120}
+      - UPDATE_DOCKER_STAGE_FILE=/app/data/update-staged
+      - UPDATE_DOCKER_HOST_STATE_DIR=/app/update-host

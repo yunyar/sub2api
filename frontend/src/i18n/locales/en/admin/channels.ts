@@ -392,6 +392,8 @@ export default {
       selectedGroups: 'Selected Groups',
       searchGroups: 'Search group name or platform',
       noGroups: 'No groups available',
+      missingGroupsWarning: 'The configuration references deleted audit groups (IDs: {ids}). They will be removed when you save.',
+      groupSelectionRequired: 'The configured audit groups no longer exist. Select at least one valid group before saving.',
       modelFilter: 'Model scope',
       modelFilterHint: 'Moderate by the client-requested model name; channel model mappings do not change this match.',
       modelFilterAll: 'All models',

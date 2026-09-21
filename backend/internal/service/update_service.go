@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -59,12 +60,28 @@ type GitHubReleaseClient interface {
 	FetchChecksumFile(ctx context.Context, url string) ([]byte, error)
 }
 
+// CustomBranchClient is implemented by the GitHub client when branch-based
+// container updates are enabled. It is optional so source/release builds keep
+// the existing release update behavior and test doubles remain compatible.
+type CustomBranchClient interface {
+	FetchBranchCommit(ctx context.Context, repo, branch string) (*BranchCommit, error)
+}
+
+// PublishedCustomImageClient verifies that the custom image workflow completed
+// for a commit. A branch tip alone is not installable while its image is still
+// building or if the publication job failed.
+type PublishedCustomImageClient interface {
+	HasPublishedCustomImage(ctx context.Context, repo, branch, commit string) (bool, error)
+}
+
 // UpdateService handles software updates
 type UpdateService struct {
 	cache          UpdateCache
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
+	currentCommit  string
+	updateMode     string
 }
 
 // NewUpdateService creates a new UpdateService
@@ -74,7 +91,15 @@ func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, versi
 		githubClient:   githubClient,
 		currentVersion: version,
 		buildType:      buildType,
+		currentCommit:  os.Getenv("SUB2API_BUILD_COMMIT"),
+		updateMode:     os.Getenv("UPDATE_MODE"),
 	}
+}
+
+func NewUpdateServiceWithCommit(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType, commit string) *UpdateService {
+	svc := NewUpdateService(cache, githubClient, version, buildType)
+	svc.currentCommit = strings.TrimSpace(commit)
+	return svc
 }
 
 // UpdateInfo contains update information
@@ -86,7 +111,25 @@ type UpdateInfo struct {
 	Cached         bool         `json:"cached"`
 	Warning        string       `json:"warning,omitempty"`
 	BuildType      string       `json:"build_type"` // "source" or "release"
+	CurrentCommit  string       `json:"current_commit,omitempty"`
+	LatestCommit   string       `json:"latest_commit,omitempty"`
+	UpdateMode     string       `json:"update_mode,omitempty"`
+	Branch         string       `json:"branch,omitempty"`
+	Staged         bool         `json:"staged"`
 }
+
+type BranchCommit struct {
+	SHA     string `json:"sha"`
+	HTMLURL string `json:"html_url"`
+	Commit  struct {
+		Message string `json:"message"`
+		Author  struct {
+			Date string `json:"date"`
+		} `json:"author"`
+	} `json:"commit"`
+}
+
+var ErrDockerRollbackNotSupported = infraerrors.BadRequest("DOCKER_ROLLBACK_NOT_SUPPORTED", "Docker updates can only use a published custom image")
 
 // ReleaseInfo contains GitHub release details
 type ReleaseInfo struct {
@@ -131,6 +174,9 @@ type GitHubAsset struct {
 
 // CheckUpdate checks for available updates
 func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInfo, error) {
+	if s.updateMode == "docker" {
+		return s.checkDockerUpdate(ctx, force)
+	}
 	// Try cache first
 	if !force {
 		if cached, err := s.getFromCache(ctx); err == nil && cached != nil {
@@ -160,9 +206,189 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 	return info, nil
 }
 
+func (s *UpdateService) checkDockerUpdate(ctx context.Context, force bool) (*UpdateInfo, error) {
+	const defaultRepo = "yunyar/sub2api"
+	repo := os.Getenv("UPDATE_GITHUB_REPO")
+	if repo == "" {
+		repo = defaultRepo
+	}
+	branch := os.Getenv("UPDATE_GITHUB_BRANCH")
+	if branch == "" {
+		branch = "custom/community-qrcode"
+	}
+	info := &UpdateInfo{CurrentVersion: s.currentVersion, CurrentCommit: s.currentCommit, BuildType: s.buildType, UpdateMode: "docker", Branch: branch}
+	if _, staged, stageErr := s.dockerStagedImage(); stageErr != nil {
+		addUpdateWarning(info, "staged Docker state unavailable: "+stageErr.Error())
+	} else if staged {
+		info.Staged = true
+	}
+	if cached, err := s.getFromCache(ctx); !force && err == nil && cached != nil {
+		return cached, nil
+	}
+	client, ok := s.githubClient.(CustomBranchClient)
+	if !ok {
+		addUpdateWarning(info, "branch update client is unavailable")
+		return info, nil
+	}
+	latest, err := client.FetchBranchCommit(ctx, repo, branch)
+	if err != nil {
+		addUpdateWarning(info, err.Error())
+		return info, nil
+	}
+	if !isFullCommitSHA(latest.SHA) {
+		addUpdateWarning(info, "branch returned an invalid commit SHA")
+		return info, nil
+	}
+	publisher, ok := s.githubClient.(PublishedCustomImageClient)
+	if !ok {
+		addUpdateWarning(info, "custom image publication check is unavailable")
+		return info, nil
+	}
+	published, err := publisher.HasPublishedCustomImage(ctx, repo, branch, latest.SHA)
+	if err != nil {
+		addUpdateWarning(info, "custom image publication check failed: "+err.Error())
+		return info, nil
+	}
+	if !published {
+		addUpdateWarning(info, "custom image is not published for the latest branch commit")
+		return info, nil
+	}
+	info.LatestCommit = latest.SHA
+	info.LatestVersion = latest.SHA[:minInt(12, len(latest.SHA))]
+	info.HasUpdate = !strings.EqualFold(latest.SHA, s.currentCommit)
+	info.ReleaseInfo = &ReleaseInfo{Name: latest.Commit.Message, Body: latest.Commit.Message, PublishedAt: latest.Commit.Author.Date, HTMLURL: latest.HTMLURL}
+	s.saveToCache(ctx, info)
+	return info, nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func isFullCommitSHA(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func dockerStageFile() string {
+	path := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_STAGE_FILE"))
+	if path == "" {
+		path = "/app/data/update-staged"
+	}
+	return path
+}
+
+func addUpdateWarning(info *UpdateInfo, warning string) {
+	if info.Warning == "" {
+		info.Warning = warning
+		return
+	}
+	info.Warning += "; " + warning
+}
+
+func (s *UpdateService) dockerStagedImage() (string, bool, error) {
+	if stateDir := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_HOST_STATE_DIR")); stateDir != "" {
+		stateFile := filepath.Join(stateDir, filepath.Base(dockerComposeFile())+".update-stage")
+		data, err := os.ReadFile(stateFile)
+		if os.IsNotExist(err) {
+			_ = os.Remove(dockerStageFile())
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		image := strings.TrimSpace(string(data))
+		if !isCustomImageReference(image) {
+			return "", false, fmt.Errorf("host staged image is invalid")
+		}
+		return image, true, nil
+	}
+	data, err := os.ReadFile(dockerStageFile())
+	if err != nil {
+		return "", false, nil
+	}
+	image := strings.TrimSpace(string(data))
+	if !isCustomImageReference(image) {
+		return "", false, nil
+	}
+	stagedCommit := strings.TrimPrefix(image[strings.LastIndex(image, ":")+1:], "custom-")
+	if strings.EqualFold(stagedCommit, s.currentCommit) {
+		_ = os.Remove(dockerStageFile())
+		return "", false, nil
+	}
+	return image, true, nil
+}
+
+func (s *UpdateService) performDockerUpdate(ctx context.Context) error {
+	info, err := s.checkDockerUpdate(ctx, true)
+	if err != nil {
+		return err
+	}
+	if !info.HasUpdate {
+		return ErrNoUpdateAvailable
+	}
+	image := os.Getenv("UPDATE_DOCKER_IMAGE")
+	if image == "" {
+		image = "ghcr.io/yunyar/sub2api"
+	}
+	if !isFullCommitSHA(info.LatestCommit) {
+		return fmt.Errorf("invalid latest commit")
+	}
+	if err := validateDockerUpdatePaths(); err != nil {
+		return err
+	}
+	tag := image + ":custom-" + info.LatestCommit
+	if err := dockerCommandRunner(ctx, "pull", tag); err != nil {
+		return fmt.Errorf("pull image: %w", err)
+	}
+	hostDir := dockerHostDeployDir()
+	compose := dockerComposeFile()
+	serviceName := dockerComposeService()
+	args := []string{"run", "--rm",
+		"-v", "/var/run/docker.sock:/var/run/docker.sock",
+		"-v", hostDir + ":" + hostDir,
+	}
+	args = append(args, dockerUpdateHelperEnv()...)
+	args = append(args,
+		"--entrypoint", "/app/docker-update-helper.sh", tag,
+		"stage", tag, compose, serviceName)
+	if err := dockerCommandRunner(ctx, args...); err != nil {
+		return fmt.Errorf("stage compose update: %w", err)
+	}
+	if err := os.WriteFile(dockerStageFile(), []byte(tag+"\n"), 0600); err != nil {
+		return fmt.Errorf("write staged update state: %w", err)
+	}
+	return nil
+}
+
+var dockerCommandRunner = runDockerCommand
+
+func runDockerCommand(ctx context.Context, args ...string) error {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Env = append(os.Environ(), "DOCKER_CLI_HINTS=false")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+	if s.updateMode == "docker" {
+		return s.performDockerUpdate(ctx)
+	}
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return err
@@ -173,6 +399,93 @@ func (s *UpdateService) PerformUpdate(ctx context.Context) error {
 	}
 
 	return s.applyReleaseAssets(ctx, info.ReleaseInfo.Assets)
+}
+
+func (s *UpdateService) RestartDocker(ctx context.Context) error {
+	if s.updateMode != "docker" {
+		return fmt.Errorf("docker update mode is disabled")
+	}
+	compose := dockerComposeFile()
+	serviceName := dockerComposeService()
+	helperImage, staged, err := s.dockerStagedImage()
+	if err != nil {
+		return fmt.Errorf("read staged Docker state: %w", err)
+	}
+	if !staged {
+		return fmt.Errorf("no downloaded update is waiting to be applied")
+	}
+	if err := validateDockerUpdatePaths(); err != nil {
+		return err
+	}
+	name := "sub2api-updater-" + strconv.FormatInt(time.Now().Unix(), 10)
+	args := []string{"run", "--rm", "-d", "--name", name,
+		"-v", "/var/run/docker.sock:/var/run/docker.sock",
+		"-v", dockerHostDeployDir() + ":" + dockerHostDeployDir(),
+	}
+	args = append(args, dockerUpdateHelperEnv()...)
+	args = append(args,
+		"--entrypoint", "/app/docker-update-helper.sh", helperImage,
+		"activate", helperImage, compose, serviceName)
+	if err := dockerCommandRunner(ctx, args...); err != nil {
+		return fmt.Errorf("start update helper: %w", err)
+	}
+	return nil
+}
+
+func (s *UpdateService) DockerUpdateEnabled() bool { return s.updateMode == "docker" }
+
+func isCustomImageReference(image string) bool {
+	tag := image[strings.LastIndex(image, ":")+1:]
+	return strings.HasPrefix(tag, "custom-") && isFullCommitSHA(strings.TrimPrefix(tag, "custom-"))
+}
+
+func dockerHostDeployDir() string {
+	if value := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_HOST_DEPLOY_DIR")); value != "" {
+		return value
+	}
+	return "/root/sub2api-deploy"
+}
+
+func dockerComposeFile() string {
+	if value := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_COMPOSE_FILE")); value != "" {
+		return value
+	}
+	return filepath.Join(dockerHostDeployDir(), "docker-compose.yml")
+}
+
+func dockerComposeService() string {
+	if value := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_COMPOSE_SERVICE")); value != "" {
+		return value
+	}
+	return "sub2api"
+}
+
+func dockerUpdateHelperEnv() []string {
+	return []string{
+		"-e", "UPDATE_DOCKER_COMPOSE_OVERLAY_FILE=" + strings.TrimSpace(os.Getenv("UPDATE_DOCKER_COMPOSE_OVERLAY_FILE")),
+		"-e", "UPDATE_DOCKER_COMPOSE_PROJECT_NAME=" + strings.TrimSpace(os.Getenv("UPDATE_DOCKER_COMPOSE_PROJECT_NAME")),
+		"-e", "UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS=" + strings.TrimSpace(os.Getenv("UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS")),
+	}
+}
+
+func validateDockerUpdatePaths() error {
+	hostDir := dockerHostDeployDir()
+	if !filepath.IsAbs(hostDir) {
+		return fmt.Errorf("Docker deployment directory must be absolute")
+	}
+	for _, path := range []string{dockerComposeFile(), strings.TrimSpace(os.Getenv("UPDATE_DOCKER_COMPOSE_OVERLAY_FILE"))} {
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("Docker compose file paths must be absolute")
+		}
+		relativePath, err := filepath.Rel(filepath.Clean(hostDir), filepath.Clean(path))
+		if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("Docker compose file must be inside the deployment directory")
+		}
+	}
+	return nil
 }
 
 // applyReleaseAssets downloads the platform archive from the given release assets,
@@ -281,6 +594,9 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 
 // Rollback restores the previous version
 func (s *UpdateService) Rollback() error {
+	if s.updateMode == "docker" {
+		return ErrDockerRollbackNotSupported
+	}
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -307,6 +623,9 @@ func (s *UpdateService) Rollback() error {
 // strictly older than the current version (the current version itself is excluded),
 // newest first. Draft and prerelease entries are skipped.
 func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVersion, error) {
+	if s.updateMode == "docker" {
+		return nil, ErrDockerRollbackNotSupported
+	}
 	releases, err := s.fetchRollbackCandidates(ctx)
 	if err != nil {
 		return nil, err
@@ -327,6 +646,9 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
+	if s.updateMode == "docker" {
+		return ErrDockerRollbackNotSupported
+	}
 	target := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if target == "" {
 		return ErrRollbackVersionNotAllowed
@@ -600,9 +922,14 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 	}
 
 	var cached struct {
-		Latest      string       `json:"latest"`
-		ReleaseInfo *ReleaseInfo `json:"release_info"`
-		Timestamp   int64        `json:"timestamp"`
+		Latest       string       `json:"latest"`
+		ReleaseInfo  *ReleaseInfo `json:"release_info"`
+		LatestCommit string       `json:"latest_commit"`
+		UpdateMode   string       `json:"update_mode"`
+		Branch       string       `json:"branch"`
+		CacheMode    string       `json:"cache_mode"`
+		Staged       bool         `json:"staged"`
+		Timestamp    int64        `json:"timestamp"`
 	}
 	if err := json.Unmarshal([]byte(data), &cached); err != nil {
 		return nil, err
@@ -611,26 +938,67 @@ func (s *UpdateService) getFromCache(ctx context.Context) (*UpdateInfo, error) {
 	if time.Now().Unix()-cached.Timestamp > updateCacheTTL {
 		return nil, fmt.Errorf("cache expired")
 	}
+	if cached.CacheMode != s.cacheMode() {
+		return nil, fmt.Errorf("cache mode mismatch")
+	}
+	hasUpdate := compareVersions(s.currentVersion, cached.Latest) < 0
+	if cached.UpdateMode == "docker" {
+		hasUpdate = cached.LatestCommit != "" && !strings.EqualFold(cached.LatestCommit, s.currentCommit)
+		_, cached.Staged, err = s.dockerStagedImage()
+		if err != nil {
+			cached.Staged = false
+		}
+	}
 
 	return &UpdateInfo{
 		CurrentVersion: s.currentVersion,
 		LatestVersion:  cached.Latest,
-		HasUpdate:      compareVersions(s.currentVersion, cached.Latest) < 0,
+		HasUpdate:      hasUpdate,
 		ReleaseInfo:    cached.ReleaseInfo,
 		Cached:         true,
 		BuildType:      s.buildType,
+		CurrentCommit:  s.currentCommit,
+		LatestCommit:   cached.LatestCommit,
+		UpdateMode:     cached.UpdateMode,
+		Branch:         cached.Branch,
+		Staged:         cached.Staged,
+		Warning:        dockerStageWarning(err),
 	}, nil
+}
+
+func dockerStageWarning(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "staged Docker state unavailable: " + err.Error()
+}
+
+func (s *UpdateService) cacheMode() string {
+	if s.updateMode == "docker" {
+		return "docker:" + strings.TrimSpace(os.Getenv("UPDATE_GITHUB_REPO")) + ":" + strings.TrimSpace(os.Getenv("UPDATE_GITHUB_BRANCH"))
+	}
+	return "release"
 }
 
 func (s *UpdateService) saveToCache(ctx context.Context, info *UpdateInfo) {
 	cacheData := struct {
-		Latest      string       `json:"latest"`
-		ReleaseInfo *ReleaseInfo `json:"release_info"`
-		Timestamp   int64        `json:"timestamp"`
+		Latest       string       `json:"latest"`
+		ReleaseInfo  *ReleaseInfo `json:"release_info"`
+		LatestCommit string       `json:"latest_commit"`
+		UpdateMode   string       `json:"update_mode"`
+		Branch       string       `json:"branch"`
+		CacheMode    string       `json:"cache_mode"`
+		Staged       bool         `json:"staged"`
+		Timestamp    int64        `json:"timestamp"`
 	}{
-		Latest:      info.LatestVersion,
-		ReleaseInfo: info.ReleaseInfo,
-		Timestamp:   time.Now().Unix(),
+		Latest:       info.LatestVersion,
+		ReleaseInfo:  info.ReleaseInfo,
+		LatestCommit: info.LatestCommit,
+		UpdateMode:   info.UpdateMode,
+		Branch:       info.Branch,
+		CacheMode:    s.cacheMode(),
+		Staged:       info.Staged,
+		Timestamp:    time.Now().Unix(),
 	}
 
 	data, _ := json.Marshal(cacheData)

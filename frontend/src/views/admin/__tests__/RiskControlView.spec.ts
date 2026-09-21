@@ -12,6 +12,7 @@ const {
   getStatus,
   listLogs,
   getGroups,
+  getAllGroupsIncludingInactive,
   getProxies,
   testAPIKeys,
   showError,
@@ -22,6 +23,7 @@ const {
   getStatus: vi.fn(),
   listLogs: vi.fn(),
   getGroups: vi.fn(),
+  getAllGroupsIncludingInactive: vi.fn(),
   getProxies: vi.fn(),
   testAPIKeys: vi.fn(),
   showError: vi.fn(),
@@ -42,6 +44,7 @@ vi.mock('@/api/admin', () => ({
     },
     groups: {
       getAll: getGroups,
+      getAllIncludingInactive: getAllGroupsIncludingInactive,
     },
     proxies: {
       getAll: getProxies,
@@ -199,6 +202,7 @@ describe('admin RiskControlView', () => {
     getStatus.mockReset()
     listLogs.mockReset()
     getGroups.mockReset()
+    getAllGroupsIncludingInactive.mockReset()
     showError.mockReset()
     showSuccess.mockReset()
     testAPIKeys.mockReset()
@@ -207,6 +211,7 @@ describe('admin RiskControlView', () => {
     getStatus.mockResolvedValue(runtimeStatus())
     listLogs.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })
     getGroups.mockResolvedValue([])
+    getAllGroupsIncludingInactive.mockResolvedValue([])
     getProxies.mockResolvedValue([])
     updateConfig.mockImplementation(async (payload: UpdateContentModerationConfig) => ({
       ...baseConfig(),
@@ -369,6 +374,37 @@ describe('admin RiskControlView', () => {
       },
     }))
     expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('removes deleted audit groups from the saved configuration', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig(), all_groups: false, group_ids: [7, 99] })
+    const activeGroup = { id: 7, name: 'Active', platform: 'openai', status: 'active' }
+    getGroups.mockResolvedValue([activeGroup])
+    getAllGroupsIncludingInactive.mockResolvedValue([activeGroup])
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.tabs.scope').trigger('click')
+    expect(wrapper.get('[data-test="missing-audit-groups"]').exists()).toBe(true)
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+
+    expect(updateConfig).toHaveBeenCalledWith(expect.objectContaining({ all_groups: false, group_ids: [7] }))
+    expect(showError).not.toHaveBeenCalled()
+  })
+
+  it('requires a replacement when every configured audit group was deleted', async () => {
+    getConfig.mockResolvedValue({ ...baseConfig(), all_groups: false, group_ids: [99] })
+    const wrapper = mount(RiskControlView, { global: { stubs: { AppLayout: AppLayoutStub, BaseDialog: BaseDialogStub, Icon: true, Select: true, Toggle: true, Pagination: true, ModelWhitelistSelector: ModelWhitelistSelectorStub, ProxySelector: true } } })
+    await flushPromises()
+
+    await findButtonByText(wrapper, 'admin.riskControl.openSettings').trigger('click')
+    await findButtonByText(wrapper, 'admin.riskControl.saveConfig').trigger('click')
+    await flushPromises()
+
+    expect(updateConfig).not.toHaveBeenCalled()
+    expect(showError).toHaveBeenCalledWith('admin.riskControl.groupSelectionRequired')
   })
 
   it('submits edited risk control thresholds when saving moderation config', async () => {

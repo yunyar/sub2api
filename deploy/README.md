@@ -261,12 +261,30 @@ docker compose down -v
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
 | `TZ` | No | `Asia/Shanghai` | Timezone |
 | `UPDATE_GITHUB_TOKEN` | No | *(empty)* | Token for `api.github.com` release checks only; asset downloads remain anonymous. |
+| `UPDATE_DOCKER_COMPOSE_PROJECT_NAME` | No | *(empty)* | Compose project name for Docker online updates; set when deployment used `docker compose -p NAME`. |
+| `UPDATE_DOCKER_COMPOSE_OVERLAY_FILE` | No | *(empty)* | Absolute host path to the production Compose overlay used to start the service. |
+| `UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS` | No | `120` | Seconds to wait for a Docker update to become healthy before rollback. |
 | `GEMINI_OAUTH_CLIENT_ID` | No | *(builtin)* | Google OAuth client ID (Gemini OAuth). Leave empty to use the built-in Gemini CLI client. |
 | `GEMINI_OAUTH_CLIENT_SECRET` | No | *(builtin)* | Google OAuth client secret (Gemini OAuth). Leave empty to use the built-in Gemini CLI client. |
 | `GEMINI_OAUTH_SCOPES` | No | *(default)* | OAuth scopes (Gemini OAuth) |
 | `GEMINI_QUOTA_POLICY` | No | *(empty)* | JSON overrides for Gemini local quota simulation (Code Assist only). |
 
 See `.env.example` for all available options.
+
+### Custom Docker Image Updates
+
+The optional `docker-compose.custom-updater.yml` overlay enables the custom branch's update notification flow. Use the UI to check for an update and download it. Downloading stages and validates the new image reference without restarting a service; restart from the UI separately to activate it.
+
+For an existing deployment, export the overlay path before recreating only the application service:
+
+```bash
+export UPDATE_DOCKER_COMPOSE_OVERLAY_FILE=/root/sub2api-deploy/docker-compose.custom-updater.yml
+docker compose -f docker-compose.yml -f "$UPDATE_DOCKER_COMPOSE_OVERLAY_FILE" up -d --no-deps sub2api
+```
+
+Activation preserves the deployment directory as Compose's project directory, so relative bind mounts and `.env` resolution keep their original host paths. It recreates only `UPDATE_DOCKER_COMPOSE_SERVICE` (default `sub2api`). An unhealthy replacement restores the prior image and attempts to recreate that same service. The helper uses `UPDATE_DOCKER_COMPOSE_OVERLAY_FILE` in addition to the base file, so it keeps the socket and update environment that started the original service. It accepts one production overlay; safely merge any additional overlays into that file before enabling online updates. The helper container must mount every Compose file and `UPDATE_DOCKER_HOST_DEPLOY_DIR` at their identical absolute host paths, and deployments started with `docker compose -p NAME` must set `UPDATE_DOCKER_COMPOSE_PROJECT_NAME=NAME`.
+
+The overlay mounts `UPDATE_DOCKER_HOST_DEPLOY_DIR` read-only at `/app/update-host`. The backend reads `<base-compose-file>.update-stage` from that mount as the authoritative staged-update status. Its mode is `0644`; the host deployment directory and its parent directories must allow the container's non-root `sub2api` user to traverse and read it. Do not change host directory ownership or permissions automatically; correct restrictive paths such as a root-only `0700` deployment directory during deployment setup.
 
 > **Note:** The `docker-deploy.sh` script automatically generates `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`, and `POSTGRES_PASSWORD` for you.
 

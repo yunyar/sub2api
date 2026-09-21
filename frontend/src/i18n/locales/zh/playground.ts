@@ -26,6 +26,8 @@ export default {
     insufficientBalance: '目前余额不足，请充值后再使用游乐场',
     chat: '聊天',
     images: '生图',
+    autoChat: '自动 · 对话',
+    autoImage: '自动 · 生图',
     group: '分组',
     model: '模型',
     balance: '余额',

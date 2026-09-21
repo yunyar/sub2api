@@ -48,8 +48,8 @@
             <h2 class="text-2xl font-semibold tracking-tight sm:text-3xl">{{ t('playground.welcome') }}</h2>
             <p class="mt-3 max-w-md text-sm leading-6 text-gray-500 dark:text-dark-300">{{ t('playground.welcomeDescription') }}</p>
             <div class="mt-8 grid w-full max-w-lg gap-3 sm:grid-cols-2">
-              <button class="suggestion" @click="mode = 'chat'; draft = t('playground.chatSuggestion')">{{ t('playground.chatSuggestion') }} ↗</button>
-              <button class="suggestion" @click="mode = 'images'; draft = t('playground.imageSuggestion')">{{ t('playground.imageSuggestion') }} ↗</button>
+              <button class="suggestion" @click="draft = t('playground.chatSuggestion')">{{ t('playground.chatSuggestion') }} ↗</button>
+              <button class="suggestion" @click="draft = t('playground.imageSuggestion')">{{ t('playground.imageSuggestion') }} ↗</button>
             </div>
           </div>
           <div v-else class="mx-auto w-full max-w-3xl space-y-7">
@@ -82,7 +82,7 @@
             <p v-else-if="!hasBalance" role="alert" class="mb-3 text-sm text-amber-600 dark:text-amber-400">{{ t('playground.insufficientBalance') }}</p>
             <p v-if="saveError" role="alert" class="mb-3 text-sm text-amber-600">{{ saveError }} <button class="underline" :disabled="busy" @click="saveConversation">{{ t('playground.retrySave') }}</button></p>
             <div v-if="settingsOpen" class="settings-panel">
-              <template v-if="mode === 'chat'">
+              <template v-if="!imageModelSelected">
                 <label class="col-span-2 text-xs">{{ t('playground.systemPrompt') }}<textarea v-model="current.systemPrompt" class="input mt-2 w-full" rows="2" :disabled="busy" /></label>
                 <label class="col-span-2 text-xs">{{ t('playground.temperature') }} · {{ current.temperature.toFixed(1) }}<input v-model.number="current.temperature" class="mt-3 w-full accent-primary-500" type="range" min="0" max="2" step="0.1" :disabled="busy" /></label>
               </template>
@@ -92,17 +92,17 @@
               </template>
             </div>
             <form class="composer" @submit.prevent="send">
-              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t(mode === 'chat' ? 'playground.messagePlaceholder' : 'playground.imagePromptPlaceholder')" :disabled="streaming" @keydown.enter.exact="onEnter" />
+              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t(imageModelSelected ? 'playground.imagePromptPlaceholder' : 'playground.messagePlaceholder')" :disabled="streaming" @keydown.enter.exact="onEnter" />
               <div class="flex items-center justify-between gap-3 px-3 pb-3">
                 <div class="flex items-center gap-1">
-                  <button v-for="option in (['chat', 'images'] as const)" :key="option" type="button" class="mode-button" :class="{ active: mode === option }" :disabled="streaming" @click="mode = option">{{ t(`playground.${option}`) }}</button>
+                  <span class="mode-indicator">{{ t(imageModelSelected ? 'playground.autoImage' : 'playground.autoChat') }}</span>
                   <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="streaming" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
                 </div>
                 <button v-if="streaming" type="button" class="btn btn-secondary" @click="controller?.abort()">{{ t('playground.stop') }}</button>
-                <button v-else class="btn btn-primary" type="submit" :disabled="!canSend">{{ t(mode === 'images' ? 'playground.generate' : 'playground.send') }} ↑</button>
+                <button v-else class="btn btn-primary" type="submit" :disabled="!canSend">{{ t(imageModelSelected ? 'playground.generate' : 'playground.send') }} ↑</button>
               </div>
             </form>
-            <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t(mode === 'images' ? 'playground.imageRetention' : 'playground.retention') }}</p>
+            <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t(imageModelSelected ? 'playground.imageRetention' : 'playground.retention') }}</p>
           </div>
         </div>
       </main>
@@ -126,6 +126,7 @@ import { playgroundAPI, type PlaygroundModel, type PlaygroundMessage } from '@/a
 import { playgroundHistory, type Conversation } from '@/api/playgroundHistory'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
+import { isPlaygroundImageModel } from '@/utils/playgroundModel'
 
 type ImageEntry = { id: string; conversationId: string; messageId: number; url: string; prompt: string; expiresAt: number }
 const { t } = useI18n()
@@ -135,7 +136,6 @@ const groups = ref<Group[]>([])
 const models = ref<PlaygroundModel[]>([])
 const conversations = ref<Conversation[]>([])
 const current = ref<Conversation>(emptyConversation())
-const mode = ref<'chat' | 'images'>('chat')
 const draft = ref('')
 const error = ref('')
 const saveError = ref('')
@@ -159,6 +159,7 @@ let modelRequest = 0
 let disposed = false
 let saveQueue: Promise<boolean> = Promise.resolve(true)
 const generating = computed(() => generatingCount.value > 0)
+const imageModelSelected = computed(() => isPlaygroundImageModel(current.value.model))
 const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
 const canSend = computed(() => hasBalance.value && !streaming.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId && current.value.model))
@@ -245,7 +246,7 @@ async function send() {
   if (!current.value.title) current.value.title = prompt.slice(0, 60)
   if (!(await saveConversation())) { current.value.messages.pop(); return }
   draft.value = ''; error.value = ''
-  if (mode.value === 'images') {
+  if (imageModelSelected.value) {
     generatingCount.value += 1
     try {
       const generated = await playgroundAPI.generateImages({ groupId: current.value.groupId, model: current.value.model, prompt, size: imageSize.value, quality: imageQuality.value, count: 1 })
@@ -327,7 +328,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(time
 .composer:focus-within { border-color:#a5b4fc; }
 .composer-input { display:block; width:100%; resize:none; padding:16px 18px 8px; background:transparent; outline:none; font-size:14px; }
 .mode-button { border-radius:8px; padding:7px 10px; color:#9ca3af; font-size:12px; }
-.mode-button.active { background:#eef2ff; color:#6366f1; }
+.mode-indicator { border-radius:8px; padding:7px 10px; background:#eef2ff; color:#6366f1; font-size:12px; }
 .settings-panel { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:12px; padding:16px; border:1px solid #e5e7eb; border-radius:12px; }
 .image-card { overflow:hidden; border:1px solid #e5e7eb; border-radius:14px; background:#fff; }
 .image-preview { background:#f9fafb; }
@@ -336,24 +337,20 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(time
 .playground-markdown :deep(ul),.playground-markdown :deep(ol) { padding-left:24px; list-style:revert; }
 .playground-markdown :deep(table) { display:block; max-width:100%; overflow:auto; border-collapse:collapse; }
 .playground-markdown :deep(td),.playground-markdown :deep(th) { border:1px solid #d1d5db; padding:8px; }
-:global(.dark) .studio { background:#151b26; color:#e5e7eb; border-color:#303747; }
-:global(.dark) .history-panel { background:#111721; border-color:#303747; }
-:global(.dark) .studio-toolbar,:global(.dark) .conversation-scroll,:global(.dark) .composer-area { background:#151b26; border-color:#303747; }
-:global(.dark) .history-item.selected,:global(.dark) .history-item:hover,:global(.dark) .user-bubble { background:#252e3f; }
-:global(.dark) .retention-note { color:#64748b; }
-:global(.dark) .composer,:global(.dark) .settings-panel,:global(.dark) .image-card,:global(.dark) .suggestion { border-color:#303747; }
-:global(.dark) .composer { background:#1b2432; }
-:global(.dark) .settings-panel { background:#1b2432; }
-:global(.dark) .composer-input { color:#e5e7eb; }
-:global(.dark) .toolbar-select { color:#e5e7eb; }
-:global(.dark) .mode-button { color:#94a3b8; }
-:global(.dark) .mode-button.active { background:#252e3f; color:#a5b4fc; }
-:global(.dark) .suggestion { background:#1b2432; color:#cbd5e1; }
-:global(.dark) .suggestion:hover { background:#252e3f; }
-:global(.dark) .image-preview { background:#111721; }
-:global(.dark) .playground-markdown :deep(td),:global(.dark) .playground-markdown :deep(th) { border-color:#475569; }
-:global(.dark) .toolbar-select option { background:#151b26; color:#e5e7eb; }
-:global(.dark) .composer-input::placeholder { color:#64748b; }
+:global(html.dark) .studio,:global(html.dark) .conversation-panel,:global(html.dark) .studio-toolbar,:global(html.dark) .conversation-scroll,:global(html.dark) .composer-area { background:#151b26; color:#e5e7eb; border-color:#303747; color-scheme:dark; }
+:global(html.dark) .history-panel { background:#111721; border-color:#303747; }
+:global(html.dark) .history-item.selected,:global(html.dark) .history-item:hover,:global(html.dark) .user-bubble { background:#252e3f; }
+:global(html.dark) .retention-note { color:#64748b; }
+:global(html.dark) .composer,:global(html.dark) .settings-panel,:global(html.dark) .image-card,:global(html.dark) .suggestion { border-color:#303747; background:#1b2432; }
+:global(html.dark) .composer-input,:global(html.dark) .toolbar-select { color:#e5e7eb; }
+:global(html.dark) .mode-button { color:#94a3b8; }
+:global(html.dark) .mode-indicator { background:#252e3f; color:#a5b4fc; }
+:global(html.dark) .suggestion { color:#cbd5e1; }
+:global(html.dark) .suggestion:hover { background:#252e3f; }
+:global(html.dark) .image-preview { background:#111721; }
+:global(html.dark) .playground-markdown :deep(td),:global(html.dark) .playground-markdown :deep(th) { border-color:#475569; }
+:global(html.dark) .toolbar-select option { background:#151b26; color:#e5e7eb; }
+:global(html.dark) .composer-input::placeholder { color:#64748b; }
 @media(max-width:1023px) { .history-panel { display:none; } .history-panel.mobile-open { display:flex; position:absolute; inset:0; width:min(300px,85%); z-index:20; box-shadow:12px 0 30px #0002; } .studio { position:relative; } }
 @media(max-width:640px) { .studio { height:calc(100dvh - 7rem); min-height:440px; border-radius:12px; } .studio-toolbar { padding:12px; gap:10px; } .toolbar-select { max-width:100%; } .conversation-scroll { padding:20px 14px; } .composer-area { padding:8px 12px 14px; } .mode-button { padding:6px; } }
 </style>

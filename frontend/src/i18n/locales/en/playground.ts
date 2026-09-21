@@ -26,6 +26,8 @@ export default {
     insufficientBalance: 'Insufficient balance. Please top up before using the playground.',
     chat: 'Chat',
     images: 'Images',
+    autoChat: 'Auto · Chat',
+    autoImage: 'Auto · Image',
     group: 'Group',
     model: 'Model',
     balance: 'Balance',

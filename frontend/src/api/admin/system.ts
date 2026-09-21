@@ -19,6 +19,11 @@ export interface VersionInfo {
   cached: boolean
   warning?: string
   build_type: string // "source" for manual builds, "release" for CI builds
+  current_commit?: string
+  latest_commit?: string
+  update_mode?: string
+  branch?: string
+  staged?: boolean
 }
 
 /**

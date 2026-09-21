@@ -8,6 +8,17 @@ if [ "$(id -u)" = "0" ]; then
     mkdir -p /app/data
     # Use || true to avoid failure on read-only mounted files (e.g. config.yaml:ro)
     chown -R sub2api:sub2api /app/data 2>/dev/null || true
+    if [ -S /var/run/docker.sock ]; then
+        socket_gid="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+        if [ -n "$socket_gid" ]; then
+            socket_group="$(awk -F: -v gid="$socket_gid" '$3 == gid { print $1; exit }' /etc/group)"
+            if [ -z "$socket_group" ]; then
+                socket_group=dockerhost
+                addgroup -g "$socket_gid" "$socket_group" 2>/dev/null || true
+            fi
+            addgroup sub2api "$socket_group" 2>/dev/null || true
+        fi
+    fi
     # Re-invoke this script as sub2api so the flag-detection below
     # also runs under the correct user.
     exec su-exec sub2api "$0" "$@"

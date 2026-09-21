@@ -392,6 +392,8 @@ export default {
       selectedGroups: '指定分组',
       searchGroups: '搜索分组名称或平台',
       noGroups: '暂无可用分组',
+      missingGroupsWarning: '配置中包含已删除的审计分组（ID：{ids}）。保存时会自动移除这些失效分组。',
+      groupSelectionRequired: '原审计分组已不存在，请至少选择一个有效分组后再保存',
       modelFilter: '模型范围',
       modelFilterHint: '按客户端请求的模型名决定是否执行内容审计，模型映射后仍以请求模型判断。',
       modelFilterAll: '所有模型',

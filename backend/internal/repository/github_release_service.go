@@ -108,6 +108,14 @@ func (c *githubReleaseClientError) FetchLatestRelease(ctx context.Context, repo 
 	return nil, c.err
 }
 
+func (c *githubReleaseClientError) FetchBranchCommit(ctx context.Context, repo, branch string) (*service.BranchCommit, error) {
+	return nil, c.err
+}
+
+func (c *githubReleaseClientError) HasPublishedCustomImage(ctx context.Context, repo, branch, commit string) (bool, error) {
+	return false, c.err
+}
+
 func (c *githubReleaseClientError) FetchRecentReleases(ctx context.Context, repo string, perPage int) ([]*service.GitHubRelease, error) {
 	return nil, c.err
 }
@@ -144,6 +152,63 @@ func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo strin
 	}
 
 	return &release, nil
+}
+
+func (c *githubReleaseClient) FetchBranchCommit(ctx context.Context, repo, branch string) (*service.BranchCommit, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/commits/%s", repo, url.PathEscape(branch))
+	req, err := c.newAPIRequest(ctx, apiURL)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+	}
+	var commit service.BranchCommit
+	if err := json.NewDecoder(resp.Body).Decode(&commit); err != nil {
+		return nil, err
+	}
+	return &commit, nil
+}
+
+// HasPublishedCustomImage requires the latest matching run for every required
+// workflow to have succeeded. Do not filter the request to completed runs: a
+// newer running retry must keep the image unavailable until it succeeds.
+func (c *githubReleaseClient) HasPublishedCustomImage(ctx context.Context, repo, branch, commit string) (bool, error) {
+	for _, workflow := range []string{"backend-ci.yml", "security-scan.yml", "community-image.yml"} {
+		apiURL := fmt.Sprintf("https://api.github.com/repos/%s/actions/workflows/%s/runs?head_sha=%s&per_page=100", repo, workflow, url.QueryEscape(commit))
+		req, err := c.newAPIRequest(ctx, apiURL)
+		if err != nil {
+			return false, err
+		}
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return false, err
+		}
+		var result struct {
+			WorkflowRuns []struct {
+				HeadSHA    string `json:"head_sha"`
+				HeadBranch string `json:"head_branch"`
+				Conclusion string `json:"conclusion"`
+			} `json:"workflow_runs"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return false, decodeErr
+		}
+		if resp.StatusCode != http.StatusOK {
+			return false, fmt.Errorf("GitHub Actions API returned %d", resp.StatusCode)
+		}
+		if len(result.WorkflowRuns) == 0 || !strings.EqualFold(result.WorkflowRuns[0].HeadSHA, commit) || result.WorkflowRuns[0].HeadBranch != branch || result.WorkflowRuns[0].Conclusion != "success" {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (c *githubReleaseClient) FetchRecentReleases(ctx context.Context, repo string, perPage int) ([]*service.GitHubRelease, error) {

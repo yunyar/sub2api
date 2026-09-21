@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -31,6 +32,219 @@ type updateServiceGitHubClientStub struct {
 	release        *GitHubRelease
 	recentReleases []*GitHubRelease
 	recentErr      error
+}
+
+type branchUpdateClientStub struct {
+	updateServiceGitHubClientStub
+	commit     *BranchCommit
+	published  bool
+	publishErr error
+}
+
+func (s *branchUpdateClientStub) FetchBranchCommit(context.Context, string, string) (*BranchCommit, error) {
+	return s.commit, nil
+}
+
+func (s *branchUpdateClientStub) HasPublishedCustomImage(context.Context, string, string, string) (bool, error) {
+	return s.published, s.publishErr
+}
+
+func TestUpdateServiceDockerCheckUsesCommitSHA(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	t.Setenv("UPDATE_DOCKER_STAGE_FILE", t.TempDir()+"/update-staged")
+	commit := &BranchCommit{SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", HTMLURL: "https://github.com/yunyar/sub2api/commit/bbbbbbbb"}
+	commit.Commit.Message = "custom update"
+	commit.Commit.Author.Date = "2026-09-21T00:00:00Z"
+	svc := NewUpdateServiceWithCommit(
+		&updateServiceCacheStub{},
+		&branchUpdateClientStub{commit: commit, published: true},
+		"0.1.0",
+		"release",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.True(t, info.HasUpdate)
+	require.Equal(t, commit.SHA, info.LatestCommit)
+	require.Equal(t, "bbbbbbbbbbbb", info.LatestVersion)
+	require.Equal(t, "docker", info.UpdateMode)
+	require.Equal(t, "custom/community-qrcode", info.Branch)
+	require.False(t, info.Staged)
+}
+
+func TestUpdateServiceDockerCheckRejectsUnpublishedBranchHead(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	commit := &BranchCommit{SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	svc := NewUpdateServiceWithCommit(&updateServiceCacheStub{}, &branchUpdateClientStub{commit: commit}, "0.1.0", "release", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.False(t, info.HasUpdate)
+	require.Empty(t, info.LatestCommit)
+	require.Contains(t, info.Warning, "not published")
+}
+
+func TestUpdateServiceDockerCheckReportsExistingStageBeforePublicationGate(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	stageFile := t.TempDir() + "/update-staged"
+	t.Setenv("UPDATE_DOCKER_STAGE_FILE", stageFile)
+	stagedCommit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	require.NoError(t, os.WriteFile(stageFile, []byte("ghcr.io/yunyar/sub2api:custom-"+stagedCommit+"\n"), 0600))
+	svc := NewUpdateServiceWithCommit(
+		&updateServiceCacheStub{},
+		&branchUpdateClientStub{commit: &BranchCommit{SHA: "invalid"}},
+		"0.1.0",
+		"release",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.True(t, info.Staged)
+	require.Contains(t, info.Warning, "invalid commit SHA")
+}
+
+func TestUpdateServiceDockerStageClearsAfterBootingStagedCommit(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	stageFile := t.TempDir() + "/update-staged"
+	t.Setenv("UPDATE_DOCKER_STAGE_FILE", stageFile)
+	commit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	require.NoError(t, os.WriteFile(stageFile, []byte("ghcr.io/yunyar/sub2api:custom-"+commit+"\n"), 0600))
+	svc := NewUpdateServiceWithCommit(&updateServiceCacheStub{}, &branchUpdateClientStub{}, "0.1.0", "release", commit)
+
+	_, staged, err := svc.dockerStagedImage()
+
+	require.NoError(t, err)
+	require.False(t, staged)
+	_, err = os.Stat(stageFile)
+	require.True(t, os.IsNotExist(err))
+}
+
+func TestUpdateServiceDockerHostStageReadErrorDoesNotFallBackToAppMarker(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	stageFile := t.TempDir() + "/update-staged"
+	t.Setenv("UPDATE_DOCKER_STAGE_FILE", stageFile)
+	t.Setenv("UPDATE_DOCKER_HOST_STATE_DIR", stageFile)
+	commit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	require.NoError(t, os.WriteFile(stageFile, []byte("ghcr.io/yunyar/sub2api:custom-"+commit), 0600))
+	svc := NewUpdateServiceWithCommit(
+		&updateServiceCacheStub{},
+		&branchUpdateClientStub{commit: &BranchCommit{SHA: "invalid"}},
+		"0.1.0",
+		"release",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.False(t, info.Staged)
+	require.Contains(t, info.Warning, "staged Docker state unavailable")
+}
+
+func TestUpdateServiceDockerCacheDoesNotReuseReleaseCache(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "")
+	cache := &updateServiceCacheStub{}
+	releaseSvc := NewUpdateService(cache, &updateServiceGitHubClientStub{}, "0.1.0", "release")
+	releaseSvc.saveToCache(context.Background(), &UpdateInfo{LatestVersion: "9.9.9"})
+	t.Setenv("UPDATE_MODE", "docker")
+	dockerSvc := NewUpdateServiceWithCommit(cache, &branchUpdateClientStub{commit: &BranchCommit{SHA: "invalid"}}, "0.1.0", "release", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+	info, err := dockerSvc.CheckUpdate(context.Background(), false)
+
+	require.NoError(t, err)
+	require.False(t, info.Cached)
+	require.Contains(t, info.Warning, "invalid commit SHA")
+}
+
+func TestUpdateServiceDockerDisablesBinaryRollback(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	svc := NewUpdateService(&updateServiceCacheStub{}, &updateServiceGitHubClientStub{}, "0.1.0", "release")
+
+	_, err := svc.ListRollbackVersions(context.Background())
+	require.ErrorIs(t, err, ErrDockerRollbackNotSupported)
+	require.ErrorIs(t, svc.RollbackToVersion(context.Background(), "0.0.9"), ErrDockerRollbackNotSupported)
+	require.ErrorIs(t, svc.Rollback(), ErrDockerRollbackNotSupported)
+}
+
+func TestUpdateServiceDockerDownloadPullsAndStagesWithHostPaths(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	t.Setenv("UPDATE_DOCKER_STAGE_FILE", t.TempDir()+"/update-staged")
+	t.Setenv("UPDATE_DOCKER_HOST_DEPLOY_DIR", "/srv/sub2api")
+	t.Setenv("UPDATE_DOCKER_COMPOSE_FILE", "/srv/sub2api/docker-compose.yml")
+	t.Setenv("UPDATE_DOCKER_COMPOSE_OVERLAY_FILE", "/srv/sub2api/docker-compose.custom-updater.yml")
+	t.Setenv("UPDATE_DOCKER_COMPOSE_PROJECT_NAME", "sub2api-prod")
+	t.Setenv("UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS", "45")
+	commit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	svc := NewUpdateServiceWithCommit(&updateServiceCacheStub{}, &branchUpdateClientStub{commit: &BranchCommit{SHA: commit}, published: true}, "0.1.0", "release", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	var calls [][]string
+	originalRunner := dockerCommandRunner
+	dockerCommandRunner = func(_ context.Context, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+	t.Cleanup(func() { dockerCommandRunner = originalRunner })
+
+	require.NoError(t, svc.PerformUpdate(context.Background()))
+
+	require.Len(t, calls, 2)
+	require.Equal(t, []string{"pull", "ghcr.io/yunyar/sub2api:custom-" + commit}, calls[0])
+	require.Equal(t, "run", calls[1][0])
+	require.Contains(t, calls[1], "/srv/sub2api:/srv/sub2api")
+	require.Contains(t, calls[1], "UPDATE_DOCKER_COMPOSE_OVERLAY_FILE=/srv/sub2api/docker-compose.custom-updater.yml")
+	require.Contains(t, calls[1], "UPDATE_DOCKER_COMPOSE_PROJECT_NAME=sub2api-prod")
+	require.Contains(t, calls[1], "UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS=45")
+	require.Equal(t, []string{"stage", "ghcr.io/yunyar/sub2api:custom-" + commit, "/srv/sub2api/docker-compose.yml", "sub2api"}, calls[1][len(calls[1])-4:])
+}
+
+func TestUpdateServiceDockerRestartStartsOnlyHelperWithHostPaths(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	stageFile := t.TempDir() + "/update-staged"
+	t.Setenv("UPDATE_DOCKER_STAGE_FILE", stageFile)
+	t.Setenv("UPDATE_DOCKER_HOST_DEPLOY_DIR", "/srv/sub2api")
+	t.Setenv("UPDATE_DOCKER_COMPOSE_FILE", "/srv/sub2api/docker-compose.yml")
+	t.Setenv("UPDATE_DOCKER_COMPOSE_OVERLAY_FILE", "/srv/sub2api/docker-compose.custom-updater.yml")
+	commit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	require.NoError(t, os.WriteFile(stageFile, []byte("ghcr.io/yunyar/sub2api:custom-"+commit), 0600))
+	svc := NewUpdateServiceWithCommit(&updateServiceCacheStub{}, &branchUpdateClientStub{}, "0.1.0", "release", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	var calls [][]string
+	originalRunner := dockerCommandRunner
+	dockerCommandRunner = func(_ context.Context, args ...string) error {
+		calls = append(calls, append([]string(nil), args...))
+		return nil
+	}
+	t.Cleanup(func() { dockerCommandRunner = originalRunner })
+
+	require.NoError(t, svc.RestartDocker(context.Background()))
+
+	require.Len(t, calls, 1)
+	require.Equal(t, "run", calls[0][0])
+	require.Contains(t, calls[0], "-d")
+	require.Contains(t, calls[0], "/srv/sub2api:/srv/sub2api")
+	require.Contains(t, calls[0], "UPDATE_DOCKER_COMPOSE_OVERLAY_FILE=/srv/sub2api/docker-compose.custom-updater.yml")
+	require.Equal(t, []string{"activate", "ghcr.io/yunyar/sub2api:custom-" + commit, "/srv/sub2api/docker-compose.yml", "sub2api"}, calls[0][len(calls[0])-4:])
+}
+
+func TestUpdateServiceDockerRestartPropagatesCLIError(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	stageFile := t.TempDir() + "/update-staged"
+	t.Setenv("UPDATE_DOCKER_STAGE_FILE", stageFile)
+	commit := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	require.NoError(t, os.WriteFile(stageFile, []byte("ghcr.io/yunyar/sub2api:custom-"+commit), 0600))
+	svc := NewUpdateServiceWithCommit(&updateServiceCacheStub{}, &branchUpdateClientStub{}, "0.1.0", "release", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	originalRunner := dockerCommandRunner
+	dockerCommandRunner = func(context.Context, ...string) error { return errors.New("docker daemon unavailable") }
+	t.Cleanup(func() { dockerCommandRunner = originalRunner })
+
+	err := svc.RestartDocker(context.Background())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "start update helper")
+	require.Contains(t, err.Error(), "docker daemon unavailable")
 }
 
 func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {

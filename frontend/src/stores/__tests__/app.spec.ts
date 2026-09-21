@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useAppStore } from '@/stores/app'
 import { getPublicSettings } from '@/api/auth'
+import { checkUpdates } from '@/api/admin/system'
 import type { PublicSettings } from '@/types'
 
 function createDeferred<T>() {
@@ -81,6 +82,7 @@ describe('useAppStore', () => {
     vi.useFakeTimers()
     localStorage.clear()
     vi.mocked(getPublicSettings).mockReset()
+    vi.mocked(checkUpdates).mockReset()
     // 清除 window.__APP_CONFIG__
     delete (window as any).__APP_CONFIG__
   })
@@ -321,6 +323,42 @@ describe('useAppStore', () => {
       expect(store.sidebarCollapsed).toBe(false)
       expect(store.loading).toBe(false)
       expect(store.toasts).toHaveLength(0)
+    })
+  })
+
+  // --- 版本更新 ---
+
+  describe('版本更新状态', () => {
+    it('保留 Docker 下载后等待重启的状态', async () => {
+      vi.mocked(checkUpdates).mockResolvedValue({
+        current_version: '0.1.0',
+        latest_version: 'abcdef123456',
+        has_update: true,
+        cached: false,
+        build_type: 'release',
+        update_mode: 'docker',
+        current_commit: '123456789abc',
+        latest_commit: 'abcdef123456',
+        branch: 'custom/community-qrcode',
+        staged: true,
+        warning: 'GitHub temporarily unavailable'
+      })
+      const store = useAppStore()
+
+      await store.fetchVersion()
+      store.clearVersionCache()
+      const cached = await store.fetchVersion()
+
+      expect(store.updateMode).toBe('docker')
+      expect(store.stagedUpdate).toBe(true)
+      expect(store.latestCommit).toBe('abcdef123456')
+      expect(store.versionWarning).toBe('GitHub temporarily unavailable')
+      expect(cached).toMatchObject({
+        update_mode: 'docker',
+        staged: true,
+        warning: 'GitHub temporarily unavailable'
+      })
+      expect(checkUpdates).toHaveBeenCalledTimes(2)
     })
   })
 

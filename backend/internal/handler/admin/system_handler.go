@@ -213,6 +213,17 @@ func (h *SystemHandler) RestartService(c *gin.Context) {
 			release("", succeeded)
 		}()
 
+		if dockerUpdater, ok := h.updateSvc.(interface {
+			RestartDocker(context.Context) error
+			DockerUpdateEnabled() bool
+		}); ok && dockerUpdater.DockerUpdateEnabled() {
+			if err := dockerUpdater.RestartDocker(ctx); err != nil {
+				return nil, err
+			}
+			succeeded = true
+			return gin.H{"message": "Docker service restart initiated", "operation_id": lock.OperationID()}, nil
+		}
+
 		// Schedule service restart in background after sending response
 		// This ensures the client receives the success response before the service restarts
 		go func() {

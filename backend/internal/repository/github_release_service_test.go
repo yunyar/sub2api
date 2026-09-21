@@ -106,6 +106,56 @@ func TestGitHubReleaseClientRedirectAuthorization(t *testing.T) {
 	}
 }
 
+func TestGitHubReleaseClientHasPublishedCustomImageRequiresLatestSuccessfulMatchingRun(t *testing.T) {
+	commit := "5f6acdd1bb9d11bd26bf3447203f881198c24988"
+	branch := "custom/community-qrcode"
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "latest matching run succeeded",
+			body: `{"workflow_runs":[{"head_sha":"5f6acdd1bb9d11bd26bf3447203f881198c24988","head_branch":"custom/community-qrcode","conclusion":"success"}]}`,
+			want: true,
+		},
+		{
+			name: "latest matching run failed despite older success",
+			body: `{"workflow_runs":[{"head_sha":"5f6acdd1bb9d11bd26bf3447203f881198c24988","head_branch":"custom/community-qrcode","conclusion":"failure"},{"head_sha":"5f6acdd1bb9d11bd26bf3447203f881198c24988","head_branch":"custom/community-qrcode","conclusion":"success"}]}`,
+			want: false,
+		},
+		{
+			name: "different branch is rejected",
+			body: `{"workflow_runs":[{"head_sha":"5f6acdd1bb9d11bd26bf3447203f881198c24988","head_branch":"main","conclusion":"success"}]}`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			srv := newLocalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				require.Contains(t, r.URL.Path, "/repos/yunyar/sub2api/actions/workflows/")
+				require.Contains(t, r.URL.Path, "/runs")
+				require.Equal(t, commit, r.URL.Query().Get("head_sha"))
+				require.Empty(t, r.URL.Query().Get("status"))
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+			client := &githubReleaseClient{httpClient: &http.Client{Transport: &testTransport{testServerURL: srv.URL}}}
+
+			published, err := client.HasPublishedCustomImage(context.Background(), "yunyar/sub2api", branch, commit)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, published)
+			if tt.want {
+				require.Equal(t, 3, calls)
+			}
+		})
+	}
+}
+
 func TestGitHubReleaseClientDoesNotAuthorizeDownloads(t *testing.T) {
 	client := newTestGitHubReleaseClient()
 	client.updateGitHubToken = "update-secret"

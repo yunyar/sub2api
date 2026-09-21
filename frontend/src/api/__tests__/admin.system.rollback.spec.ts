@@ -12,7 +12,7 @@ vi.mock('../client', () => ({
   },
 }))
 
-import { getRollbackVersions, rollback, type RollbackVersionInfo } from '@/api/admin/system'
+import { checkUpdates, getRollbackVersions, rollback, type RollbackVersionInfo } from '@/api/admin/system'
 
 describe('admin system rollback API', () => {
   beforeEach(() => {
@@ -34,6 +34,34 @@ describe('admin system rollback API', () => {
 
     expect(get).toHaveBeenCalledWith('/admin/system/rollback-versions')
     expect(result.versions).toEqual(versions)
+  })
+
+  it('preserves Docker update metadata returned by the update check', async () => {
+    get.mockResolvedValue({
+      data: {
+        current_version: '0.1.0',
+        latest_version: 'abcdef123456',
+        has_update: true,
+        cached: false,
+        build_type: 'release',
+        update_mode: 'docker',
+        current_commit: '123456789abc',
+        latest_commit: 'abcdef123456',
+        branch: 'custom/community-qrcode',
+        staged: true
+      }
+    })
+
+    const result = await checkUpdates(true)
+
+    expect(get).toHaveBeenCalledWith('/admin/system/check-updates', {
+      params: { force: 'true' }
+    })
+    expect(result).toMatchObject({
+      update_mode: 'docker',
+      staged: true,
+      latest_commit: 'abcdef123456'
+    })
   })
 
   it('rollback posts the target version in the request body', async () => {

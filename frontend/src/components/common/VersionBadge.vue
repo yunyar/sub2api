@@ -87,7 +87,7 @@
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
                   <span
-                    v-if="!hasUpdate"
+                    v-if="!hasUpdate && !versionWarning"
                     class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
                   >
                     <svg
@@ -106,8 +106,12 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
                   {{
                     hasUpdate
-                      ? t('version.latestVersion') + ': v' + latestVersion
-                      : t('version.upToDate')
+                      ? isDockerUpdate
+                        ? t('version.latestCommit') + ': ' + latestVersion
+                        : t('version.latestVersion') + ': v' + latestVersion
+                      : versionWarning
+                        ? t('version.updateCheckWarning')
+                        : t('version.upToDate')
                   }}
                 </p>
               </div>
@@ -147,6 +151,42 @@
                 </button>
               </div>
 
+              <div v-if="versionWarning" class="space-y-2">
+                <div
+                  class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20"
+                >
+                  <Icon
+                    name="exclamationTriangle"
+                    size="sm"
+                    :stroke-width="2"
+                    class="mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400"
+                  />
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">
+                      {{ t('version.updateCheckWarning') }}
+                    </p>
+                    <p class="mt-1 break-words text-xs text-amber-600/80 dark:text-amber-400/80">
+                      {{ versionWarning }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="isDockerUpdate && stagedUpdate" class="space-y-2">
+                <div class="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-800/50 dark:bg-green-900/20">
+                  <Icon name="check" size="sm" :stroke-width="2" class="text-green-600 dark:text-green-400" />
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-green-700 dark:text-green-300">{{ t('version.dockerUpdateDownloaded') }}</p>
+                    <p class="text-xs text-green-600/70 dark:text-green-400/70">{{ t('version.restartRequired') }}</p>
+                  </div>
+                </div>
+                <p v-if="restartError" class="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-600 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400">{{ restartError }}</p>
+                <button @click="handleRestart" :disabled="restarting" class="flex w-full items-center justify-center gap-2 rounded-lg bg-green-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Icon v-if="!restarting" name="refresh" size="sm" :stroke-width="2" />
+                  <span>{{ restarting ? t('version.restarting') : t('version.restartNow') }}</span>
+                </button>
+              </div>
+
               <!-- Priority 2: Update success - need restart -->
               <div v-else-if="updateSuccess && needRestart" class="space-y-2">
                 <div
@@ -178,6 +218,13 @@
                     </p>
                   </div>
                 </div>
+
+                <p
+                  v-if="restartError"
+                  class="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-600 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400"
+                >
+                  {{ restartError }}
+                </p>
 
                 <!-- Restart button with countdown -->
                 <button
@@ -230,7 +277,7 @@
               </div>
 
               <!-- Priority 3: Update available for source build - show git pull hint -->
-              <div v-else-if="hasUpdate && !isReleaseBuild" class="space-y-2">
+              <div v-else-if="hasUpdate && !isReleaseBuild && !isDockerUpdate" class="space-y-2">
                 <a
                   v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'"
                   :href="releaseInfo.html_url"
@@ -253,7 +300,13 @@
                       {{ t('version.updateAvailable') }}
                     </p>
                     <p class="text-xs text-amber-600/70 dark:text-amber-400/70">
-                      v{{ latestVersion }}
+                      <template v-if="isDockerUpdate">
+                        {{ t('version.commit') }} {{ latestVersion }}
+                      </template>
+                      <template v-else>v{{ latestVersion }}</template>
+                    </p>
+                    <p v-if="isDockerUpdate && releaseInfo?.name" class="mt-1 truncate text-[11px] text-gray-500 dark:text-dark-400">
+                      {{ releaseInfo.name }}
                     </p>
                   </div>
                   <svg
@@ -290,6 +343,25 @@
               </div>
 
               <!-- Priority 4: Update available for release build - show update button -->
+              <div v-else-if="hasUpdate && isDockerUpdate" class="space-y-2">
+                <div class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/50 dark:bg-amber-900/20">
+                  <Icon name="download" size="sm" :stroke-width="2" class="text-amber-600 dark:text-amber-400" />
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-amber-700 dark:text-amber-300">{{ t('version.updateAvailable') }}</p>
+                    <p class="text-xs text-amber-600/70 dark:text-amber-400/70">{{ t('version.latestCommit') }} {{ latestVersion }}</p>
+                  </div>
+                </div>
+                <p v-if="releaseInfo?.body" class="line-clamp-3 text-xs leading-5 text-gray-500 dark:text-dark-400">{{ releaseInfo.body }}</p>
+                <button @click="handleUpdate" :disabled="updating" class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Icon v-if="!updating" name="download" size="sm" :stroke-width="2" />
+                  <span>{{ updating ? t('version.downloading') : t('version.downloadUpdate') }}</span>
+                </button>
+                <a v-if="releaseInfo?.html_url && releaseInfo.html_url !== '#'" :href="releaseInfo.html_url" target="_blank" rel="noopener noreferrer" class="flex items-center justify-center gap-1 text-xs text-gray-500 transition-colors hover:text-gray-700 dark:text-dark-400 dark:hover:text-dark-200">
+                  {{ t('version.viewUpdateNotes') }}
+                  <Icon name="externalLink" size="xs" :stroke-width="2" />
+                </a>
+              </div>
+
               <div v-else-if="hasUpdate && isReleaseBuild" class="space-y-2">
                 <!-- Update info card -->
                 <div
@@ -373,7 +445,7 @@
                 </a>
 
                 <!-- Version rollback entry -->
-                <div class="border-t border-gray-100 pt-2 dark:border-dark-700">
+                <div v-if="!isDockerUpdate" class="border-t border-gray-100 pt-2 dark:border-dark-700">
                   <button
                     @click="toggleRollbackPanel"
                     class="group flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-600 dark:text-dark-500 dark:hover:bg-dark-700/50 dark:hover:text-dark-300"
@@ -652,6 +724,7 @@ import Icon from '@/components/icons/Icon.vue'
 const GITHUB_REPO = 'Wei-Shaw/sub2api'
 // Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
 const DOCKER_IMAGE = 'weishaw/sub2api'
+const UPDATE_CHECK_INTERVAL_MS = 20 * 60 * 1000
 
 const { t } = useI18n()
 
@@ -666,6 +739,7 @@ const isAdmin = computed(() => authStore.isAdmin)
 
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
+let updateCheckInterval: ReturnType<typeof setInterval> | undefined
 
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
@@ -674,12 +748,17 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
+const updateMode = computed(() => appStore.updateMode)
+const isDockerUpdate = computed(() => updateMode.value === 'docker')
+const stagedUpdate = computed(() => appStore.stagedUpdate)
+const versionWarning = computed(() => appStore.versionWarning)
 
 // Update process states (local to this component)
 const updating = ref(false)
 const restarting = ref(false)
 const needRestart = ref(false)
 const updateError = ref('')
+const restartError = ref('')
 const updateSuccess = ref(false)
 const restartCountdown = ref(0)
 // Distinguishes the success + restart panel between update and rollback flows
@@ -742,6 +821,7 @@ async function refreshVersion(force = true) {
 
   // Reset update states when refreshing
   updateError.value = ''
+  restartError.value = ''
   updateSuccess.value = false
   needRestart.value = false
   resetRollbackState()
@@ -763,6 +843,7 @@ async function handleUpdate() {
     needRestart.value = result.need_restart
     // Clear version cache to reflect update completed
     appStore.clearVersionCache()
+    await appStore.fetchVersion(false)
   } catch (error: unknown) {
     const err = error as { response?: { data?: { message?: string } }; message?: string }
     updateError.value = err.response?.data?.message || err.message || t('version.updateFailed')
@@ -850,14 +931,18 @@ async function handleRestart() {
   if (restarting.value) return
 
   restarting.value = true
+  restartError.value = ''
   restartCountdown.value = 8
 
   try {
     await restartService()
     // Service will restart, page will reload automatically or show disconnected
-  } catch (error) {
-    // Expected - connection will be lost during restart
-    console.log('Service restarting...')
+  } catch (error: unknown) {
+    const err = error as { response?: { data?: { message?: string } }; message?: string }
+    restartError.value = err.response?.data?.message || err.message || t('version.restartFailed')
+    restarting.value = false
+    restartCountdown.value = 0
+    return
   }
 
   // Start countdown
@@ -911,11 +996,18 @@ onMounted(() => {
   if (isAdmin.value) {
     // Use cached version if available, otherwise fetch
     appStore.fetchVersion(false)
+    updateCheckInterval = setInterval(() => {
+      appStore.clearVersionCache()
+      void appStore.fetchVersion(false)
+    }, UPDATE_CHECK_INTERVAL_MS)
   }
   document.addEventListener('click', handleClickOutside)
 })
 
 onBeforeUnmount(() => {
+  if (updateCheckInterval !== undefined) {
+    clearInterval(updateCheckInterval)
+  }
   document.removeEventListener('click', handleClickOutside)
 })
 </script>

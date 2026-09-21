@@ -745,6 +745,14 @@
             </div>
 
             <div v-if="!configForm.all_groups" class="space-y-4">
+              <div
+                v-if="missingGroupIds.length > 0"
+                data-test="missing-audit-groups"
+                class="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-800/70 dark:bg-amber-900/20 dark:text-amber-200"
+              >
+                <Icon name="exclamationTriangle" size="sm" class="mt-0.5 flex-shrink-0" />
+                <p>{{ t('admin.riskControl.missingGroupsWarning', { ids: missingGroupIds.join(', ') }) }}</p>
+              </div>
               <div class="relative">
                 <Icon name="search" size="sm" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input v-model.trim="groupSearch" type="search" class="input pl-9" :placeholder="t('admin.riskControl.searchGroups')" />
@@ -1241,6 +1249,7 @@ const activeSettingsTab = ref<SettingsTab>('basic')
 const groupSearch = ref('')
 const flaggedHashInput = ref('')
 const groups = ref<AdminGroup[]>([])
+const knownGroups = ref<AdminGroup[]>([])
 const proxies = ref<Proxy[]>([])
 const logs = ref<ContentModerationLog[]>([])
 const status = ref<ContentModerationRuntimeStatus | null>(null)
@@ -1491,7 +1500,17 @@ const groupFilterOptions = computed<SelectOption[]>(() => [
   })),
 ])
 
-const selectedGroupCount = computed(() => String(configForm.group_ids.length))
+const knownGroupIds = computed(() => new Set(knownGroups.value.map((group) => group.id)))
+
+const validSelectedGroupIds = computed(() => (
+  configForm.group_ids.filter((groupID) => knownGroupIds.value.has(groupID))
+))
+
+const missingGroupIds = computed(() => (
+  configForm.group_ids.filter((groupID) => !knownGroupIds.value.has(groupID))
+))
+
+const selectedGroupCount = computed(() => String(validSelectedGroupIds.value.length))
 
 const modelFilterModelCount = computed(() => configForm.model_filter_models.length)
 
@@ -1834,15 +1853,17 @@ function applyConfig(config: ContentModerationConfig) {
 async function loadAll() {
   loading.value = true
   try {
-    const [config, groupItems, runtimeStatus, proxyItems] = await Promise.all([
+    const [config, groupItems, knownGroupItems, runtimeStatus, proxyItems] = await Promise.all([
       adminAPI.riskControl.getConfig(),
       adminAPI.groups.getAll(),
+      adminAPI.groups.getAllIncludingInactive(),
       adminAPI.riskControl.getStatus(),
       // 代理列表加载失败不阻塞风控页面（仅影响下拉可选项）
       adminAPI.proxies.getAll().catch(() => [] as Proxy[]),
     ])
     applyConfig(config)
     groups.value = groupItems
+    knownGroups.value = knownGroupItems
     status.value = runtimeStatus
     proxies.value = proxyItems
     if ((runtimeStatus.engine ?? 'openai') === configForm.engine && Array.isArray(runtimeStatus.api_key_statuses)) {
@@ -1883,6 +1904,11 @@ async function saveConfig() {
       appStore.showError(t('admin.riskControl.modelFilterModelsRequired'))
       return
     }
+    const groupIDs = configForm.all_groups ? [] : [...validSelectedGroupIds.value]
+    if (!configForm.all_groups && groupIDs.length === 0) {
+      appStore.showError(t('admin.riskControl.groupSelectionRequired'))
+      return
+    }
     const payload: UpdateContentModerationConfig = {
       engine: configForm.engine,
       enabled: configForm.enabled,
@@ -1895,7 +1921,7 @@ async function saveConfig() {
       retry_count: Number(configForm.retry_count) || 0,
       sample_rate: Number(configForm.sample_rate) || 0,
       all_groups: configForm.all_groups,
-      group_ids: configForm.all_groups ? [] : [...configForm.group_ids],
+      group_ids: groupIDs,
       record_non_hits: configForm.record_non_hits,
       clear_api_key: configForm.clear_api_key,
       worker_count: Number(configForm.worker_count) || 4,
