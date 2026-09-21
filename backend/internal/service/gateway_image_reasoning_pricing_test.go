@@ -73,17 +73,16 @@ func TestRecordUsage_ImageReasoningPricing(t *testing.T) {
 							if effort == "high" {
 								wantTotal *= 2
 							}
-							wantRate := 0.5
-							if independent {
-								wantRate = 0.25
-							}
+							wantRate := 0.25
 							require.NotNil(t, usageRepo.lastLog)
 							require.InDelta(t, wantTotal, usageRepo.lastLog.TotalCost, 1e-12)
 							require.InDelta(t, wantTotal*wantRate, usageRepo.lastLog.ActualCost, 1e-12)
 							require.InDelta(t, wantTotal*wantRate, userRepo.lastAmount, 1e-12)
+							require.InDelta(t, wantRate, usageRepo.lastLog.RateMultiplier, 1e-12)
 							require.Equal(t, forwardedEffort, usageRepo.lastLog.ReasoningEffort)
 							require.Equal(t, 2, usageRepo.lastLog.ImageCount)
-							require.Equal(t, string(mode), *usageRepo.lastLog.BillingMode)
+							require.NotNil(t, usageRepo.lastLog.BillingMode)
+							require.Equal(t, string(BillingModeImage), *usageRepo.lastLog.BillingMode)
 						})
 					}
 				}

@@ -275,6 +275,8 @@ See `.env.example` for all available options.
 
 The optional `docker-compose.custom-updater.yml` overlay enables the custom branch's update notification flow. Use the UI to check for an update and download it. Downloading stages and validates the new image reference without restarting a service; restart from the UI separately to activate it.
 
+The backend validates Docker commands against fixed `pull`, helper `stage`, and helper `activate` argument forms before executing Docker directly without a shell. Image references must match the configured GHCR repository and a full 40-character commit SHA tag; paths, deployment containment, service and project names, and health timeouts are validated, and extra command arguments are rejected. State file access uses a directory-scoped filesystem root to prevent symlink escapes. Gosec's G702 taint analysis does not recognize this custom allowlist validation, so `backend/.golangci.yml` excludes only G702 at the exact `exec.CommandContext(ctx, "docker", args...)` source line in `internal/service/update_service.go`; other commands, files, and findings remain checked.
+
 For an existing deployment, export the overlay path before recreating only the application service:
 
 ```bash

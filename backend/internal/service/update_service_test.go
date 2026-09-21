@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,6 +186,7 @@ func TestUpdateServiceDockerDownloadPullsAndStagesWithHostPaths(t *testing.T) {
 	var calls [][]string
 	originalRunner := dockerCommandRunner
 	dockerCommandRunner = func(_ context.Context, args ...string) error {
+		require.NoError(t, validateDockerCommandArgs(args))
 		calls = append(calls, append([]string(nil), args...))
 		return nil
 	}
@@ -214,6 +217,7 @@ func TestUpdateServiceDockerRestartStartsOnlyHelperWithHostPaths(t *testing.T) {
 	var calls [][]string
 	originalRunner := dockerCommandRunner
 	dockerCommandRunner = func(_ context.Context, args ...string) error {
+		require.NoError(t, validateDockerCommandArgs(args))
 		calls = append(calls, append([]string(nil), args...))
 		return nil
 	}
@@ -245,6 +249,69 @@ func TestUpdateServiceDockerRestartPropagatesCLIError(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "start update helper")
 	require.Contains(t, err.Error(), "docker daemon unavailable")
+}
+
+func TestUpdateServiceDockerStateContainment(t *testing.T) {
+	directory := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.WriteFile(outside, []byte("unchanged"), 0600))
+	link := filepath.Join(directory, "update-staged")
+	require.NoError(t, os.Symlink(outside, link))
+	_, err := readDockerState(link)
+	require.Error(t, err)
+	require.Error(t, writeDockerState(link, []byte("overwrite")))
+	data, err := os.ReadFile(outside)
+	require.NoError(t, err)
+	require.Equal(t, "unchanged", string(data))
+	for _, path := range []string{"relative/state", directory + "/../outside", "/state", directory + "/state\n"} {
+		_, err := readDockerState(path)
+		require.Error(t, err, path)
+		require.Error(t, writeDockerState(path, nil), path)
+	}
+	regular := filepath.Join(directory, "regular")
+	require.NoError(t, writeDockerState(regular, []byte("stage")))
+	data, err = readDockerState(regular)
+	require.NoError(t, err)
+	require.Equal(t, "stage", string(data))
+}
+
+func TestUpdateServiceDockerRejectsUnsafeConfiguration(t *testing.T) {
+	for _, test := range []struct{ key, value string }{
+		{"UPDATE_DOCKER_HOST_DEPLOY_DIR", "/"},
+		{"UPDATE_DOCKER_HOST_DEPLOY_DIR", "/srv/app:rw"},
+		{"UPDATE_DOCKER_COMPOSE_FILE", "/etc/compose.yml"},
+		{"UPDATE_DOCKER_COMPOSE_OVERLAY_FILE", "/srv/app/../other.yml"},
+		{"UPDATE_DOCKER_STAGE_FILE", "../stage"},
+		{"UPDATE_DOCKER_COMPOSE_SERVICE", "--privileged"},
+		{"UPDATE_DOCKER_COMPOSE_PROJECT_NAME", "project;echo"},
+		{"UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS", "0"},
+		{"UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS", "3601"},
+	} {
+		t.Run(test.key+test.value, func(t *testing.T) {
+			t.Setenv("UPDATE_DOCKER_HOST_DEPLOY_DIR", "/srv/app")
+			t.Setenv("UPDATE_DOCKER_COMPOSE_FILE", "/srv/app/compose.yml")
+			t.Setenv(test.key, test.value)
+			require.Error(t, validateDockerUpdatePaths())
+		})
+	}
+}
+
+func TestUpdateServiceDockerCommandAllowlist(t *testing.T) {
+	t.Setenv("UPDATE_DOCKER_IMAGE", "ghcr.io/yunyar/sub2api")
+	image := "ghcr.io/yunyar/sub2api:custom-" + strings.Repeat("a", 40)
+	require.NoError(t, validateDockerCommandArgs([]string{"pull", image}))
+	for _, args := range [][]string{
+		{"pull", "--help"},
+		{"pull", "ghcr.io/other/image:custom-" + strings.Repeat("a", 40)},
+		{"pull", "ghcr.io/yunyar/sub2api:latest"},
+		{"pull", image, "--all-tags"},
+		{"run", "--privileged", image},
+		{"compose", "up", "-d"},
+	} {
+		require.Error(t, validateDockerCommandArgs(args), args)
+	}
+	t.Setenv("UPDATE_DOCKER_IMAGE", "--config=/tmp/evil")
+	require.False(t, isCustomImageReference("--config=/tmp/evil:custom-"+strings.Repeat("a", 40)))
 }
 
 func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {

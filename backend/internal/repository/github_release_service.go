@@ -164,7 +164,7 @@ func (c *githubReleaseClient) FetchBranchCommit(ctx context.Context, repo, branc
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
 	}
@@ -197,7 +197,7 @@ func (c *githubReleaseClient) HasPublishedCustomImage(ctx context.Context, repo,
 			} `json:"workflow_runs"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if decodeErr != nil {
 			return false, decodeErr
 		}

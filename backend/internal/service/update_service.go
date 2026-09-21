@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -298,10 +299,13 @@ func addUpdateWarning(info *UpdateInfo, warning string) {
 
 func (s *UpdateService) dockerStagedImage() (string, bool, error) {
 	if stateDir := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_HOST_STATE_DIR")); stateDir != "" {
+		if err := validateDockerPath(stateDir); err != nil {
+			return "", false, err
+		}
 		stateFile := filepath.Join(stateDir, filepath.Base(dockerComposeFile())+".update-stage")
-		data, err := os.ReadFile(stateFile)
+		data, err := readDockerState(stateFile)
 		if os.IsNotExist(err) {
-			_ = os.Remove(dockerStageFile())
+			_ = removeDockerState(dockerStageFile())
 			return "", false, nil
 		}
 		if err != nil {
@@ -313,9 +317,12 @@ func (s *UpdateService) dockerStagedImage() (string, bool, error) {
 		}
 		return image, true, nil
 	}
-	data, err := os.ReadFile(dockerStageFile())
+	data, err := readDockerState(dockerStageFile())
 	if err != nil {
-		return "", false, nil
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
 	}
 	image := strings.TrimSpace(string(data))
 	if !isCustomImageReference(image) {
@@ -323,7 +330,7 @@ func (s *UpdateService) dockerStagedImage() (string, bool, error) {
 	}
 	stagedCommit := strings.TrimPrefix(image[strings.LastIndex(image, ":")+1:], "custom-")
 	if strings.EqualFold(stagedCommit, s.currentCommit) {
-		_ = os.Remove(dockerStageFile())
+		_ = removeDockerState(dockerStageFile())
 		return "", false, nil
 	}
 	return image, true, nil
@@ -348,6 +355,9 @@ func (s *UpdateService) performDockerUpdate(ctx context.Context) error {
 		return err
 	}
 	tag := image + ":custom-" + info.LatestCommit
+	if !isCustomImageReference(tag) {
+		return fmt.Errorf("invalid custom image reference")
+	}
 	if err := dockerCommandRunner(ctx, "pull", tag); err != nil {
 		return fmt.Errorf("pull image: %w", err)
 	}
@@ -365,7 +375,7 @@ func (s *UpdateService) performDockerUpdate(ctx context.Context) error {
 	if err := dockerCommandRunner(ctx, args...); err != nil {
 		return fmt.Errorf("stage compose update: %w", err)
 	}
-	if err := os.WriteFile(dockerStageFile(), []byte(tag+"\n"), 0600); err != nil {
+	if err := writeDockerState(dockerStageFile(), []byte(tag+"\n")); err != nil {
 		return fmt.Errorf("write staged update state: %w", err)
 	}
 	return nil
@@ -374,6 +384,9 @@ func (s *UpdateService) performDockerUpdate(ctx context.Context) error {
 var dockerCommandRunner = runDockerCommand
 
 func runDockerCommand(ctx context.Context, args ...string) error {
+	if err := validateDockerCommandArgs(args); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = append(os.Environ(), "DOCKER_CLI_HINTS=false")
 	output, err := cmd.CombinedOutput()
@@ -435,8 +448,105 @@ func (s *UpdateService) RestartDocker(ctx context.Context) error {
 func (s *UpdateService) DockerUpdateEnabled() bool { return s.updateMode == "docker" }
 
 func isCustomImageReference(image string) bool {
-	tag := image[strings.LastIndex(image, ":")+1:]
-	return strings.HasPrefix(tag, "custom-") && isFullCommitSHA(strings.TrimPrefix(tag, "custom-"))
+	repository, commit, found := strings.Cut(image, ":custom-")
+	configuredRepository := os.Getenv("UPDATE_DOCKER_IMAGE")
+	if configuredRepository == "" {
+		configuredRepository = "ghcr.io/yunyar/sub2api"
+	}
+	return found && repository == configuredRepository && dockerImageRepositoryPattern.MatchString(repository) && isFullCommitSHA(commit)
+}
+
+var dockerImageRepositoryPattern = regexp.MustCompile(`^ghcr\.io/[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+var dockerPathPattern = regexp.MustCompile(`^/[a-zA-Z0-9_./-]+$`)
+var dockerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+var dockerProjectPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+func validateDockerPath(path string) error {
+	if !filepath.IsAbs(path) || path == "/" || filepath.Clean(path) != path || !dockerPathPattern.MatchString(path) {
+		return fmt.Errorf("docker path must be an absolute clean path with safe characters")
+	}
+	return nil
+}
+
+func openDockerStateRoot(path string) (*os.Root, string, error) {
+	if err := validateDockerPath(path); err != nil {
+		return nil, "", err
+	}
+	if filepath.Dir(path) == "/" {
+		return nil, "", fmt.Errorf("docker state file requires a dedicated directory")
+	}
+	root, err := os.OpenRoot(filepath.Dir(path))
+	return root, filepath.Base(path), err
+}
+
+func readDockerState(path string) ([]byte, error) {
+	root, name, err := openDockerStateRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.ReadFile(name)
+}
+
+func writeDockerState(path string, data []byte) error {
+	root, name, err := openDockerStateRoot(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.WriteFile(name, data, 0600)
+}
+
+func removeDockerState(path string) error {
+	root, name, err := openDockerStateRoot(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.Remove(name)
+}
+
+func validateDockerCommandArgs(args []string) error {
+	if len(args) == 2 && args[0] == "pull" && isCustomImageReference(args[1]) {
+		return nil
+	}
+	if err := validateDockerUpdatePaths(); err != nil {
+		return err
+	}
+	if len(args) < 5 {
+		return fmt.Errorf("unsupported docker update command")
+	}
+	tail := args[len(args)-5:]
+	if !isCustomImageReference(tail[0]) || tail[0] != tail[2] || tail[3] != dockerComposeFile() || tail[4] != dockerComposeService() {
+		return fmt.Errorf("invalid docker update helper arguments")
+	}
+	expected := []string{"run", "--rm"}
+	switch tail[1] {
+	case "stage":
+	case "activate":
+		if !strings.HasPrefix(args[4], "sub2api-updater-") {
+			return fmt.Errorf("invalid docker update helper name")
+		}
+		if _, err := strconv.ParseUint(strings.TrimPrefix(args[4], "sub2api-updater-"), 10, 64); err != nil {
+			return fmt.Errorf("invalid docker update helper name")
+		}
+		expected = append(expected, "-d", "--name", args[4])
+	default:
+		return fmt.Errorf("unsupported docker update helper operation")
+	}
+	expected = append(expected, "-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", dockerHostDeployDir()+":"+dockerHostDeployDir())
+	expected = append(expected, dockerUpdateHelperEnv()...)
+	expected = append(expected, "--entrypoint", "/app/docker-update-helper.sh")
+	expected = append(expected, tail...)
+	if len(args) != len(expected) {
+		return fmt.Errorf("unexpected docker update arguments")
+	}
+	for index := range expected {
+		if args[index] != expected[index] {
+			return fmt.Errorf("unexpected docker update argument")
+		}
+	}
+	return nil
 }
 
 func dockerHostDeployDir() string {
@@ -470,19 +580,37 @@ func dockerUpdateHelperEnv() []string {
 
 func validateDockerUpdatePaths() error {
 	hostDir := dockerHostDeployDir()
-	if !filepath.IsAbs(hostDir) {
-		return fmt.Errorf("Docker deployment directory must be absolute")
+	if err := validateDockerPath(hostDir); err != nil {
+		return err
+	}
+	if err := validateDockerPath(dockerStageFile()); err != nil {
+		return err
+	}
+	if filepath.Dir(dockerStageFile()) == "/" {
+		return fmt.Errorf("docker state file requires a dedicated directory")
+	}
+	if !dockerNamePattern.MatchString(dockerComposeService()) {
+		return fmt.Errorf("invalid docker compose service name")
+	}
+	if project := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_COMPOSE_PROJECT_NAME")); project != "" && !dockerProjectPattern.MatchString(project) {
+		return fmt.Errorf("invalid docker compose project name")
+	}
+	if timeout := strings.TrimSpace(os.Getenv("UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS")); timeout != "" {
+		seconds, err := strconv.Atoi(timeout)
+		if err != nil || seconds < 1 || seconds > 3600 {
+			return fmt.Errorf("invalid docker health timeout")
+		}
 	}
 	for _, path := range []string{dockerComposeFile(), strings.TrimSpace(os.Getenv("UPDATE_DOCKER_COMPOSE_OVERLAY_FILE"))} {
 		if path == "" {
 			continue
 		}
-		if !filepath.IsAbs(path) {
-			return fmt.Errorf("Docker compose file paths must be absolute")
+		if err := validateDockerPath(path); err != nil {
+			return err
 		}
 		relativePath, err := filepath.Rel(filepath.Clean(hostDir), filepath.Clean(path))
-		if err != nil || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("Docker compose file must be inside the deployment directory")
+		if err != nil || relativePath == "." || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("docker compose file must be inside the deployment directory")
 		}
 	}
 	return nil
