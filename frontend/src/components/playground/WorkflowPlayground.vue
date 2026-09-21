@@ -180,7 +180,24 @@ function invalidateFrom(index: number) {
   currentStep.value = Math.min(currentStep.value, Math.max(0, index))
 }
 function editStep(index: number) { if (result(steps.value[index].id)) { delete results.value[steps.value[index].id]; delete images.value[steps.value[index].id]; invalidateFrom(index) } }
-function priorContext(): Array<PlaygroundMessage | PlaygroundMultimodalMessage> | null { const output: Array<PlaygroundMessage | PlaygroundMultimodalMessage> = []; for (const step of steps.value.slice(0, currentStep.value)) { const prior = result(step.id); if (!prior) return null; const image = images.value[step.id]; if (prior.kind === 'image') { if (!image || expired(step.id)) return null; output.push({ role: 'user', content: [{ type: 'text', text: prior.content }, { type: 'image_url', image_url: { url: image.url } }] }) } else output.push({ role: 'assistant', content: prior.content }) }; return output }
+function priorContext(): Array<PlaygroundMessage | PlaygroundMultimodalMessage> | null {
+  const output: Array<PlaygroundMessage | PlaygroundMultimodalMessage> = []
+  for (const step of steps.value.slice(0, currentStep.value)) {
+    const prior = result(step.id)
+    if (!prior) return null
+    const image = images.value[step.id]
+    if (prior.kind === 'image') {
+      if (!image || expired(step.id)) return null
+      output.push({
+        role: 'user',
+        content: [{ type: 'text', text: prior.content }, { type: 'image_url', image_url: { url: image.url } }]
+      })
+    } else {
+      output.push({ role: 'assistant', content: prior.content })
+    }
+  }
+  return output
+}
 async function runCurrent(instruction = ''): Promise<boolean> {
   if (locked.value) return false
   const step = current.value
