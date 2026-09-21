@@ -92,11 +92,11 @@
               </template>
             </div>
             <form class="composer" @submit.prevent="send">
-              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t(mode === 'chat' ? 'playground.messagePlaceholder' : 'playground.imagePromptPlaceholder')" :disabled="busy" @keydown.enter.exact="onEnter" />
+              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t(mode === 'chat' ? 'playground.messagePlaceholder' : 'playground.imagePromptPlaceholder')" :disabled="streaming" @keydown.enter.exact="onEnter" />
               <div class="flex items-center justify-between gap-3 px-3 pb-3">
                 <div class="flex items-center gap-1">
-                  <button v-for="option in (['chat', 'images'] as const)" :key="option" type="button" class="mode-button" :class="{ active: mode === option }" :disabled="busy" @click="mode = option">{{ t(`playground.${option}`) }}</button>
-                  <button type="button" class="mode-button" :aria-expanded="settingsOpen" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
+                  <button v-for="option in (['chat', 'images'] as const)" :key="option" type="button" class="mode-button" :class="{ active: mode === option }" :disabled="streaming" @click="mode = option">{{ t(`playground.${option}`) }}</button>
+                  <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="streaming" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
                 </div>
                 <button v-if="streaming" type="button" class="btn btn-secondary" @click="controller?.abort()">{{ t('playground.stop') }}</button>
                 <button v-else class="btn btn-primary" type="submit" :disabled="!canSend">{{ t(mode === 'images' ? 'playground.generate' : 'playground.send') }} ↑</button>
@@ -142,7 +142,7 @@ const saveError = ref('')
 const loadingGroups = ref(false)
 const loadingModels = ref(false)
 const streaming = ref(false)
-const generating = ref(false)
+const generatingCount = ref(0)
 const saving = ref(false)
 const settingsOpen = ref(false)
 const historyOpen = ref(false)
@@ -157,9 +157,11 @@ let controller: AbortController | null = null
 let timer: ReturnType<typeof setInterval> | undefined
 let modelRequest = 0
 let disposed = false
+let saveQueue: Promise<boolean> = Promise.resolve(true)
+const generating = computed(() => generatingCount.value > 0)
 const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
-const canSend = computed(() => hasBalance.value && !busy.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId && current.value.model))
+const canSend = computed(() => hasBalance.value && !streaming.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId && current.value.model))
 const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && image.expiresAt > now.value))
 
 function emptyConversation(): Conversation {
@@ -191,16 +193,22 @@ async function refreshHistory() {
   catch { appStore.showError(t('playground.historyFailed')) }
 }
 async function saveConversation() {
-  if (!current.value.messages.length || saving.value) return true
-  saving.value = true
-  try {
-    const saved = await playgroundHistory.save(JSON.parse(JSON.stringify(current.value)))
-    current.value.revision = saved.revision; current.value.expiresAt = saved.expiresAt
-    conversations.value = [saved, ...conversations.value.filter(item => item.id !== saved.id)]
-    saveError.value = ''
-    return true
-  } catch { saveError.value = t('playground.saveFailed'); return false }
-  finally { saving.value = false }
+  if (!current.value.messages.length) return true
+  const task = saveQueue.then(async () => {
+    saving.value = true
+    try {
+      const saved = await playgroundHistory.save(JSON.parse(JSON.stringify(current.value)))
+      if (current.value.id === saved.id) {
+        current.value.revision = saved.revision; current.value.expiresAt = saved.expiresAt
+      }
+      conversations.value = [saved, ...conversations.value.filter(item => item.id !== saved.id)]
+      saveError.value = ''
+      return true
+    } catch { saveError.value = t('playground.saveFailed'); return false }
+    finally { saving.value = false }
+  })
+  saveQueue = task.catch(() => false)
+  return task
 }
 async function deleteConversation() {
   if (busy.value) return
@@ -238,13 +246,13 @@ async function send() {
   if (!(await saveConversation())) { current.value.messages.pop(); return }
   draft.value = ''; error.value = ''
   if (mode.value === 'images') {
-    generating.value = true
+    generatingCount.value += 1
     try {
       const generated = await playgroundAPI.generateImages({ groupId: current.value.groupId, model: current.value.model, prompt, size: imageSize.value, quality: imageQuality.value, count: 1 })
       if (!disposed) images.value.push(...generated.map(image => ({ id: crypto.randomUUID(), conversationId, messageId: userId, url: image.url, prompt, expiresAt: Date.now() + 600000 })))
       current.value.messages.push({ id: userId + 1, role: 'assistant', content: t('playground.imageRetention') })
     } catch (caught) { error.value = caught instanceof Error ? caught.message : t('playground.imageFailed') }
-    finally { generating.value = false }
+    finally { generatingCount.value -= 1 }
   } else {
     const history: PlaygroundMessage[] = current.value.messages.map(message => ({ role: message.role, content: message.content }))
     if (current.value.systemPrompt) history.unshift({ role: 'system', content: current.value.systemPrompt })
@@ -330,8 +338,16 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(time
 .playground-markdown :deep(td),.playground-markdown :deep(th) { border:1px solid #d1d5db; padding:8px; }
 :global(.dark) .studio { background:#151b26; color:#e5e7eb; border-color:#303747; }
 :global(.dark) .history-panel { background:#111721; border-color:#303747; }
+:global(.dark) .studio-toolbar,:global(.dark) .conversation-scroll,:global(.dark) .composer-area { background:#151b26; border-color:#303747; }
 :global(.dark) .history-item.selected,:global(.dark) .history-item:hover,:global(.dark) .user-bubble { background:#252e3f; }
-:global(.dark) .composer,:global(.dark) .settings-panel,:global(.dark) .image-card,:global(.dark) .suggestion,:global(.dark) .studio-toolbar { border-color:#303747; }
+:global(.dark) .retention-note { color:#64748b; }
+:global(.dark) .composer,:global(.dark) .settings-panel,:global(.dark) .image-card,:global(.dark) .suggestion { border-color:#303747; }
+:global(.dark) .composer { background:#1b2432; }
+:global(.dark) .settings-panel { background:#1b2432; }
+:global(.dark) .composer-input { color:#e5e7eb; }
+:global(.dark) .toolbar-select { color:#e5e7eb; }
+:global(.dark) .mode-button { color:#94a3b8; }
+:global(.dark) .mode-button.active { background:#252e3f; color:#a5b4fc; }
 :global(.dark) .suggestion { background:#1b2432; color:#cbd5e1; }
 :global(.dark) .suggestion:hover { background:#252e3f; }
 :global(.dark) .image-preview { background:#111721; }

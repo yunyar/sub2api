@@ -14,7 +14,14 @@ function normalizeAPIBaseURL(value: unknown): string {
   return normalizePath(withoutTrailingSlash)
 }
 
+function isIPAddress(hostname: string): boolean {
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) || hostname.includes(':')
+}
+
 export function getAPIBaseURL(): string {
+  if (typeof window !== 'undefined' && isIPAddress(window.location.hostname) && (/^[a-z][a-z\d+.-]*:\/\//i.test(API_BASE_URL) || API_BASE_URL.startsWith('//'))) {
+    return DEFAULT_API_BASE_URL
+  }
   return API_BASE_URL
 }
 
