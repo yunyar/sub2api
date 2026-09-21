@@ -18,6 +18,9 @@ type playgroundConversation struct {
 	Title        string                     `json:"title"`
 	GroupID      int64                      `json:"groupId"`
 	Model        string                     `json:"model"`
+	ImageModel   string                     `json:"imageModel,omitempty"`
+	Kind         string                     `json:"kind,omitempty"`
+	Workflow     *playgroundWorkflow        `json:"workflow,omitempty"`
 	SystemPrompt string                     `json:"systemPrompt"`
 	Temperature  float64                    `json:"temperature"`
 	Messages     []playgroundHistoryMessage `json:"messages"`
@@ -29,6 +32,19 @@ type playgroundHistoryMessage struct {
 	ID      int64  `json:"id"`
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	Model   string `json:"model,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	StepID  string `json:"stepId,omitempty"`
+}
+
+type playgroundWorkflow struct {
+	Steps       []playgroundWorkflowStep `json:"steps"`
+	CurrentStep int                      `json:"currentStep"`
+}
+
+type playgroundWorkflowStep struct {
+	ID     string `json:"id"`
+	Prompt string `json:"prompt"`
 }
 
 var playgroundHistoryID = regexp.MustCompile(`^[a-zA-Z0-9-]{1,64}$`)
@@ -100,15 +116,9 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 	})
 	history.PUT("/:id", func(c *gin.Context) {
 		var item playgroundConversation
-		if c.Param("id") == "index" || !playgroundHistoryID.MatchString(c.Param("id")) || c.ShouldBindJSON(&item) != nil || len(item.Messages) == 0 || len(item.Messages) > 200 || len(item.Title) > 240 || len(item.Model) > 256 || item.Revision < 0 || item.Temperature < 0 || item.Temperature > 2 {
+		if c.Param("id") == "index" || !playgroundHistoryID.MatchString(c.Param("id")) || c.ShouldBindJSON(&item) != nil || !validPlaygroundConversation(&item) {
 			response.BadRequest(c, "Invalid conversation (maximum 200 messages)")
 			return
-		}
-		for _, message := range item.Messages {
-			if message.Role != "user" && message.Role != "assistant" {
-				response.BadRequest(c, "Invalid message role")
-				return
-			}
 		}
 		item.ID = c.Param("id")
 		raw, err := json.Marshal(item)
@@ -158,4 +168,40 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 		}
 		response.Success(c, gin.H{})
 	})
+}
+
+func validPlaygroundConversation(item *playgroundConversation) bool {
+	if len(item.Messages) > 200 || len(item.Title) > 240 || len(item.Model) > 256 || len(item.ImageModel) > 256 || item.Revision < 0 || item.Temperature < 0 || item.Temperature > 2 || (item.Kind != "" && item.Kind != "chat" && item.Kind != "workflow") {
+		return false
+	}
+	for _, message := range item.Messages {
+		if (message.Role != "user" && message.Role != "assistant") || len(message.Content) > 32768 || len(message.Model) > 256 || len(message.StepID) > 64 || (message.Kind != "" && message.Kind != "chat" && message.Kind != "image") || len(message.Content) >= 10 && message.Content[:10] == "data:image" {
+			return false
+		}
+	}
+	if item.Kind != "workflow" {
+		return item.Workflow == nil && len(item.Messages) > 0
+	}
+	if item.Workflow == nil || len(item.Workflow.Steps) == 0 || len(item.Workflow.Steps) > 50 || item.Workflow.CurrentStep < 0 || item.Workflow.CurrentStep >= len(item.Workflow.Steps) {
+		return false
+	}
+	stepIDs := make(map[string]struct{}, len(item.Workflow.Steps))
+	for _, step := range item.Workflow.Steps {
+		if !playgroundHistoryID.MatchString(step.ID) || len(step.Prompt) > 16000 {
+			return false
+		}
+		if _, exists := stepIDs[step.ID]; exists {
+			return false
+		}
+		stepIDs[step.ID] = struct{}{}
+	}
+	for _, message := range item.Messages {
+		if message.StepID == "" {
+			return false
+		}
+		if _, exists := stepIDs[message.StepID]; !exists {
+			return false
+		}
+	}
+	return true
 }

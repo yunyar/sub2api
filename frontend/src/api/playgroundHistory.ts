@@ -4,13 +4,22 @@ export interface ConversationMessage {
   id: number
   role: 'user' | 'assistant'
   content: string
+  model?: string
+  kind?: 'chat' | 'image'
+  stepId?: string
 }
+
+export interface WorkflowStep { id: string; prompt: string }
+export interface WorkflowState { steps: WorkflowStep[]; currentStep: number }
 
 export interface Conversation {
   id: string
   title: string
   groupId: number
   model: string
+  imageModel?: string
+  kind?: 'chat' | 'workflow'
+  workflow?: WorkflowState
   systemPrompt: string
   temperature: number
   messages: ConversationMessage[]

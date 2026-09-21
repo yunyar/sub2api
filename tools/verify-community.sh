@@ -19,7 +19,13 @@ fi
 "${pnpm_cmd[@]}" --dir frontend run typecheck
 "${pnpm_cmd[@]}" --dir frontend exec vitest run \
   src/api/__tests__/communityQRCodes.spec.ts \
-  src/api/__tests__/playground.spec.ts
+  src/api/__tests__/playground.spec.ts \
+  src/api/__tests__/url.spec.ts \
+  src/utils/__tests__/playgroundId.spec.ts \
+  src/utils/__tests__/playgroundIntent.spec.ts \
+  src/utils/__tests__/playgroundModel.spec.ts \
+  src/views/user/__tests__/PlaygroundView.spec.ts \
+  src/components/playground/__tests__/WorkflowPlayground.spec.ts
 
 if [[ -n "${GO_BIN:-}" ]]; then
   go_bin="$GO_BIN"

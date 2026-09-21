@@ -12,6 +12,15 @@ export interface PlaygroundMessage {
   content: string
 }
 
+export type PlaygroundContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+export interface PlaygroundMultimodalMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: PlaygroundContentPart[]
+}
+
 export interface PlaygroundImage {
   url: string
   revisedPrompt?: string
@@ -20,7 +29,7 @@ export interface PlaygroundImage {
 interface StreamChatOptions {
   groupId: number
   model: string
-  messages: PlaygroundMessage[]
+  messages: Array<PlaygroundMessage | PlaygroundMultimodalMessage>
   temperature?: number
   signal?: AbortSignal
   onDelta: (content: string) => void
@@ -52,13 +61,17 @@ export function createPlaygroundSSEParser(onDelta: (content: string) => void) {
         .join('\n')
       if (!data || data === '[DONE]') continue
 
+      let parsed: Record<string, any>
       try {
-        const parsed = JSON.parse(data)
-        const content = parsed.choices?.[0]?.delta?.content
-        if (typeof content === 'string') onDelta(content)
+        parsed = JSON.parse(data)
       } catch {
-        // Ignore non-JSON keepalive events.
+        continue
       }
+      if (parsed.type === 'error' || parsed.error) {
+        throw new Error(extractErrorMessage(parsed, 'Streaming request failed'))
+      }
+      const content = parsed.choices?.[0]?.delta?.content
+      if (typeof content === 'string') onDelta(content)
     }
   }
 }
@@ -119,12 +132,21 @@ export async function streamPlaygroundChat(options: StreamChatOptions): Promise<
   const parse = createPlaygroundSSEParser(options.onDelta)
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    parse(decoder.decode(value, { stream: true }))
+  let completed = false
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        completed = true
+        break
+      }
+      parse(decoder.decode(value, { stream: true }))
+    }
+    parse(decoder.decode(), true)
+  } finally {
+    if (!completed) await reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
-  parse(decoder.decode(), true)
 }
 
 export async function generatePlaygroundImages(input: {
@@ -134,6 +156,7 @@ export async function generatePlaygroundImages(input: {
   size: string
   quality: string
   count: number
+  signal?: AbortSignal
 }): Promise<PlaygroundImage[]> {
   const { data } = await apiClient.post('/playground/images/generations', {
     model: input.model,
@@ -142,7 +165,7 @@ export async function generatePlaygroundImages(input: {
     quality: input.quality,
     n: input.count,
     response_format: 'b64_json'
-  }, { headers: groupHeaders(input.groupId), timeout: 180_000 })
+  }, { headers: groupHeaders(input.groupId), timeout: 180_000, signal: input.signal })
 
   const items = Array.isArray(data?.data) ? data.data : []
   return items.map((item: any) => ({

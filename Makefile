@@ -6,6 +6,12 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/admin.system.rollback.spec.ts \
 	src/views/admin/__tests__/RiskControlView.spec.ts \
 	src/utils/__tests__/playgroundModel.spec.ts \
+	src/utils/__tests__/playgroundIntent.spec.ts \
+	src/utils/__tests__/playgroundId.spec.ts \
+	src/api/__tests__/url.spec.ts \
+	src/views/user/__tests__/PlaygroundView.spec.ts \
+	src/components/playground/__tests__/WorkflowPlayground.spec.ts \
+	src/api/__tests__/playground.spec.ts \
 	src/i18n/__tests__/localeKeyCompleteness.spec.ts \
 	src/api/__tests__/client.spec.ts \
 	src/api/__tests__/tokenRefresh.spec.ts \

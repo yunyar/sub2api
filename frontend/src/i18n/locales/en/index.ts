@@ -7,6 +7,7 @@ import admin from './admin'
 import misc from './misc'
 import community from './community'
 import playground from './playground'
+import workflow from './workflow'
 
 export default {
   ...landing,
@@ -17,6 +18,7 @@ export default {
   admin,
   ...misc,
   ...playground,
+  ...workflow,
   ...community,
   nav: {
     ...common.nav,
