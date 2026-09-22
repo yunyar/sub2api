@@ -173,6 +173,32 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		return
 	}
 
+	var playgroundImageHold *service.BatchImageBalanceHoldCommand
+	playgroundImageHoldTransferred := false
+	if endpoint == service.GrokMediaEndpointImagesGenerations && strings.HasPrefix(c.Request.URL.Path, "/api/v1/playground/") && (subscription == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
+		playgroundImageHold, err = h.gatewayService.ReservePlaygroundImageBalance(c.Request.Context(), apiKey, requestModel, requestInfo.SizeTier, requestInfo.N, service.HashUsageRequestPayload(body))
+		if err != nil {
+			switch {
+			case errors.Is(err, service.ErrBatchImageInsufficientBalance):
+				h.errorResponse(c, http.StatusPaymentRequired, "insufficient_balance", "Insufficient balance for image generation")
+			case errors.Is(err, service.ErrPlaygroundImageHoldConflict):
+				h.errorResponse(c, http.StatusConflict, "idempotency_conflict", "An image generation request with this request ID already exists")
+			default:
+				h.errorResponse(c, http.StatusServiceUnavailable, "billing_unavailable", "Unable to reserve image generation balance")
+			}
+			return
+		}
+		defer func() {
+			if playgroundImageHold != nil && !playgroundImageHoldTransferred {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if releaseErr := h.gatewayService.ReleasePlaygroundImageBalance(cleanupCtx, playgroundImageHold); releaseErr != nil {
+					reqLog.Error("grok_media.playground_balance_release_failed", zap.String("hold_id", playgroundImageHold.BatchID), zap.Error(releaseErr))
+				}
+			}
+		}()
+	}
+
 	sessionSeed := body
 	if len(sessionSeed) == 0 && strings.TrimSpace(requestID) != "" {
 		sessionSeed = []byte(requestID)
@@ -516,7 +542,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
-			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID, playgroundImageHold)
+			playgroundImageHoldTransferred = true
 		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -715,7 +742,12 @@ func recordGrokMediaUsage(
 	requestModel string,
 	body []byte,
 	requestID string,
+	playgroundHolds ...*service.BatchImageBalanceHoldCommand,
 ) {
+	var playgroundImageHold *service.BatchImageBalanceHoldCommand
+	if len(playgroundHolds) > 0 {
+		playgroundImageHold = playgroundHolds[0]
+	}
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
@@ -747,20 +779,21 @@ func recordGrokMediaUsage(
 	}
 	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-			Result:             result,
-			APIKey:             apiKey,
-			User:               apiKey.User,
-			Account:            account,
-			Subscription:       subscription,
-			InboundEndpoint:    inboundEndpoint,
-			UpstreamEndpoint:   upstreamEndpoint,
-			UserAgent:          userAgent,
-			IPAddress:          clientIP,
-			RequestPayloadHash: service.HashUsageRequestPayload(payloadForHash),
-			APIKeyService:      h.apiKeyService,
-			QuotaPlatform:      quotaPlatform,
-			SessionID:          sessionID,
-			ChannelUsageFields: channelUsageFields,
+			Result:              result,
+			APIKey:              apiKey,
+			User:                apiKey.User,
+			Account:             account,
+			Subscription:        subscription,
+			InboundEndpoint:     inboundEndpoint,
+			UpstreamEndpoint:    upstreamEndpoint,
+			UserAgent:           userAgent,
+			IPAddress:           clientIP,
+			RequestPayloadHash:  service.HashUsageRequestPayload(payloadForHash),
+			APIKeyService:       h.apiKeyService,
+			QuotaPlatform:       quotaPlatform,
+			SessionID:           sessionID,
+			PlaygroundImageHold: playgroundImageHold,
+			ChannelUsageFields:  channelUsageFields,
 		}); err != nil {
 			if videoTaskID != "" {
 				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID); releaseErr != nil {

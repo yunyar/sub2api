@@ -27,6 +27,10 @@ test -s backend/resources/model-pricing/model_prices_and_context_window.json || 
   fail 'fallback pricing data is missing or empty'
 
 assert_line Dockerfile.goreleaser 'COPY --chown=sub2api:sub2api backend/resources /app/resources'
+assert_line Dockerfile 'COPY deploy/docker-update-helper.sh /app/docker-update-helper.sh'
+assert_line Dockerfile '    docker-cli \'
+assert_line Dockerfile '    docker-cli-compose \'
+assert_line Dockerfile 'RUN chmod +x /app/docker-entrypoint.sh /app/docker-update-helper.sh'
 assert_line deploy/Dockerfile 'COPY --from=backend-builder --chown=sub2api:sub2api /app/backend/resources /app/resources'
 assert_count .goreleaser.yaml '      - backend/resources' 4
 assert_count .goreleaser.simple.yaml '      - backend/resources' 1

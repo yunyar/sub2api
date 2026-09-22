@@ -7,6 +7,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/RiskControlView.spec.ts \
 	src/utils/__tests__/playgroundModel.spec.ts \
 	src/utils/__tests__/playgroundIntent.spec.ts \
+	src/utils/__tests__/playgroundImageCount.spec.ts \
+	src/utils/__tests__/playgroundPreferences.spec.ts \
 	src/utils/__tests__/playgroundId.spec.ts \
 	src/api/__tests__/url.spec.ts \
 	src/views/user/__tests__/PlaygroundView.spec.ts \

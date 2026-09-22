@@ -7,7 +7,7 @@ const IMAGE_REVISION = /(?:再来|再生成|重画|重新画|换成|改成|换�
 export function resolvePlaygroundIntent(prompt: string, previousIntent?: PlaygroundIntent): PlaygroundIntent {
   const text = prompt.trim()
   if (!text || TEXT_REQUEST.test(text)) return 'chat'
-  if (/(?:生图|出图|画图|绘图)(?:[：:，,。！!\s]|$)/.test(text) || IMAGE_REQUEST.test(text)) return 'image'
+  if (/(?:生图|出图|画图|绘图)(?:[：:，,。！!\s]|$)|(?:画|绘制|生成|制作|出)\s*(?:\d+|[一二两三四五六七八九十]+)\s*(?:张|幅)/.test(text) || IMAGE_REQUEST.test(text)) return 'image'
   if (previousIntent === 'image' && IMAGE_REVISION.test(text)) return 'image'
   return 'chat'
 }

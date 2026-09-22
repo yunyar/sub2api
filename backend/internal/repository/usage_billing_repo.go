@@ -110,7 +110,49 @@ func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, t
 }
 
 func (r *usageBillingRepository) ReserveBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+	if cmd != nil && strings.HasPrefix(cmd.BatchID, "playground-image:") {
+		return r.reservePlaygroundImageBalance(ctx, cmd)
+	}
 	return r.applyBatchImageBalanceHold(ctx, cmd, reserveUsageBillingBatchImageBalance)
+}
+
+func (r *usageBillingRepository) reservePlaygroundImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (_ *service.BatchImageBalanceHoldResult, err error) {
+	if r == nil || r.db == nil || cmd == nil {
+		return nil, errors.New("playground image billing repository is not configured")
+	}
+	cmd.Normalize()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if !applied {
+		return &service.BatchImageBalanceHoldResult{Applied: false}, nil
+	}
+	result, err := reserveUsageBillingBatchImageBalance(ctx, tx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO playground_image_balance_holds (batch_id, request_id, user_id, api_key_id, hold_amount, unit_amount, requested_count, payload_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, cmd.BatchID, cmd.RequestID, cmd.UserID, cmd.APIKeyID, cmd.HoldAmount, cmd.UnitAmount, cmd.RequestedCount, cmd.RequestPayloadHash); err != nil {
+		return nil, err
+	}
+	result.Applied = true
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return result, nil
 }
 
 func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
@@ -118,7 +160,102 @@ func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, c
 }
 
 func (r *usageBillingRepository) ReleaseBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+	if cmd != nil && strings.HasPrefix(cmd.BatchID, "playground-image:") {
+		return r.releasePlaygroundImageBalance(ctx, cmd)
+	}
 	return r.applyBatchImageBalanceHold(ctx, cmd, releaseUsageBillingBatchImageBalance)
+}
+
+func (r *usageBillingRepository) releasePlaygroundImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (_ *service.BatchImageBalanceHoldResult, err error) {
+	if r == nil || r.db == nil || cmd == nil {
+		return nil, errors.New("playground image billing repository is not configured")
+	}
+	cmd.Normalize()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if !applied {
+		return &service.BatchImageBalanceHoldResult{Applied: false}, nil
+	}
+	result, err := releaseUsageBillingBatchImageBalance(ctx, tx, cmd)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE playground_image_balance_holds SET status = 'released', settled_at = NOW() WHERE batch_id = $1 AND status = 'pending'`, cmd.BatchID); err != nil {
+		return nil, err
+	}
+	result.Applied = true
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return result, nil
+}
+
+func (r *usageBillingRepository) SettlePlaygroundImageBalance(ctx context.Context, hold *service.BatchImageBalanceHoldCommand, usage *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
+	if r == nil || r.db == nil || hold == nil || usage == nil {
+		return nil, errors.New("playground image billing settlement is not configured")
+	}
+	hold.Normalize()
+	usage.Normalize()
+	if hold.RequestID == "" || usage.RequestID == "" {
+		return nil, service.ErrUsageBillingRequestIDRequired
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	captured, err := r.claimUsageBillingRequest(ctx, tx, hold.RequestID, hold.APIKeyID, hold.RequestFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if !captured {
+		return &service.UsageBillingApplyResult{Applied: false}, nil
+	}
+	holdResult, err := captureUsageBillingBatchImageBalance(ctx, tx, hold)
+	if err != nil {
+		return nil, err
+	}
+	applied, err := r.claimUsageBillingKey(ctx, tx, usage)
+	if err != nil {
+		return nil, err
+	}
+	if !applied {
+		return nil, service.ErrUsageBillingRequestConflict
+	}
+	result := &service.UsageBillingApplyResult{Applied: true}
+	if holdResult != nil {
+		result.NewBalance = holdResult.NewBalance
+	}
+	if err := r.applyUsageBillingEffects(ctx, tx, usage, result); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE playground_image_balance_holds SET status = 'captured', actual_amount = $1, settled_at = NOW()
+		WHERE batch_id = $2 AND status = 'pending'
+	`, hold.ActualAmount, hold.BatchID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	return result, nil
 }
 
 func (r *usageBillingRepository) applyBatchImageBalanceHold(

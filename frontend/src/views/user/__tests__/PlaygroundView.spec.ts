@@ -13,6 +13,11 @@ const state = vi.hoisted(() => ({
   refreshUser: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn(),
+  balance: 10,
+  cachePut: vi.fn(),
+  cacheList: vi.fn(),
+  cacheDeleteConversation: vi.fn(),
+  cacheDeleteExpired: vi.fn(),
   nextId: 0
 }))
 
@@ -25,7 +30,7 @@ vi.mock('@/components/playground/WorkflowPlayground.vue', () => ({
   }
 }))
 vi.mock('@/stores', () => ({
-  useAuthStore: () => ({ user: { balance: 10 }, refreshUser: state.refreshUser }),
+  useAuthStore: () => ({ user: { get balance() { return state.balance } }, refreshUser: state.refreshUser }),
   useAppStore: () => ({ showError: state.showError, showSuccess: state.showSuccess })
 }))
 vi.mock('@/api/groups', () => ({ userGroupsAPI: { getAvailable: state.getAvailable } }))
@@ -47,6 +52,14 @@ vi.mock('@/utils/playgroundIntent', () => ({
   resolvePlaygroundIntent: (prompt: string, previous?: string) => prompt.startsWith('draw') || (previous === 'image' && prompt === 'brighter') ? 'image' : 'chat'
 }))
 vi.mock('@/utils/playgroundId', () => ({ createPlaygroundId: () => `id-${++state.nextId}` }))
+vi.mock('@/utils/playgroundImageCache', () => ({
+  playgroundImageCache: {
+    put: state.cachePut,
+    listConversation: state.cacheList,
+    deleteConversation: state.cacheDeleteConversation,
+    deleteExpired: state.cacheDeleteExpired
+  }
+}))
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
 function mountView() {
@@ -56,6 +69,7 @@ function mountView() {
 describe('PlaygroundView model and intent routing', () => {
   beforeEach(() => {
     state.nextId = 0
+    state.balance = 10
     state.getAvailable.mockResolvedValue([{ id: 7, name: 'Default' }])
     state.listModels.mockResolvedValue([
       { id: 'chat-model' },
@@ -69,6 +83,10 @@ describe('PlaygroundView model and intent routing', () => {
     state.save.mockImplementation(async (conversation: any) => ({ ...conversation, revision: 1, expiresAt: Date.now() + 604800000 }))
     state.generateImages.mockReset()
     state.streamChat.mockReset()
+    state.cachePut.mockResolvedValue('image')
+    state.cacheList.mockResolvedValue([])
+    state.cacheDeleteConversation.mockResolvedValue(undefined)
+    state.cacheDeleteExpired.mockResolvedValue(undefined)
     state.refreshUser.mockResolvedValue(undefined)
   })
 
@@ -98,6 +116,43 @@ describe('PlaygroundView model and intent routing', () => {
       prompt: 'draw a lighthouse'
     }))
     expect(state.streamChat).not.toHaveBeenCalled()
+  })
+
+  it('shows the existing insufficient-balance warning and blocks requests', async () => {
+    state.balance = 0
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('textarea.composer-input').setValue('draw a lighthouse')
+    await wrapper.get('form').trigger('submit')
+
+    expect(wrapper.get('[role="alert"]').text()).toBe('playground.insufficientBalance')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    expect(state.generateImages).not.toHaveBeenCalled()
+    expect(state.streamChat).not.toHaveBeenCalled()
+  })
+
+  it('uses an explicit natural-language image count over the manual count', async () => {
+    state.generateImages.mockResolvedValue([{ url: 'data:image/png;base64,image' }])
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('textarea.composer-input').setValue('draw 3 pictures of a lighthouse')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }))
+  })
+
+  it('shows insufficient balance when the server rejects a multi-image request', async () => {
+    state.generateImages.mockRejectedValue({ status: 402, message: 'Insufficient balance for image generation' })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('textarea.composer-input').setValue('draw 3 pictures')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('playground.insufficientBalance')
+    expect(state.generateImages).toHaveBeenCalledTimes(1)
   })
 
   it('applies workflow presets without changing the standard conversation presets', async () => {

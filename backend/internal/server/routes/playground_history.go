@@ -67,7 +67,10 @@ elseif redis.call('ZCARD', KEYS[1]) >= 30 then
 end
 incoming.revision = incoming.revision + 1
 incoming.expiresAt = expiry
-local encoded = cjson.encode(incoming)
+local encoded, revisionUpdated = string.gsub(ARGV[3], '"revision"%s*:%s*%-?%d+', '"revision":' .. incoming.revision, 1)
+local expiryUpdated
+encoded, expiryUpdated = string.gsub(encoded, '"expiresAt"%s*:%s*%-?%d+', '"expiresAt":' .. expiry, 1)
+if revisionUpdated ~= 1 or expiryUpdated ~= 1 then return {500, ''} end
 redis.call('SET', KEYS[2], encoded, 'PX', math.max(1, expiry - now))
 redis.call('ZADD', KEYS[1], expiry, ARGV[2])
 redis.call('PEXPIRE', KEYS[1], 604800000)
@@ -104,7 +107,7 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 				return
 			}
 			var item playgroundConversation
-			if json.Unmarshal([]byte(raw), &item) != nil {
+			if json.Unmarshal(normalizePlaygroundConversationJSON([]byte(raw)), &item) != nil {
 				response.InternalError(c, "Invalid conversation data")
 				return
 			}
@@ -147,7 +150,7 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 		}
 		var saved playgroundConversation
 		encoded, valid := result[1].(string)
-		if !valid || json.Unmarshal([]byte(encoded), &saved) != nil {
+		if !valid || json.Unmarshal(normalizePlaygroundConversationJSON([]byte(encoded)), &saved) != nil {
 			response.InternalError(c, "Invalid storage response")
 			return
 		}
@@ -168,6 +171,24 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 		}
 		response.Success(c, gin.H{})
 	})
+}
+
+func normalizePlaygroundConversationJSON(raw []byte) []byte {
+	var value map[string]json.RawMessage
+	if json.Unmarshal(raw, &value) != nil || !isEmptyJSONObject(value["messages"]) {
+		return raw
+	}
+	value["messages"] = json.RawMessage("[]")
+	normalized, err := json.Marshal(value)
+	if err != nil {
+		return raw
+	}
+	return normalized
+}
+
+func isEmptyJSONObject(raw json.RawMessage) bool {
+	var value map[string]json.RawMessage
+	return len(raw) > 0 && json.Unmarshal(raw, &value) == nil && len(value) == 0
 }
 
 func validPlaygroundConversation(item *playgroundConversation) bool {

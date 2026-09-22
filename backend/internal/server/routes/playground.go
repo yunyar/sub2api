@@ -1,7 +1,10 @@
 package routes
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +18,44 @@ import (
 )
 
 const playgroundGroupHeader = "X-Playground-Group-ID"
+const playgroundImageGenerationMaxCount = 10
+
+type playgroundImageGenerationRequest struct {
+	Count json.RawMessage `json:"n"`
+	Model string          `json:"model"`
+}
+
+func validatePlaygroundImageGenerationCount(c *gin.Context) {
+	if !strings.HasPrefix(strings.ToLower(c.ContentType()), "application/json") {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_COUNT", "Image generation requests must use JSON with an integer n between 1 and 10")
+		return
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_REQUEST", "Failed to read image generation request")
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	var request playgroundImageGenerationRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_REQUEST", "Image generation request must be valid JSON")
+		return
+	}
+	if len(request.Count) == 0 || string(request.Count) == "null" {
+		return
+	}
+
+	var count int
+	if err := json.Unmarshal(request.Count, &count); err != nil || count < 1 || count > playgroundImageGenerationMaxCount {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_COUNT", "n must be an integer between 1 and 10")
+		return
+	}
+	if count > 1 && strings.EqualFold(strings.TrimSpace(request.Model), "dall-e-3") {
+		middleware.AbortWithError(c, http.StatusBadRequest, "UNSUPPORTED_IMAGE_COUNT", "n greater than 1 is not supported for dall-e-3")
+	}
+}
 
 func playgroundAPIKeyBridge(apiKeyService *service.APIKeyService) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -93,6 +134,10 @@ func RegisterPlaygroundRoutes(
 		h.Gateway.ChatCompletions(c)
 	})
 	playground.POST("/images/generations", func(c *gin.Context) {
+		validatePlaygroundImageGenerationCount(c)
+		if c.IsAborted() {
+			return
+		}
 		switch getGroupPlatform(c) {
 		case service.PlatformOpenAI:
 			h.OpenAIGateway.Images(c)

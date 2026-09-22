@@ -26,6 +26,21 @@ export interface PlaygroundImage {
   revisedPrompt?: string
 }
 
+export const playgroundImageGenerationCount = {
+  min: 1,
+  max: 10
+} as const
+
+export interface PlaygroundImageGenerationRequest {
+  groupId: number
+  model: string
+  prompt: string
+  size: string
+  quality: string
+  count: number
+  signal?: AbortSignal
+}
+
 interface StreamChatOptions {
   groupId: number
   model: string
@@ -149,15 +164,7 @@ export async function streamPlaygroundChat(options: StreamChatOptions): Promise<
   }
 }
 
-export async function generatePlaygroundImages(input: {
-  groupId: number
-  model: string
-  prompt: string
-  size: string
-  quality: string
-  count: number
-  signal?: AbortSignal
-}): Promise<PlaygroundImage[]> {
+export async function generatePlaygroundImages(input: PlaygroundImageGenerationRequest): Promise<PlaygroundImage[]> {
   const { data } = await apiClient.post('/playground/images/generations', {
     model: input.model,
     prompt: input.prompt,

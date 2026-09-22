@@ -12,6 +12,8 @@ describe('resolvePlaygroundIntent', () => {
     '帮我生图：沙漠中的城堡',
     '根据上面的描述出图',
     '请画图',
+    '画三张猫咪图片',
+    '出2张海报',
     'Draw a cat in watercolor',
     'Create an image of a seaside cottage',
     'Design a logo for a coffee shop'

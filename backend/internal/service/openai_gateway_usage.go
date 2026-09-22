@@ -42,7 +42,8 @@ type OpenAIRecordUsageInput struct {
 	// NativeCompactionV2 is an orthogonal semantic flag captured by the
 	// Responses handler from stream=true + compaction_trigger. It never stores
 	// the request payload and does not replace the transport request type.
-	NativeCompactionV2 bool
+	NativeCompactionV2  bool
+	PlaygroundImageHold *BatchImageBalanceHoldCommand
 	ChannelUsageFields
 }
 
@@ -321,6 +322,19 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			cost.ActualCost = standardCost.ActualCost
 		}
 	}
+	if hold := input.PlaygroundImageHold; hold != nil {
+		count := result.ImageCount
+		if count < 0 {
+			count = 0
+		}
+		if hold.RequestedCount > 0 && count > hold.RequestedCount {
+			count = hold.RequestedCount
+		}
+		cost.ActualCost = QuantizeUsageBillingAmount(hold.UnitAmount * float64(count))
+		if cost.ActualCost > hold.HoldAmount {
+			cost.ActualCost = hold.HoldAmount
+		}
+	}
 
 	// Determine billing type
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
@@ -511,6 +525,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			AccountRateMultiplier: accountRateMultiplier,
 			APIKeyService:         input.APIKeyService,
 			Platform:              quotaPlatform,
+			PlaygroundImageHold:   input.PlaygroundImageHold,
 		}, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()

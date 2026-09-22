@@ -97,17 +97,20 @@
             <p v-if="error" role="alert" class="mb-3 text-sm text-red-500">{{ error }}</p>
             <p v-else-if="!hasBalance" role="alert" class="mb-3 text-sm text-amber-600 dark:text-amber-400">{{ t('playground.insufficientBalance') }}</p>
             <p v-if="saveError" role="alert" class="mb-3 text-sm text-amber-600">{{ saveError }} <button class="underline" :disabled="busy" @click="retrySave">{{ t('playground.retrySave') }}</button></p>
+            <p v-if="cacheError" role="alert" class="mb-3 text-sm text-amber-600">{{ cacheError }}</p>
             <div v-if="settingsOpen" class="settings-panel">
               <label class="col-span-2 text-xs">{{ t('playground.systemPrompt') }}<textarea v-model="current.systemPrompt" class="input mt-2 w-full" rows="2" :disabled="streaming || submitting" /></label>
               <label class="col-span-2 text-xs">{{ t('playground.temperature') }} · {{ current.temperature.toFixed(1) }}<input v-model.number="current.temperature" class="mt-3 w-full accent-primary-500" type="range" min="0" max="2" step="0.1" :disabled="streaming || submitting" /></label>
               <label class="text-xs">{{ t('playground.size') }}<select v-model="imageSize" class="input mt-2 w-full" :disabled="streaming || submitting"><option>1024x1024</option><option>1536x1024</option><option>1024x1536</option></select></label>
               <label class="text-xs">{{ t('playground.quality') }}<select v-model="imageQuality" class="input mt-2 w-full" :disabled="streaming || submitting"><option>auto</option><option>low</option><option>medium</option><option>high</option></select></label>
+              <label class="text-xs">{{ t('playground.count') }}<select v-model.number="imageCount" class="input mt-2 w-full" :disabled="streaming || submitting"><option v-for="count in 10" :key="count" :value="count">{{ count }}</option></select></label>
             </div>
             <form class="composer" @submit.prevent="send">
               <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t('playground.messagePlaceholder')" :disabled="streaming || submitting" @keydown.enter.exact="onEnter" />
               <div class="flex items-center justify-between gap-3 px-3 pb-3">
                 <div class="flex items-center gap-1">
                   <span class="mode-indicator">{{ t('playground.autoIntent') }}</span>
+                  <span v-if="imageCountResolution.explicit || imageCount > 1" class="mode-indicator">{{ t('playground.imagesToGenerate', { count: imageCountResolution.count }) }}</span>
                   <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="streaming || submitting" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
                 </div>
                 <button v-if="streaming" type="button" class="btn btn-secondary" @click="controller?.abort()">{{ t('playground.stop') }}</button>
@@ -142,12 +145,15 @@ import type { Group } from '@/types'
 import { isPlaygroundImageModel, isPlaygroundVideoModel } from '@/utils/playgroundModel'
 import { resolvePlaygroundIntent } from '@/utils/playgroundIntent'
 import { createPlaygroundId } from '@/utils/playgroundId'
+import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
+import { playgroundImageCache } from '@/utils/playgroundImageCache'
+import { loadPlaygroundPreferences, savePlaygroundPreferences } from '@/utils/playgroundPreferences'
 import WorkflowPlayground from '@/components/playground/WorkflowPlayground.vue'
 
 type PlaygroundKind = 'chat' | 'image'
 type StoredMessage = ConversationMessage & { model?: string; kind?: PlaygroundKind }
 type PlaygroundConversation = Omit<Conversation, 'messages'> & { messages: StoredMessage[] }
-type ImageEntry = { id: string; conversationId: string; messageId: number; url: string; prompt: string; expiresAt: number }
+type ImageEntry = { id: string; conversationId: string; messageId: number; url: string; prompt: string; expiresAt: number; objectUrl?: boolean }
 const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
@@ -158,6 +164,7 @@ const current = ref<PlaygroundConversation>(emptyConversation())
 const draft = ref('')
 const error = ref('')
 const saveError = ref('')
+const cacheError = ref('')
 const loadingGroups = ref(false)
 const loadingModels = ref(false)
 const streaming = ref(false)
@@ -171,6 +178,7 @@ const historyOpen = ref(false)
 const deleteTarget = ref('')
 const imageSize = ref('1024x1024')
 const imageQuality = ref('auto')
+const imageCount = ref(1)
 const images = ref<ImageEntry[]>([])
 const preview = ref<ImageEntry | null>(null)
 const viewport = ref<HTMLElement | null>(null)
@@ -186,6 +194,8 @@ const generating = computed(() => generatingCount.value > 0)
 const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
 const canSend = computed(() => hasBalance.value && !streaming.value && !submitting.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId))
+const accountId = computed(() => authStore.user?.id ?? null)
+const imageCountResolution = computed(() => resolvePlaygroundImageCount(draft.value, imageCount.value))
 const chatModels = computed(() => models.value.filter((model) => !isPlaygroundImageModel(model.id) && !isPlaygroundVideoModel(model.id)))
 const imageModels = computed(() => models.value.filter((model) => isPlaygroundImageModel(model.id)))
 const normalConversations = computed(() => conversations.value.filter((conversation) => conversation.kind !== 'workflow'))
@@ -193,21 +203,30 @@ const currentImages = computed(() => images.value.filter(image => image.conversa
 const selectedGroupId = computed({
   get: () => activeTab.value === 'workflow' ? workflowPresets.value.groupId : current.value.groupId,
   set: (value: number) => {
-    if (activeTab.value === 'workflow') workflowPresets.value.groupId = value
+    if (activeTab.value === 'workflow') {
+      workflowPresets.value.groupId = value
+      savePlaygroundPreferences(accountId.value, workflowPresets.value)
+    }
     else current.value.groupId = value
   }
 })
 const selectedChatModel = computed({
   get: () => activeTab.value === 'workflow' ? workflowPresets.value.chatModel : current.value.model,
   set: (value: string) => {
-    if (activeTab.value === 'workflow') workflowPresets.value.chatModel = value
+    if (activeTab.value === 'workflow') {
+      workflowPresets.value.chatModel = value
+      savePlaygroundPreferences(accountId.value, workflowPresets.value)
+    }
     else current.value.model = value
   }
 })
 const selectedImageModel = computed({
   get: () => activeTab.value === 'workflow' ? workflowPresets.value.imageModel : current.value.imageModel || '',
   set: (value: string) => {
-    if (activeTab.value === 'workflow') workflowPresets.value.imageModel = value
+    if (activeTab.value === 'workflow') {
+      workflowPresets.value.imageModel = value
+      savePlaygroundPreferences(accountId.value, workflowPresets.value)
+    }
     else current.value.imageModel = value
   }
 })
@@ -240,6 +259,40 @@ function newConversation() {
   acceptedRevisions.set(current.value.id, current.value.revision)
   draft.value = ''; error.value = ''; saveError.value = ''; historyOpen.value = false
 }
+function releaseImages(entries: ImageEntry[]) {
+  entries.filter(image => image.objectUrl).forEach(image => URL.revokeObjectURL(image.url))
+}
+async function restoreImages(conversationId: string) {
+  const restoredAccountId = accountId.value
+  if (restoredAccountId === null) return
+  let cached
+  try { cached = await playgroundImageCache.listConversation(restoredAccountId, conversationId) }
+  catch { cacheError.value = t('playground.imageCacheRestoreFailed'); return }
+  if (disposed || accountId.value !== restoredAccountId) return
+  const existing = images.value.filter(image => image.conversationId === conversationId)
+  releaseImages(existing)
+  images.value = images.value.filter(image => image.conversationId !== conversationId)
+  images.value.push(...cached.map(image => ({
+    id: image.id,
+    conversationId: image.conversationId,
+    messageId: image.messageId,
+    url: URL.createObjectURL(image.blob),
+    objectUrl: true,
+    prompt: image.prompt,
+    expiresAt: image.expiresAt
+  })))
+}
+async function cacheGeneratedImage(image: Omit<ImageEntry, 'objectUrl'>): Promise<ImageEntry> {
+  const imageAccountId = accountId.value
+  if (imageAccountId === null) return image
+  const response = await fetch(image.url)
+  if (!response.ok) throw new Error('image cache fetch failed')
+  const blob = await response.blob()
+  if (accountId.value !== imageAccountId) return image
+  await playgroundImageCache.put({ ...image, accountId: String(imageAccountId), blob })
+  if (disposed || accountId.value !== imageAccountId) return image
+  return { ...image, url: URL.createObjectURL(blob), objectUrl: true }
+}
 function openWorkflowTab() {
   if (!workflowPresets.value.groupId) {
     workflowPresets.value = {
@@ -252,7 +305,32 @@ function openWorkflowTab() {
 }
 function applyWorkflowPresets(value: { groupId: number; chatModel: string; imageModel: string }) {
   workflowPresets.value = { ...value }
+  savePlaygroundPreferences(accountId.value, workflowPresets.value)
   void loadModels(value.groupId, 'workflow')
+}
+function saveLastConversation(account: number, conversationId: string) {
+  try {
+    localStorage.setItem(`playground-last-conversation:${account}`, conversationId)
+    return true
+  } catch {
+    return false
+  }
+}
+function removeLastConversation(account: number, conversationId: string) {
+  try {
+    const key = `playground-last-conversation:${account}`
+    if (localStorage.getItem(key) === conversationId) localStorage.removeItem(key)
+    return true
+  } catch {
+    return false
+  }
+}
+function loadLastConversation(account: number) {
+  try {
+    return localStorage.getItem(`playground-last-conversation:${account}`)
+  } catch {
+    return null
+  }
 }
 function openConversation(item: PlaygroundConversation) {
   if (busy.value) return
@@ -261,6 +339,8 @@ function openConversation(item: PlaygroundConversation) {
   acceptedRevisions.set(current.value.id, current.value.revision)
   reseedMessageId(current.value.messages)
   draft.value = ''; error.value = ''; saveError.value = ''; historyOpen.value = false
+  if (accountId.value !== null) saveLastConversation(accountId.value, item.id)
+  void restoreImages(item.id)
   scrollBottom()
 }
 async function refreshHistory() {
@@ -294,7 +374,13 @@ async function deleteConversation() {
   try {
     await playgroundHistory.delete(id)
     conversations.value = conversations.value.filter(item => item.id !== id)
+    const deletedImages = images.value.filter(image => image.conversationId === id)
+    releaseImages(deletedImages)
     images.value = images.value.filter(image => image.conversationId !== id)
+    if (accountId.value !== null) {
+      await playgroundImageCache.deleteConversation(accountId.value, id).catch(() => { cacheError.value = t('playground.imageCacheDeleteFailed') })
+      removeLastConversation(accountId.value, id)
+    }
     acceptedRevisions.delete(id)
     if (current.value.id === id) newConversation()
     deleteTarget.value = ''
@@ -315,7 +401,10 @@ async function loadModels(groupId: number, target: 'standard' | 'workflow') {
     const chatModel = chatModels.value.some(item => item.id === preferred.chatModel) ? preferred.chatModel : (chatModels.value[0]?.id ?? '')
     const imageModel = imageModels.value.some(item => item.id === preferred.imageModel) ? preferred.imageModel : (imageModels.value[0]?.id ?? '')
     if (target === 'workflow') workflowPresets.value = { groupId, chatModel, imageModel }
-    else { current.value.model = chatModel; current.value.imageModel = imageModel }
+    else {
+      current.value.model = chatModel; current.value.imageModel = imageModel
+      savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel })
+    }
   } catch { if (request === modelRequest) {
     if (target === 'workflow') workflowPresets.value = { groupId, chatModel: '', imageModel: '' }
     else { current.value.model = ''; current.value.imageModel = '' }
@@ -340,6 +429,8 @@ async function send() {
   if (!canSend.value || submitting.value) return
   if (current.value.expiresAt && current.value.expiresAt <= Date.now()) { newConversation(); error.value = t('playground.expired'); return }
   const prompt = draft.value.trim()
+  const requestedImageCount = resolvePlaygroundImageCount(prompt, imageCount.value)
+  const requestAccountId = accountId.value
   const conversation = current.value
   const previousIntent = [...conversation.messages].reverse().find(message => message.role === 'assistant')?.kind
   const kind = resolvePlaygroundIntent(prompt, previousIntent)
@@ -351,6 +442,10 @@ async function send() {
     ? messageText([...conversation.messages].reverse().find(message => message.role === 'assistant' && message.kind === 'image')?.content)
     : ''
   if (!model) { error.value = t(kind === 'image' ? 'playground.noImageModel' : 'playground.noChatModel'); return }
+  if (kind === 'image' && requestedImageCount.error) {
+    error.value = t(requestedImageCount.error === 'too_many' ? 'playground.imageCountTooMany' : 'playground.imageCountInvalid')
+    return
+  }
   const userId = createMessageId()
   const conversationId = conversation.id
   conversation.messages.push({ id: userId, role: 'user', content: prompt, model, kind })
@@ -371,11 +466,26 @@ async function send() {
     generatingCount.value += 1
     try {
       const generationPrompt = priorImagePrompt ? `${priorImagePrompt}\n\n${prompt}` : prompt
-      const generated = await playgroundAPI.generateImages({ groupId, model, prompt: generationPrompt, size: imageSize.value, quality: imageQuality.value, count: 1 })
+      const generated = await playgroundAPI.generateImages({ groupId, model, prompt: generationPrompt, size: imageSize.value, quality: imageQuality.value, count: requestedImageCount.count })
       if (!generated.length) throw new Error(t('playground.imageFailed'))
-      if (!disposed) images.value.push(...generated.map(image => ({ id: createPlaygroundId(), conversationId, messageId: userId, url: image.url, prompt: generationPrompt, expiresAt: Date.now() + 600000 })))
+      const expiresAt = Date.now() + 600000
+      const generatedImages = generated.map(image => ({ id: createPlaygroundId(), conversationId, messageId: userId, url: image.url, prompt: generationPrompt, expiresAt }))
+      if (!disposed && accountId.value === requestAccountId) {
+        images.value.push(...generatedImages)
+        const cached = await Promise.all(generatedImages.map(image => cacheGeneratedImage(image).catch(() => null)))
+        if (!disposed && accountId.value === requestAccountId) {
+          const cachedImages = cached.filter((image): image is ImageEntry => image !== null)
+          const cachedIds = new Set(cachedImages.map(image => image.id))
+          images.value = [...images.value.filter(image => !cachedIds.has(image.id)), ...cachedImages]
+          if (cachedImages.length !== generatedImages.length) cacheError.value = t('playground.imageCacheFailed')
+        }
+      }
       conversation.messages.push({ id: createMessageId(), role: 'assistant', content: generated[0].revisedPrompt || generationPrompt, model, kind })
-    } catch (caught) { error.value = caught instanceof Error ? caught.message : t('playground.imageFailed') }
+    } catch (caught) {
+      error.value = (caught as { status?: number } | null)?.status === 402
+        ? t('playground.insufficientBalance')
+        : caught instanceof Error ? caught.message : t('playground.imageFailed')
+    }
     finally { generatingCount.value -= 1 }
   } else {
     const history: PlaygroundMessage[] = conversation.messages.map(message => ({ role: message.role, content: message.content }))
@@ -415,21 +525,45 @@ watch(
   () => [activeTab.value, selectedGroupId.value] as const,
   ([target, groupId]) => { void loadModels(groupId, target) }
 )
+watch(
+  () => [current.value.groupId, current.value.model, current.value.imageModel || ''] as const,
+  ([groupId, chatModel, imageModel]) => savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel })
+)
+watch(accountId, (account, previousAccount) => {
+  if (account === previousAccount) return
+  releaseImages(images.value)
+  images.value = []
+  preview.value = null
+})
 onMounted(async () => {
   timer = setInterval(() => {
     now.value = Date.now()
+    const expiredImages = images.value.filter(image => image.expiresAt <= now.value)
+    releaseImages(expiredImages)
     images.value = images.value.filter(image => image.expiresAt > now.value)
+    void playgroundImageCache.deleteExpired(now.value).catch(() => {})
     if (preview.value && preview.value.expiresAt <= now.value) preview.value = null
     conversations.value = conversations.value.filter(item => item.expiresAt > now.value)
     if (!busy.value && current.value.expiresAt && current.value.expiresAt <= now.value) { newConversation(); error.value = t('playground.expired') }
   }, 1000)
   loadingGroups.value = true
-  try { groups.value = await userGroupsAPI.getAvailable(); current.value.groupId = groups.value[0]?.id ?? 0 }
+  try {
+    groups.value = await userGroupsAPI.getAvailable()
+    const preferences = loadPlaygroundPreferences(accountId.value)
+    current.value.groupId = groups.value.some(group => group.id === preferences.groupId) ? preferences.groupId : (groups.value[0]?.id ?? 0)
+    current.value.model = preferences.chatModel
+    current.value.imageModel = preferences.imageModel
+  }
   catch { error.value = t('playground.loadModelsFailed') }
   finally { loadingGroups.value = false }
   await refreshHistory()
+  if (accountId.value !== null) {
+    const lastConversationId = loadLastConversation(accountId.value)
+    const lastConversation = conversations.value.find(item => item.id === lastConversationId)
+    if (lastConversation) openConversation(lastConversation)
+  }
 })
-onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(timer); images.value = []; preview.value = null })
+onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(timer); releaseImages(images.value); images.value = []; preview.value = null })
 </script>
 
 <style scoped>

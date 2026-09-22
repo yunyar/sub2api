@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -93,4 +94,79 @@ func TestPlaygroundWorkflowHistoryValidation(t *testing.T) {
 	valid.Messages[0].StepID = "step-1"
 	valid.Workflow.Steps = make([]playgroundWorkflowStep, 51)
 	require.False(t, validPlaygroundConversation(&valid))
+}
+
+func TestPlaygroundWorkflowHistoryPreservesEmptyMessagesAsArray(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	router := gin.New()
+	auth := middleware.JWTAuthMiddleware(func(ctx *gin.Context) {
+		ctx.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+		ctx.Next()
+	})
+	RegisterPlaygroundHistoryRoutes(router.Group("/api/v1"), auth, client)
+	conversation := playgroundConversation{
+		Kind: "workflow", Model: "chat", ImageModel: "image", Temperature: 0.7,
+		Messages: []playgroundHistoryMessage{},
+		Workflow: &playgroundWorkflow{Steps: []playgroundWorkflowStep{{ID: "step-1", Prompt: "first"}}},
+	}
+	body, err := json.Marshal(conversation)
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/playground/conversations/workflow-1", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+
+	raw, err := client.Get(t.Context(), "playground:history:{1}:workflow-1").Result()
+	require.NoError(t, err)
+	require.Contains(t, raw, `"messages":[]`)
+	var stored playgroundConversation
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	require.NotNil(t, stored.Messages)
+	require.Empty(t, stored.Messages)
+}
+
+func TestPlaygroundHistoryNormalizesLegacyEmptyMessageObject(t *testing.T) {
+	legacy := []byte(`{"id":"workflow-1","messages":{},"workflow":{"steps":[{"id":"step-1","prompt":"first"}],"currentStep":0}}`)
+	var conversation playgroundConversation
+	require.NoError(t, json.Unmarshal(normalizePlaygroundConversationJSON(legacy), &conversation))
+	require.NotNil(t, conversation.Messages)
+	require.Empty(t, conversation.Messages)
+}
+
+func TestPlaygroundWorkflowHistoryWithRealRedis(t *testing.T) {
+	address := os.Getenv("PLAYGROUND_HISTORY_REDIS_ADDR")
+	if address == "" {
+		t.Skip("set PLAYGROUND_HISTORY_REDIS_ADDR to run against Redis")
+	}
+	client := redis.NewClient(&redis.Options{Addr: address})
+	t.Cleanup(func() { _ = client.Close() })
+	require.NoError(t, client.Ping(t.Context()).Err())
+
+	keyPrefix := "playground:history:{real-redis-test}:"
+	t.Cleanup(func() { _ = client.Del(t.Context(), keyPrefix+"index", keyPrefix+"workflow-1").Err() })
+	now := time.Now().UnixMilli()
+	conversation := playgroundConversation{
+		ID: "workflow-1", Title: `Prompt says {"revision":999,"expiresAt":1}`, Kind: "workflow", Model: "chat", ImageModel: "image", Temperature: 0.7,
+		Messages: []playgroundHistoryMessage{},
+		Workflow: &playgroundWorkflow{Steps: []playgroundWorkflowStep{{ID: "step-1", Prompt: "first"}}},
+	}
+	raw, err := json.Marshal(conversation)
+	require.NoError(t, err)
+	result, err := savePlaygroundHistory.Run(t.Context(), client, []string{keyPrefix + "index", keyPrefix + conversation.ID}, now, conversation.ID, string(raw)).Slice()
+	require.NoError(t, err)
+	require.Equal(t, int64(http.StatusOK), result[0])
+
+	storedRaw, err := client.Get(t.Context(), keyPrefix+conversation.ID).Result()
+	require.NoError(t, err)
+	var stored playgroundConversation
+	require.NoError(t, json.Unmarshal([]byte(storedRaw), &stored))
+	require.Equal(t, conversation.Title, stored.Title)
+	require.NotNil(t, stored.Messages)
+	require.Empty(t, stored.Messages)
+	require.Equal(t, int64(1), stored.Revision)
+	require.Greater(t, stored.ExpiresAt, now)
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -82,6 +83,7 @@ type postUsageBillingParams struct {
 	AccountRateMultiplier float64
 	APIKeyService         APIKeyQuotaUpdater
 	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	PlaygroundImageHold   *BatchImageBalanceHoldCommand
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -313,7 +315,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	if p.IsSubscriptionBill && p.Subscription != nil && p.Cost.TotalCost > 0 {
 		cmd.SubscriptionID = &p.Subscription.ID
 		cmd.SubscriptionCost = p.Cost.ActualCost
-	} else if p.Cost.ActualCost > 0 {
+	} else if p.Cost.ActualCost > 0 && p.PlaygroundImageHold == nil {
 		cmd.BalanceCost = p.Cost.ActualCost
 	}
 
@@ -345,7 +347,31 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
-	result, err := repo.Apply(billingCtx, cmd)
+	var result *UsageBillingApplyResult
+	var err error
+	if hold := p.PlaygroundImageHold; hold != nil {
+		settler, ok := repo.(PlaygroundImageBillingRepository)
+		if !ok {
+			return false, ErrBatchImageBillingHoldFailed.WithCause(errors.New("playground image billing settlement is unavailable"))
+		}
+		hold = &BatchImageBalanceHoldCommand{
+			RequestID:          PlaygroundImageTerminalRequestID(hold.BatchID),
+			APIKeyID:           hold.APIKeyID,
+			UserID:             hold.UserID,
+			BatchID:            hold.BatchID,
+			HoldAmount:         hold.HoldAmount,
+			ActualAmount:       p.Cost.ActualCost,
+			UnitAmount:         hold.UnitAmount,
+			RequestedCount:     hold.RequestedCount,
+			RequestPayloadHash: hold.RequestPayloadHash,
+		}
+		if hold.ActualAmount-hold.HoldAmount > 0.00000001 {
+			return false, ErrBatchImageSettlementCostExceedsHold
+		}
+		result, err = settler.SettlePlaygroundImageBalance(billingCtx, hold, cmd)
+	} else {
+		result, err = repo.Apply(billingCtx, cmd)
+	}
 	if err != nil {
 		return false, err
 	}

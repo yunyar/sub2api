@@ -9,19 +9,26 @@ const state = vi.hoisted(() => ({
   remove: vi.fn(),
   streamChat: vi.fn(),
   generateImages: vi.fn(),
+  cacheList: vi.fn(),
+  cachePut: vi.fn(),
+  cacheDeleteStep: vi.fn(),
+  cacheDeleteExpired: vi.fn(),
   refreshUser: vi.fn(),
   balance: 10,
 }))
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/stores', () => ({
-  useAuthStore: () => ({ user: { get balance() { return state.balance } }, refreshUser: state.refreshUser }),
+  useAuthStore: () => ({ user: { id: 1, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
 }))
 vi.mock('@/api/playground', () => ({
   playgroundAPI: { streamChat: state.streamChat, generateImages: state.generateImages },
 }))
 vi.mock('@/api/playgroundHistory', () => ({
   playgroundHistory: { list: state.list, save: state.save, delete: state.remove },
+}))
+vi.mock('@/utils/playgroundImageCache', () => ({
+  playgroundImageCache: { listConversation: state.cacheList, put: state.cachePut, deleteStep: state.cacheDeleteStep, deleteExpired: state.cacheDeleteExpired },
 }))
 vi.mock('@/utils/playgroundId', () => {
   let id = 0
@@ -61,11 +68,18 @@ async function enterFirstPrompt(wrapper: ReturnType<typeof mount>, value = 'firs
 }
 
 beforeEach(() => {
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'data:image/png;base64,cached') })
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Blob(['image']))))
   state.list.mockResolvedValue([])
   state.save.mockImplementation(async (value: Conversation) => ({ ...value, revision: value.revision + 1, expiresAt: Date.now() + 3_600_000 }))
   state.remove.mockResolvedValue(undefined)
   state.streamChat.mockImplementation(async (input: { onDelta: (delta: string) => void }) => input.onDelta('chat result'))
   state.generateImages.mockResolvedValue([{ url: 'https://images.example/generated.png', revisedPrompt: 'image result' }])
+  state.cacheList.mockResolvedValue([])
+  state.cachePut.mockResolvedValue(undefined)
+  state.cacheDeleteStep.mockResolvedValue(undefined)
+  state.cacheDeleteExpired.mockResolvedValue(undefined)
   state.refreshUser.mockResolvedValue(undefined)
   state.balance = 10
 })
@@ -103,6 +117,57 @@ describe('WorkflowPlayground', () => {
     }))
   })
 
+  it('does not submit charged work when the initial workflow save fails', async () => {
+    state.save.mockRejectedValueOnce(new Error('save failed'))
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper)
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    expect(state.streamChat).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('save failed')
+  })
+
+  it('uses the natural-language image count and displays every generated image', async () => {
+    state.generateImages.mockResolvedValue([
+      { url: 'https://images.example/one.png', revisedPrompt: 'first image' },
+      { url: 'https://images.example/two.png', revisedPrompt: 'second image' },
+      { url: 'https://images.example/three.png', revisedPrompt: 'third image' },
+    ])
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw three images of a mountain')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }))
+    expect(wrapper.findAll('img')).toHaveLength(3)
+  })
+
+  it('keeps a cache failure visible after the workflow save succeeds', async () => {
+    state.cachePut.mockRejectedValue(new Error('storage unavailable'))
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw an image of a mountain')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    expect(state.save).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('workflow.imageCacheFailed')
+  })
+
+  it('shows insufficient balance when the server rejects the selected image count', async () => {
+    state.generateImages.mockRejectedValue({ status: 402 })
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw three images')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('workflow.insufficientBalance')
+    expect(state.generateImages).toHaveBeenCalledTimes(1)
+  })
+
   it('restores workflow result and emits its saved presets', async () => {
     state.list.mockResolvedValue([conversation()])
     const wrapper = mountWorkflow()
@@ -111,6 +176,33 @@ describe('WorkflowPlayground', () => {
 
     expect(wrapper.text()).toContain('restored output')
     expect(wrapper.emitted('presets')?.[0]).toEqual([{ groupId: 7, chatModel: 'chat-1', imageModel: 'image-1' }])
+  })
+
+  it('restores cached images only for the active account and workflow', async () => {
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:restored') })
+    state.cacheList.mockResolvedValue([{ id: 'cached-1', accountId: '1', conversationId: 'workflow-1', messageId: 1, stepId: 'step-1', prompt: 'first', expiresAt: Date.now() + 60_000, blob: new Blob(['image']) }])
+    state.list.mockResolvedValue([conversation()])
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await button(wrapper, 'Saved workflow')!.trigger('click')
+    await flushPromises()
+
+    expect(state.cacheList).toHaveBeenCalledWith('1', 'workflow-1')
+    expect(wrapper.findAll('img')).toHaveLength(1)
+  })
+
+  it('uses guidance image counts when regenerating', async () => {
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw an image of a mountain')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('textarea')[1].setValue('draw three images instead')
+    await button(wrapper, 'workflow.revise')!.trigger('click')
+    await flushPromises()
+
+    expect(state.generateImages).toHaveBeenLastCalledWith(expect.objectContaining({ count: 3 }))
+    expect(state.cacheDeleteStep).toHaveBeenCalled()
   })
 
   it('uses the latest saved result when regenerating with guidance', async () => {
@@ -164,6 +256,7 @@ describe('WorkflowPlayground', () => {
     await button(wrapper, 'workflow.addStep')!.trigger('click')
     await wrapper.findAll('.workflow-step')[1].find('textarea').setValue('describe it')
     await button(wrapper, 'workflow.next')!.trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
     await flushPromises()
 
     expect(state.streamChat).toHaveBeenCalledWith(expect.objectContaining({

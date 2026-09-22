@@ -180,6 +180,8 @@ type BatchImageBalanceHoldCommand struct {
 	BatchID            string
 	HoldAmount         float64
 	ActualAmount       float64
+	UnitAmount         float64
+	RequestedCount     int
 }
 
 func (c *BatchImageBalanceHoldCommand) Normalize() {
@@ -223,4 +225,8 @@ type UsageBillingRepository interface {
 	ReserveBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	CaptureBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	ReleaseBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
+}
+
+type PlaygroundImageBillingRepository interface {
+	SettlePlaygroundImageBalance(ctx context.Context, hold *BatchImageBalanceHoldCommand, usage *UsageBillingCommand) (*UsageBillingApplyResult, error)
 }

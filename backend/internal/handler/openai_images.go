@@ -142,6 +142,32 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		h.handleStreamingAwareError(c, status, code, message, streamStarted)
 		return
 	}
+	var playgroundImageHold *service.BatchImageBalanceHoldCommand
+	playgroundImageHoldTransferred := false
+	if strings.HasPrefix(c.Request.URL.Path, "/api/v1/playground/") && (subscription == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
+		playgroundImageHold, err = h.gatewayService.ReservePlaygroundImageBalance(c.Request.Context(), apiKey, parsed.Model, parsed.SizeTier, parsed.N, service.HashUsageRequestPayload(body))
+		if err != nil {
+			if errors.Is(err, service.ErrBatchImageInsufficientBalance) {
+				h.errorResponse(c, http.StatusPaymentRequired, "insufficient_balance", "Insufficient balance for image generation")
+				return
+			}
+			if errors.Is(err, service.ErrPlaygroundImageHoldConflict) {
+				h.errorResponse(c, http.StatusConflict, "idempotency_conflict", "An image generation request with this request ID is already in progress")
+				return
+			}
+			h.errorResponse(c, http.StatusServiceUnavailable, "billing_unavailable", "Unable to reserve image generation balance")
+			return
+		}
+		defer func() {
+			if playgroundImageHold != nil && !playgroundImageHoldTransferred {
+				releaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if releaseErr := h.gatewayService.ReleasePlaygroundImageBalance(releaseCtx, playgroundImageHold); releaseErr != nil {
+					logger.L().With(zap.String("component", "handler.openai_gateway.images"), zap.Int64("api_key_id", apiKey.ID), zap.String("batch_id", playgroundImageHold.BatchID)).Error("playground_image.release_failed", zap.Error(releaseErr))
+				}
+			}
+		}()
+	}
 
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, body)
 	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
@@ -394,20 +420,21 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		sessionID := service.ExtractClientSessionID(c)
 		h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
-				Result:             result,
-				APIKey:             apiKey,
-				User:               apiKey.User,
-				Account:            account,
-				Subscription:       subscription,
-				InboundEndpoint:    inboundEndpoint,
-				UpstreamEndpoint:   upstreamEndpoint,
-				UserAgent:          userAgent,
-				IPAddress:          clientIP,
-				RequestPayloadHash: requestPayloadHash,
-				APIKeyService:      h.apiKeyService,
-				QuotaPlatform:      quotaPlatform,
-				SessionID:          sessionID,
-				ChannelUsageFields: clientRequestedUsageFields(c, channelMapping, requestModel, upstreamModel),
+				Result:              result,
+				APIKey:              apiKey,
+				User:                apiKey.User,
+				Account:             account,
+				Subscription:        subscription,
+				InboundEndpoint:     inboundEndpoint,
+				UpstreamEndpoint:    upstreamEndpoint,
+				UserAgent:           userAgent,
+				IPAddress:           clientIP,
+				RequestPayloadHash:  requestPayloadHash,
+				APIKeyService:       h.apiKeyService,
+				QuotaPlatform:       quotaPlatform,
+				SessionID:           sessionID,
+				PlaygroundImageHold: playgroundImageHold,
+				ChannelUsageFields:  clientRequestedUsageFields(c, channelMapping, requestModel, upstreamModel),
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.openai_gateway.images"),
@@ -419,6 +446,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				).Error("openai.images.record_usage_failed", zap.Error(err))
 			}
 		})
+		playgroundImageHoldTransferred = true
 
 		reqLog.Debug("openai.images.request_completed",
 			zap.Int64("account_id", account.ID),
