@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { playgroundImageCache } from '../playgroundImageCache'
+import { playgroundImageBlob, playgroundImageCache } from '../playgroundImageCache'
 
 function request<T>(result: T) {
   const value = { result, error: null, onsuccess: null as null | (() => void), onerror: null }
@@ -12,6 +12,32 @@ afterEach(() => {
 })
 
 describe('playgroundImageCache', () => {
+  it('converts base64 image data URLs without a network request', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+
+    const blob = await playgroundImageBlob('data:image/png;base64,aW1hZ2U=')
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(blob.type).toBe('image/png')
+    expect(blob.size).toBe(5)
+  })
+
+  it('supports URL-safe unpadded base64 image data URLs', async () => {
+    const blob = await playgroundImageBlob('data:image/png;base64,-_8')
+
+    expect(blob.type).toBe('image/png')
+    expect(blob.size).toBe(2)
+  })
+
+  it('fetches provider URLs only when they are browser-readable', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(new Blob(['image'], { type: 'image/png' })))
+    vi.stubGlobal('fetch', fetch)
+
+    await expect(playgroundImageBlob('https://images.example/generated.png')).resolves.toBeInstanceOf(Blob)
+    expect(fetch).toHaveBeenCalledWith('https://images.example/generated.png')
+  })
+
   it('restores v2 records regardless of their legacy expiry without recreating the store', async () => {
     const records = [{ cacheKey: '7:image-1', id: 'image-1', accountId: '7', conversationId: 'conversation-1', messageId: 1, prompt: 'sunset', expiresAt: 1, blob: new Blob(['image']) }]
     const store = {

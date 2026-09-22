@@ -58,6 +58,7 @@ vi.mock('@/utils/playgroundIntent', () => ({
 }))
 vi.mock('@/utils/playgroundId', () => ({ createPlaygroundId: () => `id-${++state.nextId}` }))
 vi.mock('@/utils/playgroundImageCache', () => ({
+  playgroundImageBlob: async (url: string) => new Blob([url]),
   playgroundImageCache: {
     put: state.cachePut,
     listConversation: state.cacheList,

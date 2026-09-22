@@ -32,6 +32,7 @@ vi.mock('@/api/playgroundHistory', () => ({
   playgroundHistory: { list: state.list, save: state.save, delete: state.remove },
 }))
 vi.mock('@/utils/playgroundImageCache', () => ({
+  playgroundImageBlob: async (url: string) => new Blob([url]),
   playgroundImageCache: { listConversation: state.cacheList, put: state.cachePut, deleteStep: state.cacheDeleteStep, deleteExpired: state.cacheDeleteExpired },
 }))
 vi.mock('@/utils/playgroundId', () => {

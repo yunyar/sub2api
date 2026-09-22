@@ -72,6 +72,16 @@ describe('streamPlaygroundChat', () => {
 })
 
 describe('generatePlaygroundImages', () => {
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    let reject!: (reason?: unknown) => void
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise
+      reject = rejectPromise
+    })
+    return { promise, resolve, reject }
+  }
+
   it('passes an optional cancellation signal to axios', async () => {
     const controller = new AbortController()
     post.mockResolvedValue({ data: { data: [{ url: 'https://images.example/one.png' }] } })
@@ -93,12 +103,62 @@ describe('generatePlaygroundImages', () => {
     )
   })
 
-  it('splits a requested batch into one-image requests and stops after a balance rejection', async () => {
+  it('starts all one-image requests concurrently and preserves slot order', async () => {
+    const onImage = vi.fn()
+    const first = deferred<{ data: { data: Array<{ url: string }> } }>()
+    const second = deferred<{ data: { data: Array<{ url: string }> } }>()
+    const third = deferred<{ data: { data: Array<{ url: string }> } }>()
+    post.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise).mockReturnValueOnce(third.promise)
+
+    const generated = generatePlaygroundImages({
+      groupId: 7, model: 'image-model', prompt: '生成3张城市夜景', size: '1024x1024', quality: 'auto', count: 3, onImage,
+    })
+
+    expect(post).toHaveBeenCalledTimes(3)
+    expect(post.mock.calls.every(([, body]) => body.n === 1)).toBe(true)
+    third.resolve({ data: { data: [{ url: 'https://images.example/three.png' }] } })
+    await vi.waitFor(() => expect(onImage).toHaveBeenCalledWith({ url: 'https://images.example/three.png', revisedPrompt: undefined }))
+    second.resolve({ data: { data: [{ url: 'https://images.example/two.png' }] } })
+    first.resolve({ data: { data: [{ url: 'https://images.example/one.png' }] } })
+
+    await expect(generated).resolves.toEqual([
+      { url: 'https://images.example/one.png', revisedPrompt: undefined },
+      { url: 'https://images.example/two.png', revisedPrompt: undefined },
+      { url: 'https://images.example/three.png', revisedPrompt: undefined },
+    ])
+  })
+
+  it('serializes image callbacks while keeping generation requests concurrent', async () => {
+    const callbackGate = deferred<void>()
+    let activeCallbacks = 0
+    let maxActiveCallbacks = 0
+    const onImage = vi.fn(async () => {
+      activeCallbacks += 1
+      maxActiveCallbacks = Math.max(maxActiveCallbacks, activeCallbacks)
+      await callbackGate.promise
+      activeCallbacks -= 1
+    })
+    post.mockResolvedValue({ data: { data: [{ url: 'https://images.example/generated.png' }] } })
+
+    const generated = generatePlaygroundImages({
+      groupId: 7, model: 'image-model', prompt: '生成3张', size: '1024x1024', quality: 'auto', count: 3, onImage,
+    })
+
+    expect(post).toHaveBeenCalledTimes(3)
+    await vi.waitFor(() => expect(onImage).toHaveBeenCalledTimes(1))
+    callbackGate.resolve()
+    await generated
+    expect(onImage).toHaveBeenCalledTimes(3)
+    expect(maxActiveCallbacks).toBe(1)
+  })
+
+  it('returns a useful 402 aggregate error with successful concurrent slots', async () => {
     const onImage = vi.fn()
     const balanceError = { status: 402, message: 'Insufficient balance' }
     post
       .mockResolvedValueOnce({ data: { data: [{ url: 'https://images.example/one.png' }] } })
       .mockRejectedValueOnce(balanceError)
+      .mockResolvedValueOnce({ data: { data: [{ url: 'https://images.example/three.png' }] } })
 
     await expect(generatePlaygroundImages({
       groupId: 7,
@@ -108,12 +168,22 @@ describe('generatePlaygroundImages', () => {
       quality: 'auto',
       count: 3,
       onImage,
-    })).rejects.toMatchObject({ name: 'PlaygroundImageGenerationError', message: 'Insufficient balance', status: 402, cause: balanceError, images: [{ url: 'https://images.example/one.png' }] })
+    })).rejects.toMatchObject({
+      name: 'PlaygroundImageGenerationError',
+      message: 'Insufficient balance',
+      status: 402,
+      cause: balanceError,
+      images: [
+        { url: 'https://images.example/one.png', revisedPrompt: undefined },
+        { url: 'https://images.example/three.png', revisedPrompt: undefined },
+      ],
+    })
 
-    expect(post).toHaveBeenCalledTimes(2)
+    expect(post).toHaveBeenCalledTimes(3)
     expect(post).toHaveBeenNthCalledWith(1, '/playground/images/generations', expect.objectContaining({ n: 1, prompt: expect.stringContaining('request 1 of 3') }), expect.any(Object))
     expect(post).toHaveBeenNthCalledWith(2, '/playground/images/generations', expect.objectContaining({ n: 1, prompt: expect.stringContaining('request 2 of 3') }), expect.any(Object))
     expect(onImage).toHaveBeenCalledWith({ url: 'https://images.example/one.png', revisedPrompt: undefined })
+    expect(onImage).toHaveBeenCalledWith({ url: 'https://images.example/three.png', revisedPrompt: undefined })
   })
 
   it('makes exactly one n=1 request per requested image and caps provider over-returns', async () => {
@@ -132,16 +202,16 @@ describe('generatePlaygroundImages', () => {
     expect(images.every(image => image.url === 'https://images.example/first.png')).toBe(true)
   })
 
-  it('does not start the next request after cancellation', async () => {
+  it('propagates cancellation after launching the concurrent batch', async () => {
     const controller = new AbortController()
-    post.mockImplementationOnce(async () => {
+    post.mockImplementation(async () => {
       controller.abort()
-      return { data: { data: [{ url: 'https://images.example/first.png' }] } }
+      throw new DOMException('The operation was aborted', 'AbortError')
     })
 
     await expect(generatePlaygroundImages({
       groupId: 7, model: 'image-model', prompt: '生成3张', size: '1024x1024', quality: 'auto', count: 3, signal: controller.signal,
     })).rejects.toMatchObject({ name: 'AbortError' })
-    expect(post).toHaveBeenCalledTimes(1)
+    expect(post).toHaveBeenCalledTimes(3)
   })
 })

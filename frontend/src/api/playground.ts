@@ -182,43 +182,55 @@ export async function generatePlaygroundImages(input: PlaygroundImageGenerationR
   if (!Number.isInteger(count) || count < playgroundImageGenerationCount.min || count > playgroundImageGenerationCount.max) {
     throw new RangeError(`Image count must be between ${playgroundImageGenerationCount.min} and ${playgroundImageGenerationCount.max}`)
   }
-  const images: PlaygroundImage[] = []
-  for (let index = 0; index < count; index += 1) {
-    try {
-      if (input.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
-      const { data } = await apiClient.post('/playground/images/generations', {
-        model: input.model,
-        prompt: `${input.prompt}\n\nGenerate exactly one final image asset for request ${index + 1} of ${count}. This is one image in a requested batch; follow the original creative composition instructions, including a collage or panels when requested.`,
-        size: input.size,
-        quality: input.quality,
-        n: 1,
-        response_format: 'b64_json'
-      }, { headers: groupHeaders(input.groupId), timeout: 180_000, signal: input.signal })
+  if (input.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
 
-      const generated = (Array.isArray(data?.data) ? data.data : [])
-        .map((item: any) => ({
-          url: item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url,
-          revisedPrompt: item.revised_prompt
-        }))
-        .filter((item: PlaygroundImage) => Boolean(item.url))
-        .slice(0, 1)
-      if (!generated.length) throw new Error('Image generation returned no image')
-      for (const image of generated) {
-        images.push(image)
-        await input.onImage?.(image)
-      }
-    } catch (caught) {
-      if (input.signal?.aborted || (caught as Error)?.name === 'AbortError') throw caught
-      if (images.length) {
-        const response = caught && typeof caught === 'object' ? caught as { message?: unknown; status?: unknown } : null
-        const message = typeof response?.message === 'string' ? response.message : 'Image generation failed'
-        const status = typeof response?.status === 'number' ? response.status : undefined
-        throw new PlaygroundImageGenerationError(message, images, status, caught)
-      }
-      throw caught
-    }
+  const images = new Array<PlaygroundImage | undefined>(count)
+  let imageCallbackQueue = Promise.resolve()
+  const requests = Array.from({ length: count }, async (_, index) => {
+    const { data } = await apiClient.post('/playground/images/generations', {
+      model: input.model,
+      prompt: `${input.prompt}\n\nGenerate exactly one final image asset for request ${index + 1} of ${count}. This is one image in a requested batch; follow the original creative composition instructions, including a collage or panels when requested.`,
+      size: input.size,
+      quality: input.quality,
+      n: 1,
+      response_format: 'b64_json'
+    }, { headers: groupHeaders(input.groupId), timeout: 180_000, signal: input.signal })
+
+    const image = (Array.isArray(data?.data) ? data.data : [])
+      .map((item: any) => ({
+        url: item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url,
+        revisedPrompt: item.revised_prompt
+      }))
+      .find((item: PlaygroundImage) => Boolean(item.url))
+    if (!image) throw new Error('Image generation returned no image')
+
+    images[index] = image
+    imageCallbackQueue = imageCallbackQueue.then(() => input.onImage?.(image))
+    await imageCallbackQueue
+  })
+
+  const settled = await Promise.allSettled(requests)
+  const aborted = settled.find(result => result.status === 'rejected' && (result.reason as Error)?.name === 'AbortError')
+  if (input.signal?.aborted || aborted) {
+    throw aborted && aborted.status === 'rejected'
+      ? aborted.reason
+      : new DOMException('The operation was aborted', 'AbortError')
   }
-  return images
+
+  const failed = settled.find(result => result.status === 'rejected')
+  const completedImages = images.filter((image): image is PlaygroundImage => Boolean(image))
+  if (failed && failed.status === 'rejected') {
+    const response = failed.reason && typeof failed.reason === 'object'
+      ? failed.reason as { message?: unknown; status?: unknown; response?: { status?: unknown } }
+      : null
+    const message = typeof response?.message === 'string' ? response.message : 'Image generation failed'
+    const status = typeof response?.status === 'number'
+      ? response.status
+      : typeof response?.response?.status === 'number' ? response.response.status : undefined
+    throw new PlaygroundImageGenerationError(message, completedImages, status, failed.reason)
+  }
+
+  return completedImages
 }
 
 export const playgroundAPI = {

@@ -35,6 +35,34 @@ function transactionResult(transaction: IDBTransaction): Promise<void> {
   })
 }
 
+function decodeBase64(value: string): Uint8Array {
+  const normalized = value.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+  const decoded = atob(padded)
+  const bytes = new Uint8Array(decoded.length)
+  for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index)
+  return bytes
+}
+
+export async function playgroundImageBlob(url: string): Promise<Blob> {
+  if (!url.startsWith('data:')) {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('image cache fetch failed')
+    return response.blob()
+  }
+
+  const separator = url.indexOf(',')
+  if (separator < 0) throw new Error('invalid image data URL')
+  const metadata = url.slice(5, separator)
+  const mimeType = metadata.split(';', 1)[0] || 'text/plain'
+  if (!mimeType.toLowerCase().startsWith('image/')) throw new Error('image data URL must have an image MIME type')
+  const payload = url.slice(separator + 1)
+  const bytes = /;base64(?:;|$)/i.test(metadata)
+    ? decodeBase64(payload)
+    : new TextEncoder().encode(decodeURIComponent(payload))
+  return new Blob([bytes], { type: mimeType })
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   if (typeof indexedDB === 'undefined') return Promise.reject(new Error('IndexedDB is unavailable'))
   return new Promise((resolve, reject) => {

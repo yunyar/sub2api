@@ -42,7 +42,7 @@ import { playgroundHistory, type Conversation, type ConversationMessage, type Wo
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundIntent } from '@/utils/playgroundIntent'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
-import { playgroundImageCache, type CachedPlaygroundImage } from '@/utils/playgroundImageCache'
+import { playgroundImageBlob, playgroundImageCache, type CachedPlaygroundImage } from '@/utils/playgroundImageCache'
 
 const props = defineProps<{ groups: Group[]; groupId: number; chatModel: string; imageModel: string }>()
 const emit = defineEmits<{ presets: [value: { groupId: number; chatModel: string; imageModel: string }] }>()
@@ -136,9 +136,7 @@ async function cacheImages(stepID: string, prompt: string, generated: Array<{ ur
   const cached = await Promise.all(generated.map(async image => {
     if (!accountId) return { id: createPlaygroundId(), url: image.url, expiresAt, prompt }
     try {
-      const response = await fetch(image.url)
-      if (!response.ok) throw new Error('image cache')
-      const entry: CachedPlaygroundImage = { id: createPlaygroundId(), accountId, conversationId: conversationID, messageId: messageID(), stepId: stepID, prompt, expiresAt, blob: await response.blob() }
+      const entry: CachedPlaygroundImage = { id: createPlaygroundId(), accountId, conversationId: conversationID, messageId: messageID(), stepId: stepID, prompt, expiresAt, blob: await playgroundImageBlob(image.url) }
       await playgroundImageCache.put(entry)
       if (disposed || accountID() !== accountId || id.value !== conversationID) return { id: entry.id, url: image.url, expiresAt, prompt }
       return { id: entry.id, url: URL.createObjectURL(entry.blob), expiresAt, prompt, persistent: true }

@@ -146,7 +146,7 @@ import { isPlaygroundImageModel, isPlaygroundVideoModel } from '@/utils/playgrou
 import { resolvePlaygroundIntent } from '@/utils/playgroundIntent'
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
-import { playgroundImageCache } from '@/utils/playgroundImageCache'
+import { playgroundImageBlob, playgroundImageCache } from '@/utils/playgroundImageCache'
 import { loadPlaygroundPreferences, savePlaygroundPreferences } from '@/utils/playgroundPreferences'
 import WorkflowPlayground from '@/components/playground/WorkflowPlayground.vue'
 
@@ -290,9 +290,7 @@ async function restoreImages(conversationId: string) {
 async function cacheGeneratedImage(image: Omit<ImageEntry, 'objectUrl'>): Promise<ImageEntry> {
   const imageAccountId = accountId.value
   if (imageAccountId === null) return image
-  const response = await fetch(image.url)
-  if (!response.ok) throw new Error('image cache fetch failed')
-  const blob = await response.blob()
+  const blob = await playgroundImageBlob(image.url)
   if (accountId.value !== imageAccountId) return image
   await playgroundImageCache.put({ ...image, accountId: String(imageAccountId), blob })
   if (disposed || accountId.value !== imageAccountId) return image
