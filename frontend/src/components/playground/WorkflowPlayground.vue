@@ -37,7 +37,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Group } from '@/types'
 import { useAuthStore } from '@/stores'
-import { playgroundAPI, type PlaygroundMessage, type PlaygroundMultimodalMessage } from '@/api/playground'
+import { PlaygroundImageGenerationError, playgroundAPI, type PlaygroundImage, type PlaygroundMessage, type PlaygroundMultimodalMessage } from '@/api/playground'
 import { playgroundHistory, type Conversation, type ConversationMessage, type WorkflowStep } from '@/api/playgroundHistory'
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundIntent } from '@/utils/playgroundIntent'
@@ -49,7 +49,7 @@ const emit = defineEmits<{ presets: [value: { groupId: number; chatModel: string
 const { t } = useI18n()
 const auth = useAuthStore()
 type Result = { content: string; model: string; kind: 'chat' | 'image' }
-type Image = { id: string; url: string; expiresAt: number; prompt: string }
+type Image = { id: string; url: string; expiresAt: number; prompt: string; persistent?: boolean }
 const history = ref<Conversation[]>([])
 const id = ref(createPlaygroundId())
 const title = ref('')
@@ -82,7 +82,7 @@ function messageID() {
 }
 
 function result(stepID: string) { return results.value[stepID] }
-function expired(image: Image) { return image.expiresAt <= Date.now() }
+function expired(image: Image) { return !image.persistent && image.expiresAt <= Date.now() }
 function promptTooLong(prompt: string) { return new TextEncoder().encode(prompt).length > 16000 }
 function expiry(value: number) { return value ? t('workflow.expires', { time: new Date(value).toLocaleString() }) : '' }
 function selectedGroupIsValid() {
@@ -141,7 +141,7 @@ async function cacheImages(stepID: string, prompt: string, generated: Array<{ ur
       const entry: CachedPlaygroundImage = { id: createPlaygroundId(), accountId, conversationId: conversationID, messageId: messageID(), stepId: stepID, prompt, expiresAt, blob: await response.blob() }
       await playgroundImageCache.put(entry)
       if (disposed || accountID() !== accountId || id.value !== conversationID) return { id: entry.id, url: image.url, expiresAt, prompt }
-      return { id: entry.id, url: URL.createObjectURL(entry.blob), expiresAt, prompt }
+      return { id: entry.id, url: URL.createObjectURL(entry.blob), expiresAt, prompt, persistent: true }
     } catch {
       failed = true
       return { id: createPlaygroundId(), url: image.url, expiresAt, prompt }
@@ -176,7 +176,7 @@ async function restoreImages() {
     if (disposed || accountID() !== accountId || id.value !== conversationID) return
     images.value = cached.reduce<Record<string, Image[]>>((output, image) => {
       if (!image.stepId) return output
-      const entry = { id: image.id, url: URL.createObjectURL(image.blob), expiresAt: image.expiresAt, prompt: image.prompt }
+      const entry = { id: image.id, url: URL.createObjectURL(image.blob), expiresAt: image.expiresAt ?? 0, prompt: image.prompt, persistent: true }
       output[image.stepId] = [...(output[image.stepId] || []), entry]
       return output
     }, {})
@@ -323,17 +323,36 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       const text = [...context.map(message => typeof message.content === 'string'
         ? message.content
         : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')), prompt].join('\n\n')
-      const generated = await playgroundAPI.generateImages({ groupId, model, prompt: text, size: '1024x1024', quality: 'auto', count: count!.count, signal: controller.signal })
+      let replacedImages = false
+      let cacheCleared = false
+      const saveImage = async (image: PlaygroundImage) => {
+        if (disposed || controller?.signal.aborted) return
+        if (!replacedImages) {
+          cacheCleared = await deleteCachedStep(step.id)
+          clearStepImages(step.id, false)
+          replacedImages = true
+        }
+        const nextImage = cacheCleared
+          ? (await cacheImages(step.id, text, [image]))[0]
+          : { id: createPlaygroundId(), url: image.url, expiresAt: Date.now() + 600000, prompt: text }
+        if (!disposed && nextImage) images.value[step.id] = [...(images.value[step.id] || []), nextImage]
+      }
+      let generated: PlaygroundImage[]
+      let generationError: unknown
+      try {
+        generated = await playgroundAPI.generateImages({ groupId, model, prompt: text, size: '1024x1024', quality: 'auto', count: count!.count, signal: controller.signal, onImage: saveImage })
+      } catch (caught) {
+        if (caught instanceof PlaygroundImageGenerationError && caught.images.length) {
+          generated = caught.images
+          generationError = caught
+        } else throw caught
+      }
       if (disposed || controller.signal.aborted) return false
       if (!generated[0]) throw new Error(t('workflow.imageFailed'))
       results.value[step.id] = { content: generated[0].revisedPrompt || text, model, kind: 'image' }
-      const cacheCleared = await deleteCachedStep(step.id)
-      const nextImages = cacheCleared ? await cacheImages(step.id, text, generated) : generated.map(image => ({ id: createPlaygroundId(), url: image.url, expiresAt: Date.now() + 600000, prompt: text }))
-      if (disposed) {
-        for (const image of nextImages) if (image.url.startsWith('blob:')) URL.revokeObjectURL(image.url)
-        return false
-      }
-      images.value[step.id] = nextImages
+      if (generationError) error.value = (generationError as PlaygroundImageGenerationError).status === 402
+        ? t('workflow.insufficientBalance')
+        : (generationError as Error).message
     } else {
       let content = ''
       await playgroundAPI.streamChat({ groupId, model, messages: [...context, { role: 'user', content: prompt }], signal: controller.signal, onDelta: delta => { content += delta } })
@@ -371,7 +390,7 @@ async function regenerate() {
   if (await runCurrent(value)) guidance.value = ''
 }
 async function download(image: Image, index: number) { if (expired(image)) return; try { const response = await fetch(image.url); if (!response.ok) throw new Error(); const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `workflow-${current.value?.id || 'image'}-${index + 1}.png`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000) } catch { error.value = t('workflow.downloadFailed') } }
-onMounted(() => { load(); ticker = setInterval(() => { for (const [stepID, entries] of Object.entries(images.value)) { const active = entries.filter(image => !expired(image)); for (const image of entries) if (expired(image) && image.url.startsWith('blob:')) URL.revokeObjectURL(image.url); if (active.length) images.value[stepID] = active; else delete images.value[stepID] } void playgroundImageCache.deleteExpired().catch(() => {}) }, 1000) })
+onMounted(() => { load(); ticker = setInterval(() => { for (const [stepID, entries] of Object.entries(images.value)) { const active = entries.filter(image => !expired(image)); for (const image of entries) if (expired(image) && image.url.startsWith('blob:')) URL.revokeObjectURL(image.url); if (active.length) images.value[stepID] = active; else delete images.value[stepID] } }, 1000) })
 watch(
   () => [props.groupId, props.chatModel, props.imageModel, locked.value] as const,
   ([groupId, chatModel, imageModel, isLocked]) => {

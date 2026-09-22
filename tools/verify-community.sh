@@ -24,6 +24,7 @@ fi
   src/utils/__tests__/playgroundId.spec.ts \
   src/utils/__tests__/playgroundIntent.spec.ts \
   src/utils/__tests__/playgroundImageCount.spec.ts \
+  src/utils/__tests__/playgroundImageCache.spec.ts \
   src/utils/__tests__/playgroundPreferences.spec.ts \
   src/utils/__tests__/playgroundModel.spec.ts \
   src/views/user/__tests__/PlaygroundView.spec.ts \
@@ -40,7 +41,7 @@ fi
 
 (cd backend && "$go_bin" test ./internal/server/routes -run Playground)
 (cd backend && "$go_bin" test ./internal/repository -run TestPlaygroundImageBalanceWithPostgres)
-(cd backend && "$go_bin" test ./internal/service -run 'PlaygroundImage')
+(cd backend && "$go_bin" test ./internal/service -run 'PlaygroundImage|PlaygroundHoldSettlesResolvedOutputPrice')
 (cd backend && "$go_bin" test -tags unit ./internal/handler -run 'GrokPlaygroundImages')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'ImageRateAlways|ImageCountOverridesChannelTokenPricing|ImageMultiplierIgnores|ChannelImageBillingUsesImageCount|ListPlazaGroups_GroupImagePrice|BatchImagePublicService_Submit')

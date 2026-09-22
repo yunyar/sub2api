@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,4 +24,19 @@ func TestPlaygroundImageHoldDoesNotDeductBalanceTwice(t *testing.T) {
 	parameters.PlaygroundImageHold = nil
 	ordinary := buildUsageBillingCommand("ordinary-image", nil, parameters)
 	require.Equal(t, 3.0, ordinary.BalanceCost)
+}
+
+func TestPlaygroundImageHoldRejectsSettlementAboveReservedAmount(t *testing.T) {
+	billingRepo := &openAIPlaygroundImageBillingRepoStub{}
+	parameters := &postUsageBillingParams{
+		Cost:                &CostBreakdown{TotalCost: 1, ActualCost: 1},
+		APIKey:              &APIKey{ID: 4},
+		User:                &User{ID: 5},
+		Account:             &Account{ID: 6},
+		PlaygroundImageHold: &BatchImageBalanceHoldCommand{BatchID: "playground-image:4:above-hold", HoldAmount: 0.5},
+	}
+
+	_, err := applyUsageBilling(context.Background(), "above-hold", &UsageLog{}, parameters, &billingDeps{}, billingRepo)
+	require.ErrorIs(t, err, ErrBatchImageSettlementCostExceedsHold)
+	require.Nil(t, billingRepo.settledHold)
 }

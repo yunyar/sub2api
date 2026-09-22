@@ -74,7 +74,7 @@ describe('streamPlaygroundChat', () => {
 describe('generatePlaygroundImages', () => {
   it('passes an optional cancellation signal to axios', async () => {
     const controller = new AbortController()
-    post.mockResolvedValue({ data: { data: [] } })
+    post.mockResolvedValue({ data: { data: [{ url: 'https://images.example/one.png' }] } })
 
     await generatePlaygroundImages({
       groupId: 7,
@@ -91,5 +91,57 @@ describe('generatePlaygroundImages', () => {
       expect.objectContaining({ model: 'image-model' }),
       expect.objectContaining({ signal: controller.signal }),
     )
+  })
+
+  it('splits a requested batch into one-image requests and stops after a balance rejection', async () => {
+    const onImage = vi.fn()
+    const balanceError = { status: 402, message: 'Insufficient balance' }
+    post
+      .mockResolvedValueOnce({ data: { data: [{ url: 'https://images.example/one.png' }] } })
+      .mockRejectedValueOnce(balanceError)
+
+    await expect(generatePlaygroundImages({
+      groupId: 7,
+      model: 'image-model',
+      prompt: '生成3张城市夜景',
+      size: '1024x1024',
+      quality: 'auto',
+      count: 3,
+      onImage,
+    })).rejects.toMatchObject({ name: 'PlaygroundImageGenerationError', message: 'Insufficient balance', status: 402, cause: balanceError, images: [{ url: 'https://images.example/one.png' }] })
+
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post).toHaveBeenNthCalledWith(1, '/playground/images/generations', expect.objectContaining({ n: 1, prompt: expect.stringContaining('request 1 of 3') }), expect.any(Object))
+    expect(post).toHaveBeenNthCalledWith(2, '/playground/images/generations', expect.objectContaining({ n: 1, prompt: expect.stringContaining('request 2 of 3') }), expect.any(Object))
+    expect(onImage).toHaveBeenCalledWith({ url: 'https://images.example/one.png', revisedPrompt: undefined })
+  })
+
+  it('makes exactly one n=1 request per requested image and caps provider over-returns', async () => {
+    post.mockResolvedValue({ data: { data: [
+      { url: 'https://images.example/first.png' },
+      { url: 'https://images.example/unexpected.png' },
+    ] } })
+
+    const images = await generatePlaygroundImages({
+      groupId: 7, model: 'image-model', prompt: '生成3张', size: '1024x1024', quality: 'auto', count: 3,
+    })
+
+    expect(post).toHaveBeenCalledTimes(3)
+    expect(post.mock.calls.every(([, body]) => body.n === 1)).toBe(true)
+    expect(images).toHaveLength(3)
+    expect(images.every(image => image.url === 'https://images.example/first.png')).toBe(true)
+  })
+
+  it('does not start the next request after cancellation', async () => {
+    const controller = new AbortController()
+    post.mockImplementationOnce(async () => {
+      controller.abort()
+      return { data: { data: [{ url: 'https://images.example/first.png' }] } }
+    })
+
+    await expect(generatePlaygroundImages({
+      groupId: 7, model: 'image-model', prompt: '生成3张', size: '1024x1024', quality: 'auto', count: 3, signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(post).toHaveBeenCalledTimes(1)
   })
 })

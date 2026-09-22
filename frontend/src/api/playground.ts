@@ -39,6 +39,19 @@ export interface PlaygroundImageGenerationRequest {
   quality: string
   count: number
   signal?: AbortSignal
+  onImage?: (image: PlaygroundImage) => void | Promise<void>
+}
+
+export class PlaygroundImageGenerationError extends Error {
+  constructor(
+    message: string,
+    readonly images: PlaygroundImage[],
+    readonly status?: number,
+    readonly cause?: unknown,
+  ) {
+    super(message)
+    this.name = 'PlaygroundImageGenerationError'
+  }
 }
 
 interface StreamChatOptions {
@@ -165,20 +178,47 @@ export async function streamPlaygroundChat(options: StreamChatOptions): Promise<
 }
 
 export async function generatePlaygroundImages(input: PlaygroundImageGenerationRequest): Promise<PlaygroundImage[]> {
-  const { data } = await apiClient.post('/playground/images/generations', {
-    model: input.model,
-    prompt: input.prompt,
-    size: input.size,
-    quality: input.quality,
-    n: input.count,
-    response_format: 'b64_json'
-  }, { headers: groupHeaders(input.groupId), timeout: 180_000, signal: input.signal })
+  const count = input.count ?? 1
+  if (!Number.isInteger(count) || count < playgroundImageGenerationCount.min || count > playgroundImageGenerationCount.max) {
+    throw new RangeError(`Image count must be between ${playgroundImageGenerationCount.min} and ${playgroundImageGenerationCount.max}`)
+  }
+  const images: PlaygroundImage[] = []
+  for (let index = 0; index < count; index += 1) {
+    try {
+      if (input.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
+      const { data } = await apiClient.post('/playground/images/generations', {
+        model: input.model,
+        prompt: `${input.prompt}\n\nGenerate exactly one final image asset for request ${index + 1} of ${count}. This is one image in a requested batch; follow the original creative composition instructions, including a collage or panels when requested.`,
+        size: input.size,
+        quality: input.quality,
+        n: 1,
+        response_format: 'b64_json'
+      }, { headers: groupHeaders(input.groupId), timeout: 180_000, signal: input.signal })
 
-  const items = Array.isArray(data?.data) ? data.data : []
-  return items.map((item: any) => ({
-    url: item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url,
-    revisedPrompt: item.revised_prompt
-  })).filter((item: PlaygroundImage) => Boolean(item.url))
+      const generated = (Array.isArray(data?.data) ? data.data : [])
+        .map((item: any) => ({
+          url: item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url,
+          revisedPrompt: item.revised_prompt
+        }))
+        .filter((item: PlaygroundImage) => Boolean(item.url))
+        .slice(0, 1)
+      if (!generated.length) throw new Error('Image generation returned no image')
+      for (const image of generated) {
+        images.push(image)
+        await input.onImage?.(image)
+      }
+    } catch (caught) {
+      if (input.signal?.aborted || (caught as Error)?.name === 'AbortError') throw caught
+      if (images.length) {
+        const response = caught && typeof caught === 'object' ? caught as { message?: unknown; status?: unknown } : null
+        const message = typeof response?.message === 'string' ? response.message : 'Image generation failed'
+        const status = typeof response?.status === 'number' ? response.status : undefined
+        throw new PlaygroundImageGenerationError(message, images, status, caught)
+      }
+      throw caught
+    }
+  }
+  return images
 }
 
 export const playgroundAPI = {

@@ -13,7 +13,7 @@ export default {
     remaining: '{time} remaining',
     settings: 'Settings',
     preview: 'Image preview',
-    imageRetention: 'Images are saved only in this browser for 10 minutes from generation. Conversation text is saved for 7 days.',
+    imageRetention: 'Conversation text is saved in the cloud for 7 days. Images saved in this browser remain available after refresh with no fixed expiry, unless browser storage is cleared. Remote image links may expire after 10 minutes.',
     deleteConfirm: 'Delete this conversation on all devices?',
     historyFailed: 'Could not sync history. Please retry.',
     saveFailed: 'Could not save. The conversation may have expired, reached a limit, or changed on another device. Copy unsaved text before syncing history.',

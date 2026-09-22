@@ -134,4 +134,20 @@ func TestPlaygroundImageBalanceWithPostgres(t *testing.T) {
 			}
 		}
 	})
+	t.Run("settlement above hold leaves the reservation intact", func(t *testing.T) {
+		_, err := database.ExecContext(t.Context(), "INSERT INTO users(id,balance) VALUES(20,5)")
+		require.NoError(t, err)
+		hold := newHold(20, "above-hold", 2)
+		_, err = repo.ReserveBatchImageBalance(t.Context(), hold)
+		require.NoError(t, err)
+		assertBalance(20, 3, 2)
+
+		_, err = settle(hold, 3)
+		require.ErrorIs(t, err, service.ErrBatchImageSettlementCostExceedsHold)
+		assertBalance(20, 3, 2)
+
+		_, err = release(hold)
+		require.NoError(t, err)
+		assertBalance(20, 5, 0)
+	})
 }

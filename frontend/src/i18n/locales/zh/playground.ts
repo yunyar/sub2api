@@ -13,7 +13,7 @@ export default {
     remaining: '剩余 {time}',
     settings: '参数设置',
     preview: '图片预览',
-    imageRetention: '图片仅在此浏览器本地保存，自生成起保留 10 分钟。对话文字保存 7 天。',
+    imageRetention: '对话文字在云端保存 7 天。本浏览器保存的图片刷新后仍可查看，没有固定过期时间；浏览器清理存储后可能丢失。远程图片链接可能在 10 分钟后失效。',
     deleteConfirm: '确定删除这个对话？其他设备也将无法查看。',
     historyFailed: '历史记录同步失败，请重试',
     saveFailed: '对话保存失败，可能已过期、达到限制或被其他设备修改。请复制未保存内容后同步历史记录。',

@@ -5,7 +5,7 @@ export interface CachedPlaygroundImage {
   messageId: number
   stepId?: string
   prompt: string
-  expiresAt: number
+  expiresAt?: number
   blob: Blob
 }
 
@@ -13,6 +13,7 @@ const DATABASE_NAME = 'sub2api-playground-images'
 const STORE_NAME = 'images'
 const DATABASE_VERSION = 2
 
+type RestoredPlaygroundImage = CachedPlaygroundImage & { expiresAt: number }
 type StoredPlaygroundImage = CachedPlaygroundImage & { cacheKey: string }
 
 function cacheKey(accountId: string, id: string) {
@@ -38,11 +39,14 @@ function openDatabase(): Promise<IDBDatabase> {
   if (typeof indexedDB === 'undefined') return Promise.reject(new Error('IndexedDB is unavailable'))
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION)
-    request.onupgradeneeded = () => {
-      if (request.result.objectStoreNames.contains(STORE_NAME)) request.result.deleteObjectStore(STORE_NAME)
-      const store = request.result.createObjectStore(STORE_NAME, { keyPath: 'cacheKey' })
-      store.createIndex('accountConversation', ['accountId', 'conversationId'], { unique: false })
-      store.createIndex('expiresAt', 'expiresAt', { unique: false })
+    request.onupgradeneeded = (event) => {
+      const database = request.result
+      const resetLegacyStore = event.oldVersion > 0 && event.oldVersion < 2 && database.objectStoreNames.contains(STORE_NAME)
+      if (resetLegacyStore) database.deleteObjectStore(STORE_NAME)
+      if (resetLegacyStore || !database.objectStoreNames.contains(STORE_NAME)) {
+        const store = database.createObjectStore(STORE_NAME, { keyPath: 'cacheKey' })
+        store.createIndex('accountConversation', ['accountId', 'conversationId'], { unique: false })
+      }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error || new Error('IndexedDB open failed'))
@@ -72,9 +76,12 @@ export const playgroundImageCache = {
   put(image: CachedPlaygroundImage) {
     return withStore('readwrite', async store => requestResult(store.put({ ...image, cacheKey: cacheKey(image.accountId, image.id) })))
   },
-  async listConversation(accountId: number | string, conversationId: string, now = Date.now()) {
+  async listConversation(accountId: number | string, conversationId: string) {
     const records = await withStore('readonly', async store => requestResult(store.index('accountConversation').getAll([String(accountId), conversationId])))
-    return (records as StoredPlaygroundImage[]).filter(image => image.expiresAt > now).map(({ cacheKey: _cacheKey, ...image }) => image)
+    return (records as StoredPlaygroundImage[]).map(({ cacheKey: _cacheKey, expiresAt, ...image }): RestoredPlaygroundImage => ({
+      ...image,
+      expiresAt: expiresAt ?? 0
+    }))
   },
   deleteConversation(accountId: number | string, conversationId: string) {
     return withStore('readwrite', async store => {
@@ -88,10 +95,7 @@ export const playgroundImageCache = {
       records.filter(image => image.stepId === stepId).forEach(image => store.delete(image.cacheKey))
     })
   },
-  deleteExpired(now = Date.now()) {
-    return withStore('readwrite', async store => {
-      const keys = await requestResult(store.index('expiresAt').getAllKeys(IDBKeyRange.upperBound(now)))
-      keys.forEach(key => store.delete(key))
-    })
+  deleteExpired(_now?: number) {
+    return Promise.resolve()
   }
 }

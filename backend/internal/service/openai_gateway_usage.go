@@ -160,6 +160,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if result == nil {
 		return errors.New("openai usage result is nil")
 	}
+	upstreamImageCount := result.ImageCount
+	if hold := input.PlaygroundImageHold; hold != nil && hold.RequestedCount > 0 && result.ImageCount > hold.RequestedCount {
+		capped := *result
+		capped.ImageCount = hold.RequestedCount
+		if len(result.ImageOutputSizes) > hold.RequestedCount {
+			capped.ImageOutputSizes = append([]string(nil), result.ImageOutputSizes[:hold.RequestedCount]...)
+		}
+		result = &capped
+	}
 	if s.rateLimitService != nil && input.Account != nil && input.Account.Platform == PlatformOpenAI {
 		s.rateLimitService.ResetOpenAI403Counter(ctx, input.Account.ID)
 	}
@@ -322,20 +331,6 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			cost.ActualCost = standardCost.ActualCost
 		}
 	}
-	if hold := input.PlaygroundImageHold; hold != nil {
-		count := result.ImageCount
-		if count < 0 {
-			count = 0
-		}
-		if hold.RequestedCount > 0 && count > hold.RequestedCount {
-			count = hold.RequestedCount
-		}
-		cost.ActualCost = QuantizeUsageBillingAmount(hold.UnitAmount * float64(count))
-		if cost.ActualCost > hold.HoldAmount {
-			cost.ActualCost = hold.HoldAmount
-		}
-	}
-
 	// Determine billing type
 	isSubscriptionBilling := subscription != nil && apiKey.Group != nil && apiKey.Group.IsSubscriptionType()
 	billingType := BillingTypeBalance
@@ -493,10 +488,19 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// 计算账号统计定价费用（使用最终上游模型匹配自定义规则）
 	if apiKey.GroupID != nil {
-		applyAccountStatsCost(ctx, usageLog, s.channelService, s.billingService,
+		accountStatsLog := usageLog
+		if upstreamImageCount > result.ImageCount {
+			accountStatsLogCopy := *usageLog
+			accountStatsLogCopy.ImageCount = upstreamImageCount
+			accountStatsLog = &accountStatsLogCopy
+		}
+		applyAccountStatsCost(ctx, accountStatsLog, s.channelService, s.billingService,
 			account.ID, *apiKey.GroupID, result.UpstreamModel, result.Model,
 			tokens, cost.TotalCost, pricingAt,
 		)
+		if accountStatsLog != usageLog {
+			usageLog.AccountStatsCost = accountStatsLog.AccountStatsCost
+		}
 	}
 
 	if s.cfg != nil && s.cfg.RunMode == config.RunModeSimple {

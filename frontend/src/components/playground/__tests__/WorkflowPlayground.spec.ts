@@ -15,6 +15,9 @@ const state = vi.hoisted(() => ({
   cacheDeleteExpired: vi.fn(),
   refreshUser: vi.fn(),
   balance: 10,
+  PartialImageError: class PartialImageError extends Error {
+    constructor(message: string, readonly images: unknown[], readonly status?: number) { super(message) }
+  },
 }))
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
@@ -22,6 +25,7 @@ vi.mock('@/stores', () => ({
   useAuthStore: () => ({ user: { id: 1, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
 }))
 vi.mock('@/api/playground', () => ({
+  PlaygroundImageGenerationError: state.PartialImageError,
   playgroundAPI: { streamChat: state.streamChat, generateImages: state.generateImages },
 }))
 vi.mock('@/api/playgroundHistory', () => ({
@@ -75,7 +79,11 @@ beforeEach(() => {
   state.save.mockImplementation(async (value: Conversation) => ({ ...value, revision: value.revision + 1, expiresAt: Date.now() + 3_600_000 }))
   state.remove.mockResolvedValue(undefined)
   state.streamChat.mockImplementation(async (input: { onDelta: (delta: string) => void }) => input.onDelta('chat result'))
-  state.generateImages.mockResolvedValue([{ url: 'https://images.example/generated.png', revisedPrompt: 'image result' }])
+  state.generateImages.mockImplementation(async (input: { onImage?: (image: { url: string; revisedPrompt: string }) => void | Promise<void> }) => {
+    const image = { url: 'https://images.example/generated.png', revisedPrompt: 'image result' }
+    await input.onImage?.(image)
+    return [image]
+  })
   state.cacheList.mockResolvedValue([])
   state.cachePut.mockResolvedValue(undefined)
   state.cacheDeleteStep.mockResolvedValue(undefined)
@@ -130,11 +138,15 @@ describe('WorkflowPlayground', () => {
   })
 
   it('uses the natural-language image count and displays every generated image', async () => {
-    state.generateImages.mockResolvedValue([
-      { url: 'https://images.example/one.png', revisedPrompt: 'first image' },
-      { url: 'https://images.example/two.png', revisedPrompt: 'second image' },
-      { url: 'https://images.example/three.png', revisedPrompt: 'third image' },
-    ])
+    state.generateImages.mockImplementation(async (input: { onImage?: (image: { url: string; revisedPrompt: string }) => void | Promise<void> }) => {
+      const generated = [
+        { url: 'https://images.example/one.png', revisedPrompt: 'first image' },
+        { url: 'https://images.example/two.png', revisedPrompt: 'second image' },
+        { url: 'https://images.example/three.png', revisedPrompt: 'third image' },
+      ]
+      for (const image of generated) await input.onImage?.(image)
+      return generated
+    })
     const wrapper = mountWorkflow()
     await flushPromises()
     await enterFirstPrompt(wrapper, 'draw three images of a mountain')
@@ -143,6 +155,46 @@ describe('WorkflowPlayground', () => {
 
     expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }))
     expect(wrapper.findAll('img')).toHaveLength(3)
+  })
+
+  it('replaces a three-image result with the next three-image regeneration', async () => {
+    let batch = 0
+    state.generateImages.mockImplementation(async (input: { onImage?: (image: { url: string; revisedPrompt: string }) => void | Promise<void> }) => {
+      batch += 1
+      const generated = Array.from({ length: 3 }, (_, index) => ({
+        url: `https://images.example/batch-${batch}-${index}.png`,
+        revisedPrompt: `batch ${batch}`,
+      }))
+      for (const image of generated) await input.onImage?.(image)
+      return generated
+    })
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw three images of a mountain')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+    await wrapper.findAll('textarea')[1].setValue('make them brighter')
+    await button(wrapper, 'workflow.revise')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('img')).toHaveLength(3)
+    expect(state.cacheDeleteStep).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves prior images and cached entries when regeneration fails before its first image', async () => {
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw an image of a mountain')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+    state.generateImages.mockRejectedValueOnce(new Error('upstream failed'))
+    await wrapper.findAll('textarea')[1].setValue('make it brighter')
+    await button(wrapper, 'workflow.revise')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('img')).toHaveLength(1)
+    expect(state.cacheDeleteStep).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('image result')
   })
 
   it('keeps a cache failure visible after the workflow save succeeds', async () => {
@@ -166,6 +218,22 @@ describe('WorkflowPlayground', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('workflow.insufficientBalance')
     expect(state.generateImages).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps completed images and shows insufficient balance after a partial plain-object 402', async () => {
+    state.generateImages.mockImplementation(async (input: any) => {
+      const image = { url: 'https://images.example/completed.png', revisedPrompt: 'completed image' }
+      await input.onImage?.(image)
+      throw new state.PartialImageError('Insufficient balance for image generation', [image], 402)
+    })
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw three images')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('img')).toHaveLength(1)
+    expect(wrapper.text()).toContain('workflow.insufficientBalance')
   })
 
   it('restores workflow result and emits its saved presets', async () => {
@@ -266,6 +334,7 @@ describe('WorkflowPlayground', () => {
 
   it('blocks expired images from later context without submitting base64 data', async () => {
     vi.useFakeTimers()
+    state.cachePut.mockRejectedValueOnce(new Error('storage unavailable'))
     const wrapper = mountWorkflow()
     await flushPromises()
     await enterFirstPrompt(wrapper, 'generate an image of a mountain')
@@ -278,7 +347,7 @@ describe('WorkflowPlayground', () => {
     await flushPromises()
 
     expect(state.streamChat).not.toHaveBeenCalled()
-    expect(wrapper.text()).toContain('workflow.regenerateDependency')
+    expect(wrapper.text()).toContain('workflow.imageExpired')
     vi.useRealTimers()
   })
 

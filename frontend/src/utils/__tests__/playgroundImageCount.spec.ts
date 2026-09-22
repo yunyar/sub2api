@@ -3,7 +3,7 @@ import { resolvePlaygroundImageCount } from '../playgroundImageCount'
 
 describe('resolvePlaygroundImageCount', () => {
   it.each([
-    ['生成三张海报', 3], ['画2张猫的图片', 2], ['出十张图', 10],
+    ['生成三张海报', 3], ['生成3张', 3], ['画2张猫的图片', 2], ['出十张图', 10],
     ['Create four images of a house', 4], ['Draw 3 pictures', 3], ['生成三张，改成两张', 2]
   ])('reads explicit count from %s', (prompt, count) => {
     expect(resolvePlaygroundImageCount(String(prompt), 1)).toEqual({ count, explicit: true, error: null })

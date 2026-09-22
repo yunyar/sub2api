@@ -48,10 +48,12 @@ func (r *playgroundImageBillingRepoStub) ReleaseBatchImageBalance(_ context.Cont
 }
 
 func TestReservePlaygroundImageBalance_ConcurrentInsufficientBalanceAndMultiplier(t *testing.T) {
-	price := 2.0
+	price1K := 2.0
+	price2K := 3.0
+	price4K := 1.0
 	repo := &playgroundImageBillingRepoStub{balance: 5}
 	svc := &OpenAIGatewayService{usageBillingRepo: repo, billingService: NewBillingService(nil, nil)}
-	apiKey := &APIKey{ID: 9, User: &User{ID: 7}, GroupID: int64Ptr(3), Group: &Group{ID: 3, ImagePrice2K: &price, ImageRateMultiplier: 1.5}}
+	apiKey := &APIKey{ID: 9, User: &User{ID: 7}, GroupID: int64Ptr(3), Group: &Group{ID: 3, ImagePrice1K: &price1K, ImagePrice2K: &price2K, ImagePrice4K: &price4K, ImageRateMultiplier: 1.5}}
 	var successes atomic.Int32
 	var wg sync.WaitGroup
 	for _, id := range []string{"a", "b"} {
@@ -67,14 +69,39 @@ func TestReservePlaygroundImageBalance_ConcurrentInsufficientBalanceAndMultiplie
 	}
 	wg.Wait()
 	require.EqualValues(t, 1, successes.Load())
-	require.InDelta(t, 2, repo.balance, 1e-9)
+	require.InDelta(t, 0.5, repo.balance, 1e-9)
+}
+
+func TestReservePlaygroundImageBalance_HoldsMaximumTierThenSettlesActualOutputTier(t *testing.T) {
+	price1K := 0.134
+	price2K := 0.201
+	price4K := 0.268
+	repo := &playgroundImageBillingRepoStub{balance: 2}
+	svc := &OpenAIGatewayService{usageBillingRepo: repo, billingService: NewBillingService(nil, nil)}
+	apiKey := &APIKey{ID: 10, User: &User{ID: 8}, GroupID: int64Ptr(4), Group: &Group{
+		ID: 4, ImagePrice1K: &price1K, ImagePrice2K: &price2K, ImagePrice4K: &price4K, ImageRateMultiplier: 4.2,
+	}}
+
+	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "larger-output")
+	hold, err := svc.ReservePlaygroundImageBalance(ctx, apiKey, "gpt-image-2", "1024x1024", 1, "payload")
+	require.NoError(t, err)
+	require.NotNil(t, hold)
+	require.InDelta(t, 1.1256, hold.HoldAmount, 1e-12)
+
+	actual := svc.calculateOpenAIImageCost(ctx, "gpt-image-2", apiKey, &OpenAIForwardResult{
+		Model: "gpt-image-2", ImageCount: 1, ImageSize: "1536x1024",
+	}, apiKey.Group.ImageRateMultiplier)
+	require.InDelta(t, 0.8442, actual.ActualCost, 1e-12)
+	require.LessOrEqual(t, actual.ActualCost, hold.HoldAmount)
 }
 
 func TestReservePlaygroundImageBalance_DuplicateRequestAndZeroPrice(t *testing.T) {
-	zero := 0.0
+	zero1K := 0.0
+	zero2K := 0.0
+	zero4K := 0.0
 	repo := &playgroundImageBillingRepoStub{balance: 1}
 	svc := &OpenAIGatewayService{usageBillingRepo: repo, billingService: NewBillingService(nil, nil)}
-	apiKey := &APIKey{ID: 9, User: &User{ID: 7}, GroupID: int64Ptr(3), Group: &Group{ID: 3, ImagePrice2K: &zero, ImageRateMultiplier: 1}}
+	apiKey := &APIKey{ID: 9, User: &User{ID: 7}, GroupID: int64Ptr(3), Group: &Group{ID: 3, ImagePrice1K: &zero1K, ImagePrice2K: &zero2K, ImagePrice4K: &zero4K, ImageRateMultiplier: 1}}
 	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "same")
 	hold, err := svc.ReservePlaygroundImageBalance(ctx, apiKey, "gpt-image-1", "2K", 3, "payload")
 	require.NoError(t, err)

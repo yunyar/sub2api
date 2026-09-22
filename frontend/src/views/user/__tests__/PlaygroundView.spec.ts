@@ -18,6 +18,10 @@ const state = vi.hoisted(() => ({
   cacheList: vi.fn(),
   cacheDeleteConversation: vi.fn(),
   cacheDeleteExpired: vi.fn(),
+  accountId: undefined as number | undefined,
+  PartialImageError: class PartialImageError extends Error {
+    constructor(message: string, readonly images: unknown[], readonly status?: number) { super(message) }
+  },
   nextId: 0
 }))
 
@@ -30,11 +34,12 @@ vi.mock('@/components/playground/WorkflowPlayground.vue', () => ({
   }
 }))
 vi.mock('@/stores', () => ({
-  useAuthStore: () => ({ user: { get balance() { return state.balance } }, refreshUser: state.refreshUser }),
+  useAuthStore: () => ({ user: { get id() { return state.accountId }, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
   useAppStore: () => ({ showError: state.showError, showSuccess: state.showSuccess })
 }))
 vi.mock('@/api/groups', () => ({ userGroupsAPI: { getAvailable: state.getAvailable } }))
 vi.mock('@/api/playground', () => ({
+  PlaygroundImageGenerationError: state.PartialImageError,
   playgroundAPI: {
     listModels: state.listModels,
     generateImages: state.generateImages,
@@ -70,6 +75,7 @@ describe('PlaygroundView model and intent routing', () => {
   beforeEach(() => {
     state.nextId = 0
     state.balance = 10
+    state.accountId = undefined
     state.getAvailable.mockResolvedValue([{ id: 7, name: 'Default' }])
     state.listModels.mockResolvedValue([
       { id: 'chat-model' },
@@ -155,6 +161,48 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.generateImages).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps completed images and shows insufficient balance after a partial plain-object 402', async () => {
+    state.generateImages.mockImplementation(async (input: any) => {
+      const image = { url: 'data:image/png;base64,completed' }
+      await input.onImage?.(image)
+      throw new state.PartialImageError('Insufficient balance for image generation', [image], 402)
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('textarea.composer-input').setValue('draw 3 pictures')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.findAll('img')).toHaveLength(1)
+    expect(wrapper.text()).toContain('playground.insufficientBalance')
+  })
+
+  it('downloads an expired locally cached image', async () => {
+    state.accountId = 1
+    state.list.mockResolvedValue([{
+      id: 'cached-conversation', title: 'Cached image', groupId: 7, model: 'chat-model', imageModel: 'image-model', systemPrompt: '', temperature: 0.7,
+      messages: [
+        { id: 1, role: 'user', content: 'draw a lighthouse', model: 'image-model', kind: 'image' },
+        { id: 2, role: 'assistant', content: 'lighthouse', model: 'image-model', kind: 'image' },
+      ], revision: 1, expiresAt: Date.now() + 604800000,
+    }])
+    state.cacheList.mockResolvedValue([{ id: 'cached-image', accountId: '1', conversationId: 'cached-conversation', messageId: 2, prompt: 'draw a lighthouse', expiresAt: Date.now() - 600_001, blob: new Blob(['image']) }])
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:cached-image') })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    const fetch = vi.fn().mockResolvedValue(new Response(new Blob(['image'])))
+    vi.stubGlobal('fetch', fetch)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('.history-item button').trigger('click')
+    await flushPromises()
+    await wrapper.get('button.text-sm.font-medium').trigger('click')
+    await flushPromises()
+
+    expect(fetch).toHaveBeenCalledWith('blob:cached-image')
+    expect(click).toHaveBeenCalled()
+  })
+
   it('applies workflow presets without changing the standard conversation presets', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -191,6 +239,33 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.save).toHaveBeenCalledTimes(1)
     expect(wrapper.get('textarea.composer-input').attributes('disabled')).toBeDefined()
     resolveSave()
+    await flushPromises()
+  })
+
+  it('accepts another saved image request while a multi-image batch is pending', async () => {
+    let resolveFirst!: () => void
+    state.generateImages.mockImplementation(async (input: any) => {
+      if (input.prompt.includes('first')) {
+        await new Promise<void>(resolve => { resolveFirst = resolve })
+      }
+      const image = { url: `data:image/png;base64,${input.prompt}` }
+      await input.onImage?.(image)
+      return [image]
+    })
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('textarea.composer-input').setValue('draw first 3 pictures')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('textarea.composer-input').setValue('draw second picture')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.generateImages).toHaveBeenCalledTimes(2)
+    expect(state.save.mock.calls.some(call => call[0].messages.some((message: any) => message.content === 'draw first 3 pictures'))).toBe(true)
+    expect(state.save.mock.calls.some(call => call[0].messages.some((message: any) => message.content === 'draw second picture'))).toBe(true)
+    resolveFirst()
     await flushPromises()
   })
 

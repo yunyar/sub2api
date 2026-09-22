@@ -82,7 +82,7 @@
                 <figure v-for="image in currentImages.filter(entry => entry.messageId === message.id)" :key="image.id" class="image-card">
                   <button class="image-preview block w-full cursor-zoom-in" :aria-label="t('playground.preview')" @click="preview = image"><img :src="image.url" :alt="image.prompt" class="max-h-96 w-full object-contain" /></button>
                   <figcaption class="flex items-center justify-between gap-2 p-3">
-                    <span class="text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ remaining(image.expiresAt) }}</span>
+                    <span v-if="!image.objectUrl" class="text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ remaining(image.expiresAt) }}</span>
                     <button class="text-sm font-medium text-primary-600" @click="downloadImage(image)">{{ t('playground.download') }}</button>
                   </figcaption>
                 </figure>
@@ -113,8 +113,8 @@
                   <span v-if="imageCountResolution.explicit || imageCount > 1" class="mode-indicator">{{ t('playground.imagesToGenerate', { count: imageCountResolution.count }) }}</span>
                   <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="streaming || submitting" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
                 </div>
-                <button v-if="streaming" type="button" class="btn btn-secondary" @click="controller?.abort()">{{ t('playground.stop') }}</button>
-                <button v-else class="btn btn-primary" type="submit" :disabled="!canSend">{{ t('playground.send') }} ↑</button>
+                <button v-if="streaming || generating" type="button" class="btn btn-secondary" @click="abortActiveRequests">{{ t('playground.stop') }}</button>
+                <button v-if="!streaming" class="btn btn-primary" type="submit" :disabled="!canSend">{{ t('playground.send') }} ↑</button>
               </div>
             </form>
             <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t('playground.retention') }} {{ t('playground.imageRetention') }}</p>
@@ -138,7 +138,7 @@ import DOMPurify from 'dompurify'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { userGroupsAPI } from '@/api/groups'
-import { playgroundAPI, type PlaygroundModel, type PlaygroundMessage } from '@/api/playground'
+import { PlaygroundImageGenerationError, playgroundAPI, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage } from '@/api/playground'
 import { playgroundHistory, type Conversation, type ConversationMessage } from '@/api/playgroundHistory'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
@@ -184,6 +184,7 @@ const preview = ref<ImageEntry | null>(null)
 const viewport = ref<HTMLElement | null>(null)
 const now = ref(Date.now())
 let controller: AbortController | null = null
+const imageControllers = new Set<AbortController>()
 let timer: ReturnType<typeof setInterval> | undefined
 let modelRequest = 0
 let disposed = false
@@ -199,7 +200,7 @@ const imageCountResolution = computed(() => resolvePlaygroundImageCount(draft.va
 const chatModels = computed(() => models.value.filter((model) => !isPlaygroundImageModel(model.id) && !isPlaygroundVideoModel(model.id)))
 const imageModels = computed(() => models.value.filter((model) => isPlaygroundImageModel(model.id)))
 const normalConversations = computed(() => conversations.value.filter((conversation) => conversation.kind !== 'workflow'))
-const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && image.expiresAt > now.value))
+const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && (image.objectUrl || image.expiresAt > now.value)))
 const selectedGroupId = computed({
   get: () => activeTab.value === 'workflow' ? workflowPresets.value.groupId : current.value.groupId,
   set: (value: number) => {
@@ -262,6 +263,10 @@ function newConversation() {
 function releaseImages(entries: ImageEntry[]) {
   entries.filter(image => image.objectUrl).forEach(image => URL.revokeObjectURL(image.url))
 }
+function abortActiveRequests() {
+  controller?.abort()
+  for (const imageController of imageControllers) imageController.abort()
+}
 async function restoreImages(conversationId: string) {
   const restoredAccountId = accountId.value
   if (restoredAccountId === null) return
@@ -279,7 +284,7 @@ async function restoreImages(conversationId: string) {
     url: URL.createObjectURL(image.blob),
     objectUrl: true,
     prompt: image.prompt,
-    expiresAt: image.expiresAt
+    expiresAt: image.expiresAt ?? 0
   })))
 }
 async function cacheGeneratedImage(image: Omit<ImageEntry, 'objectUrl'>): Promise<ImageEntry> {
@@ -464,29 +469,40 @@ async function send() {
   draft.value = ''; error.value = ''
   if (kind === 'image') {
     generatingCount.value += 1
+    const imageController = new AbortController()
+    imageControllers.add(imageController)
     try {
       const generationPrompt = priorImagePrompt ? `${priorImagePrompt}\n\n${prompt}` : prompt
-      const generated = await playgroundAPI.generateImages({ groupId, model, prompt: generationPrompt, size: imageSize.value, quality: imageQuality.value, count: requestedImageCount.count })
-      if (!generated.length) throw new Error(t('playground.imageFailed'))
-      const expiresAt = Date.now() + 600000
-      const generatedImages = generated.map(image => ({ id: createPlaygroundId(), conversationId, messageId: userId, url: image.url, prompt: generationPrompt, expiresAt }))
-      if (!disposed && accountId.value === requestAccountId) {
-        images.value.push(...generatedImages)
-        const cached = await Promise.all(generatedImages.map(image => cacheGeneratedImage(image).catch(() => null)))
-        if (!disposed && accountId.value === requestAccountId) {
-          const cachedImages = cached.filter((image): image is ImageEntry => image !== null)
-          const cachedIds = new Set(cachedImages.map(image => image.id))
-          images.value = [...images.value.filter(image => !cachedIds.has(image.id)), ...cachedImages]
-          if (cachedImages.length !== generatedImages.length) cacheError.value = t('playground.imageCacheFailed')
-        }
+      const saveImage = async (image: PlaygroundImage) => {
+        const generatedImage: ImageEntry = { id: createPlaygroundId(), conversationId, messageId: userId, url: image.url, prompt: generationPrompt, expiresAt: Date.now() + 600000 }
+        if (disposed || accountId.value !== requestAccountId) return
+        images.value.push(generatedImage)
+        const cached = await cacheGeneratedImage(generatedImage).catch(() => null)
+        if (disposed || accountId.value !== requestAccountId) return
+        if (!cached) { cacheError.value = t('playground.imageCacheFailed'); return }
+        images.value = [...images.value.filter(image => image.id !== generatedImage.id), cached]
       }
+      let generated: PlaygroundImage[]
+      let generationError: unknown
+      try {
+        generated = await playgroundAPI.generateImages({ groupId, model, prompt: generationPrompt, size: imageSize.value, quality: imageQuality.value, count: requestedImageCount.count, signal: imageController.signal, onImage: saveImage })
+      } catch (caught) {
+        if (caught instanceof PlaygroundImageGenerationError && caught.images.length) {
+          generated = caught.images
+          generationError = caught
+        } else throw caught
+      }
+      if (!generated.length) throw new Error(t('playground.imageFailed'))
       conversation.messages.push({ id: createMessageId(), role: 'assistant', content: generated[0].revisedPrompt || generationPrompt, model, kind })
+      if (generationError) error.value = (generationError as PlaygroundImageGenerationError).status === 402
+        ? t('playground.insufficientBalance')
+        : (generationError as Error).message
     } catch (caught) {
       error.value = (caught as { status?: number } | null)?.status === 402
         ? t('playground.insufficientBalance')
         : caught instanceof Error ? caught.message : t('playground.imageFailed')
     }
-    finally { generatingCount.value -= 1 }
+    finally { imageControllers.delete(imageController); generatingCount.value -= 1 }
   } else {
     const history: PlaygroundMessage[] = conversation.messages.map(message => ({ role: message.role, content: message.content }))
     if (systemPrompt) history.unshift({ role: 'system', content: systemPrompt })
@@ -511,7 +527,7 @@ async function copyMessage(content: string) {
   catch { appStore.showError(t('playground.copyFailed')) }
 }
 async function downloadImage(image: ImageEntry) {
-  if (image.expiresAt <= Date.now()) return
+  if (!image.objectUrl && image.expiresAt <= Date.now()) return
   try {
     const result = await fetch(image.url)
     if (!result.ok) throw new Error('download')
@@ -538,11 +554,10 @@ watch(accountId, (account, previousAccount) => {
 onMounted(async () => {
   timer = setInterval(() => {
     now.value = Date.now()
-    const expiredImages = images.value.filter(image => image.expiresAt <= now.value)
+    const expiredImages = images.value.filter(image => !image.objectUrl && image.expiresAt <= now.value)
     releaseImages(expiredImages)
-    images.value = images.value.filter(image => image.expiresAt > now.value)
-    void playgroundImageCache.deleteExpired(now.value).catch(() => {})
-    if (preview.value && preview.value.expiresAt <= now.value) preview.value = null
+    images.value = images.value.filter(image => image.objectUrl || image.expiresAt > now.value)
+    if (preview.value && !preview.value.objectUrl && preview.value.expiresAt <= now.value) preview.value = null
     conversations.value = conversations.value.filter(item => item.expiresAt > now.value)
     if (!busy.value && current.value.expiresAt && current.value.expiresAt <= now.value) { newConversation(); error.value = t('playground.expired') }
   }, 1000)
@@ -563,7 +578,7 @@ onMounted(async () => {
     if (lastConversation) openConversation(lastConversation)
   }
 })
-onBeforeUnmount(() => { disposed = true; controller?.abort(); clearInterval(timer); releaseImages(images.value); images.value = []; preview.value = null })
+onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(timer); releaseImages(images.value); images.value = []; preview.value = null })
 </script>
 
 <style scoped>

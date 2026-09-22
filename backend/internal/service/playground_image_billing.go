@@ -39,13 +39,17 @@ func (s *OpenAIGatewayService) ReservePlaygroundImageBalance(ctx context.Context
 		base = s.ResolveUserGroupRateMultiplier(ctx, apiKey.User.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
 	_, imageMultiplier := computePeakAwareMultipliers(apiKey, base, time.Now())
-	cost := s.calculateOpenAIImageCost(ctx, model, apiKey, &OpenAIForwardResult{
-		Model: model, ImageCount: count, ImageSize: NormalizeImageBillingTierOrDefault(imageSize),
-	}, imageMultiplier)
-	if cost == nil || math.IsNaN(cost.ActualCost) || math.IsInf(cost.ActualCost, 0) || cost.ActualCost < 0 {
-		return nil, ErrBatchImageBillingHoldFailed.WithCause(errors.New("playground image price cannot be safely estimated"))
+	maximumCost := 0.0
+	for _, tier := range []string{ImageBillingSize1K, ImageBillingSize2K, ImageBillingSize4K} {
+		cost := s.calculateOpenAIImageCost(ctx, model, apiKey, &OpenAIForwardResult{
+			Model: model, ImageCount: count, ImageSize: tier,
+		}, imageMultiplier)
+		if cost == nil || math.IsNaN(cost.ActualCost) || math.IsInf(cost.ActualCost, 0) || cost.ActualCost < 0 {
+			return nil, ErrBatchImageBillingHoldFailed.WithCause(errors.New("playground image price cannot be safely estimated"))
+		}
+		maximumCost = math.Max(maximumCost, cost.ActualCost)
 	}
-	amount := QuantizeUsageBillingAmount(cost.ActualCost)
+	amount := QuantizeUsageBillingAmount(maximumCost)
 	requestID := resolveUsageBillingRequestID(ctx, "")
 	batchID := fmt.Sprintf("playground-image:%d:%s", apiKey.ID, strings.TrimSpace(requestID))
 	hold := &BatchImageBalanceHoldCommand{

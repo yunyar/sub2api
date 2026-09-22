@@ -39,6 +39,24 @@ type openAIRecordUsageBillingRepoStub struct {
 	lastCtxErr error
 }
 
+type openAIPlaygroundImageBillingRepoStub struct {
+	openAIRecordUsageBillingRepoStub
+	settledHold  *BatchImageBalanceHoldCommand
+	settledUsage *UsageBillingCommand
+}
+
+func (s *openAIPlaygroundImageBillingRepoStub) SettlePlaygroundImageBalance(_ context.Context, hold *BatchImageBalanceHoldCommand, usage *UsageBillingCommand) (*UsageBillingApplyResult, error) {
+	s.settledHold = hold
+	s.settledUsage = usage
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.result != nil {
+		return s.result, nil
+	}
+	return &UsageBillingApplyResult{Applied: true}, nil
+}
+
 type openAIRecordUsageAccountRepoStub struct {
 	AccountRepository
 	account *Account
@@ -2156,6 +2174,44 @@ func TestOpenAIGatewayServiceRecordUsage_OutputImageSizeWinsBeforeBillingAndPers
 	require.Equal(t, map[string]int{ImageBillingSize4K: 1, "image_cache_read_tokens": 40}, usageRepo.lastLog.ImageSizeBreakdown)
 	require.InDelta(t, 0.44, usageRepo.lastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.44, usageRepo.lastLog.ActualCost, 1e-12)
+}
+
+func TestOpenAIGatewayServiceRecordUsage_PlaygroundHoldSettlesResolvedOutputPrice(t *testing.T) {
+	price1K := 0.134
+	price2K := 0.201
+	price4K := 0.268
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	billingRepo := &openAIPlaygroundImageBillingRepoStub{openAIRecordUsageBillingRepoStub: openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}}
+	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	groupID := int64(1203)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:        "playground-output-tier",
+			Model:            "gpt-image-2",
+			ImageCount:       2,
+			ImageInputSize:   "1024x1024",
+			ImageOutputSizes: []string{"1536x1024", "4096x4096"},
+			Duration:         time.Second,
+		},
+		APIKey: &APIKey{ID: 11203, GroupID: i64p(groupID), Group: &Group{
+			ID: groupID, ImagePrice1K: &price1K, ImagePrice2K: &price2K, ImagePrice4K: &price4K, ImageRateMultiplier: 4.2,
+		}},
+		User:    &User{ID: 21203},
+		Account: &Account{ID: 31203},
+		PlaygroundImageHold: &BatchImageBalanceHoldCommand{
+			BatchID: "playground-image:11203:playground-output-tier", HoldAmount: 1.1256, UnitAmount: 1.1256, RequestedCount: 1,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, 1, usageRepo.lastLog.ImageCount)
+	require.Equal(t, ImageBillingSize2K, *usageRepo.lastLog.ImageSize)
+	require.InDelta(t, 0.201, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, 0.8442, usageRepo.lastLog.ActualCost, 1e-12)
+	require.NotNil(t, billingRepo.settledHold)
+	require.InDelta(t, 0.8442, billingRepo.settledHold.ActualAmount, 1e-12)
 }
 
 func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTokens(t *testing.T) {
