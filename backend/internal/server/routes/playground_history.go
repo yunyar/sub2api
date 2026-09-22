@@ -3,8 +3,10 @@ package routes
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -48,6 +50,7 @@ type playgroundWorkflowStep struct {
 }
 
 var playgroundHistoryID = regexp.MustCompile(`^[a-zA-Z0-9-]{1,64}$`)
+var playgroundHistoryScientificNumber = regexp.MustCompile(`^(-?)([0-9]+)(?:\.([0-9]+))?[eE]([+-]?[0-9]+)$`)
 
 var savePlaygroundHistory = redis.NewScript(`
 local now = tonumber(ARGV[1])
@@ -175,10 +178,22 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 
 func normalizePlaygroundConversationJSON(raw []byte) []byte {
 	var value map[string]json.RawMessage
-	if json.Unmarshal(raw, &value) != nil || !isEmptyJSONObject(value["messages"]) {
+	if json.Unmarshal(raw, &value) != nil {
 		return raw
 	}
-	value["messages"] = json.RawMessage("[]")
+	messages, exists := value["messages"]
+	if !exists {
+		return raw
+	}
+	if isEmptyJSONObject(messages) {
+		value["messages"] = json.RawMessage("[]")
+	} else {
+		normalizedMessages, valid := normalizeLegacyPlaygroundMessageIDs(messages)
+		if !valid {
+			return raw
+		}
+		value["messages"] = normalizedMessages
+	}
 	normalized, err := json.Marshal(value)
 	if err != nil {
 		return raw
@@ -189,6 +204,75 @@ func normalizePlaygroundConversationJSON(raw []byte) []byte {
 func isEmptyJSONObject(raw json.RawMessage) bool {
 	var value map[string]json.RawMessage
 	return len(raw) > 0 && json.Unmarshal(raw, &value) == nil && len(value) == 0
+}
+
+func normalizeLegacyPlaygroundMessageIDs(raw json.RawMessage) (json.RawMessage, bool) {
+	var messages []map[string]json.RawMessage
+	if json.Unmarshal(raw, &messages) != nil {
+		return nil, false
+	}
+	changed := false
+	for _, message := range messages {
+		id, ok := normalizeLegacyIntegralJSONNumber(message["id"])
+		if !ok {
+			continue
+		}
+		message["id"] = id
+		changed = true
+	}
+	if !changed {
+		return raw, true
+	}
+	normalized, err := json.Marshal(messages)
+	if err != nil {
+		return nil, false
+	}
+	return normalized, true
+}
+
+func normalizeLegacyIntegralJSONNumber(raw json.RawMessage) (json.RawMessage, bool) {
+	value := string(raw)
+	matches := playgroundHistoryScientificNumber.FindStringSubmatch(value)
+	if matches == nil {
+		return nil, false
+	}
+	exponent, err := strconv.ParseInt(matches[4], 10, 64)
+	if err != nil {
+		return nil, false
+	}
+	coefficient := new(big.Int)
+	if _, ok := coefficient.SetString(matches[2]+matches[3], 10); !ok {
+		return nil, false
+	}
+	if matches[1] == "-" {
+		coefficient.Neg(coefficient)
+	}
+	if coefficient.Sign() == 0 {
+		return json.RawMessage("0"), true
+	}
+	if exponent > 18+int64(len(matches[3])) || exponent < -int64(len(matches[2])+len(matches[3])) {
+		return nil, false
+	}
+	scale := exponent - int64(len(matches[3]))
+	if scale >= 0 {
+		coefficient.Mul(coefficient, new(big.Int).Exp(big.NewInt(10), big.NewInt(scale), nil))
+	} else {
+		divisorScale := -scale
+		if divisorScale > int64(len(matches[2])+len(matches[3])) {
+			return nil, false
+		}
+		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(divisorScale), nil)
+		quotient, remainder := new(big.Int), new(big.Int)
+		quotient.QuoRem(coefficient, divisor, remainder)
+		if remainder.Sign() != 0 {
+			return nil, false
+		}
+		coefficient = quotient
+	}
+	if !coefficient.IsInt64() {
+		return nil, false
+	}
+	return json.RawMessage(coefficient.String()), true
 }
 
 func validPlaygroundConversation(item *playgroundConversation) bool {
