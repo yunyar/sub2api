@@ -260,7 +260,7 @@ docker compose down -v
 | `ADMIN_EMAIL` | No | `admin@sub2api.local` | Admin email |
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
 | `TZ` | No | `Asia/Shanghai` | Timezone |
-| `UPDATE_GITHUB_TOKEN` | No | *(empty)* | Token for `api.github.com` release checks only; asset downloads remain anonymous. |
+| `UPDATE_GITHUB_TOKEN` | No | *(empty)* | Token for `api.github.com` release and custom-branch workflow checks; asset downloads remain anonymous. Recommended for Docker update checks to avoid anonymous API rate limits. |
 | `UPDATE_DOCKER_COMPOSE_PROJECT_NAME` | No | *(empty)* | Compose project name for Docker online updates; set when deployment used `docker compose -p NAME`. |
 | `UPDATE_DOCKER_COMPOSE_OVERLAY_FILE` | No | *(empty)* | Absolute host path to the production Compose overlay used to start the service. |
 | `UPDATE_DOCKER_HEALTH_TIMEOUT_SECONDS` | No | `120` | Seconds to wait for a Docker update to become healthy before rollback. |
@@ -277,7 +277,7 @@ The optional `docker-compose.custom-updater.yml` overlay enables the custom bran
 
 The custom Dockerfile includes the Docker CLI, Compose plugin and executable update helper. Existing containers without these tools, the Docker socket mount or `UPDATE_MODE=docker` require a one-time recreation using a compatible custom image and the overlay below. Publishing a branch or image alone does not enable online updates in an already running container. The custom update check waits for CI, Security Scan and Custom image to succeed for the same commit.
 
-The backend validates Docker commands against fixed `pull`, helper `stage`, and helper `activate` argument forms before executing Docker directly without a shell. Image references must match the configured GHCR repository and a full 40-character commit SHA tag; paths, deployment containment, service and project names, and health timeouts are validated, and extra command arguments are rejected. State file access uses a directory-scoped filesystem root to prevent symlink escapes. Gosec's G702 taint analysis does not recognize this custom allowlist validation, so `backend/.golangci.yml` excludes only G702 at the exact `exec.CommandContext(ctx, "docker", args...)` source line in `internal/service/update_service.go`; other commands, files, and findings remain checked.
+The update overlay forwards `UPDATE_GITHUB_TOKEN` when configured. The backend validates Docker commands against fixed `pull`, helper `stage`, and helper `activate` argument forms before executing Docker directly without a shell. Image references must match the configured GHCR repository and a full 40-character commit SHA tag; paths, deployment containment, service and project names, and health timeouts are validated, and extra command arguments are rejected. State file access uses a directory-scoped filesystem root to prevent symlink escapes. Gosec's G702 taint analysis does not recognize this custom allowlist validation, so `backend/.golangci.yml` excludes only G702 at the exact `exec.CommandContext(ctx, "docker", args...)` source line in `internal/service/update_service.go`; other commands, files, and findings remain checked.
 
 For an existing deployment, export the overlay path before recreating only the application service:
 

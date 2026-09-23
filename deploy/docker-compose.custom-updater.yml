@@ -7,6 +7,7 @@ services:
       - UPDATE_MODE=docker
       - UPDATE_GITHUB_REPO=${UPDATE_GITHUB_REPO:-yunyar/sub2api}
       - UPDATE_GITHUB_BRANCH=${UPDATE_GITHUB_BRANCH:-custom/community-qrcode}
+      - UPDATE_GITHUB_TOKEN=${UPDATE_GITHUB_TOKEN:-}
       - UPDATE_DOCKER_IMAGE=${UPDATE_DOCKER_IMAGE:-ghcr.io/yunyar/sub2api}
       - UPDATE_DOCKER_HOST_DEPLOY_DIR=${UPDATE_DOCKER_HOST_DEPLOY_DIR:-/root/sub2api-deploy}
       - UPDATE_DOCKER_COMPOSE_FILE=${UPDATE_DOCKER_COMPOSE_FILE:-${UPDATE_DOCKER_HOST_DEPLOY_DIR:-/root/sub2api-deploy}/docker-compose.yml}

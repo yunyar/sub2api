@@ -240,26 +240,36 @@ func (s *UpdateService) checkDockerUpdate(ctx context.Context, force bool) (*Upd
 		addUpdateWarning(info, "branch returned an invalid commit SHA")
 		return info, nil
 	}
+	populateDockerCandidate(info, latest, s.currentCommit)
 	publisher, ok := s.githubClient.(PublishedCustomImageClient)
 	if !ok {
-		addUpdateWarning(info, "custom image publication check is unavailable")
+		addUpdateWarning(info, "custom image publication check is unavailable; download will verify the image")
 		return info, nil
 	}
 	published, err := publisher.HasPublishedCustomImage(ctx, repo, branch, latest.SHA)
 	if err != nil {
-		addUpdateWarning(info, "custom image publication check failed: "+err.Error())
+		addUpdateWarning(info, "custom image publication check failed; download will verify the image: "+err.Error())
 		return info, nil
 	}
 	if !published {
+		info.HasUpdate = false
 		addUpdateWarning(info, "custom image is not published for the latest branch commit")
 		return info, nil
 	}
-	info.LatestCommit = latest.SHA
-	info.LatestVersion = latest.SHA[:minInt(12, len(latest.SHA))]
-	info.HasUpdate = !strings.EqualFold(latest.SHA, s.currentCommit)
-	info.ReleaseInfo = &ReleaseInfo{Name: latest.Commit.Message, Body: latest.Commit.Message, PublishedAt: latest.Commit.Author.Date, HTMLURL: latest.HTMLURL}
 	s.saveToCache(ctx, info)
 	return info, nil
+}
+
+func populateDockerCandidate(info *UpdateInfo, latest *BranchCommit, currentCommit string) {
+	info.LatestCommit = latest.SHA
+	info.LatestVersion = latest.SHA[:minInt(12, len(latest.SHA))]
+	info.HasUpdate = !strings.EqualFold(latest.SHA, currentCommit)
+	info.ReleaseInfo = &ReleaseInfo{
+		Name:        latest.Commit.Message,
+		Body:        latest.Commit.Message,
+		PublishedAt: latest.Commit.Author.Date,
+		HTMLURL:     latest.HTMLURL,
+	}
 }
 
 func minInt(a, b int) int {

@@ -143,7 +143,7 @@ func (c *githubReleaseClient) FetchLatestRelease(ctx context.Context, repo strin
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+		return nil, githubAPIError(resp, "GitHub API")
 	}
 
 	var release service.GitHubRelease
@@ -166,7 +166,7 @@ func (c *githubReleaseClient) FetchBranchCommit(ctx context.Context, repo, branc
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+		return nil, githubAPIError(resp, "GitHub API")
 	}
 	var commit service.BranchCommit
 	if err := json.NewDecoder(resp.Body).Decode(&commit); err != nil {
@@ -189,6 +189,11 @@ func (c *githubReleaseClient) HasPublishedCustomImage(ctx context.Context, repo,
 		if err != nil {
 			return false, err
 		}
+		if resp.StatusCode != http.StatusOK {
+			apiErr := githubAPIError(resp, "GitHub Actions API")
+			_ = resp.Body.Close()
+			return false, apiErr
+		}
 		var result struct {
 			WorkflowRuns []struct {
 				HeadSHA    string `json:"head_sha"`
@@ -201,14 +206,23 @@ func (c *githubReleaseClient) HasPublishedCustomImage(ctx context.Context, repo,
 		if decodeErr != nil {
 			return false, decodeErr
 		}
-		if resp.StatusCode != http.StatusOK {
-			return false, fmt.Errorf("GitHub Actions API returned %d", resp.StatusCode)
-		}
 		if len(result.WorkflowRuns) == 0 || !strings.EqualFold(result.WorkflowRuns[0].HeadSHA, commit) || result.WorkflowRuns[0].HeadBranch != branch || result.WorkflowRuns[0].Conclusion != "success" {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+func githubAPIError(resp *http.Response, api string) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	var result struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(body, &result)
+	if result.Message != "" {
+		return fmt.Errorf("%s returned %d: %s", api, resp.StatusCode, result.Message)
+	}
+	return fmt.Errorf("%s returned %d", api, resp.StatusCode)
 }
 
 func (c *githubReleaseClient) FetchRecentReleases(ctx context.Context, repo string, perPage int) ([]*service.GitHubRelease, error) {
@@ -232,7 +246,7 @@ func (c *githubReleaseClient) FetchRecentReleases(ctx context.Context, repo stri
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+		return nil, githubAPIError(resp, "GitHub API")
 	}
 
 	var releases []*service.GitHubRelease

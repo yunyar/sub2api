@@ -285,6 +285,12 @@ export const useAppStore = defineStore('app', () => {
       return data
     } catch (error) {
       console.error('Failed to fetch version:', error)
+      const err = error as {
+        response?: { data?: { message?: string } }
+        message?: string
+      }
+      versionWarning.value =
+        err.response?.data?.message || err.message || i18n.global.t('version.updateCheckWarning')
       return null
     } finally {
       versionLoading.value = false

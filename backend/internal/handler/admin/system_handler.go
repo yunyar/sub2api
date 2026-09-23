@@ -62,7 +62,15 @@ func NewSystemHandler(updateSvc systemUpdateService, lockSvc *service.SystemOper
 // GetVersion returns the current version
 // GET /api/v1/admin/system/version
 func (h *SystemHandler) GetVersion(c *gin.Context) {
-	info, _ := h.updateSvc.CheckUpdate(c.Request.Context(), false)
+	info, err := h.updateSvc.CheckUpdate(c.Request.Context(), false)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if info == nil {
+		response.Error(c, http.StatusInternalServerError, "version information unavailable")
+		return
+	}
 	response.Success(c, gin.H{
 		"version": info.CurrentVersion,
 	})

@@ -156,6 +156,26 @@ func TestGitHubReleaseClientHasPublishedCustomImageRequiresLatestSuccessfulMatch
 	}
 }
 
+func TestGitHubReleaseClientActionsErrorIncludesGitHubMessage(t *testing.T) {
+	srv := newLocalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"API rate limit exceeded"}`))
+	}))
+	client := &githubReleaseClient{
+		httpClient: &http.Client{Transport: &testTransport{testServerURL: srv.URL}},
+	}
+
+	published, err := client.HasPublishedCustomImage(
+		context.Background(),
+		"yunyar/sub2api",
+		"custom/community-qrcode",
+		"5f6acdd1bb9d11bd26bf3447203f881198c24988",
+	)
+
+	require.ErrorContains(t, err, "GitHub Actions API returned 403: API rate limit exceeded")
+	require.False(t, published)
+}
+
 func TestGitHubReleaseClientDoesNotAuthorizeDownloads(t *testing.T) {
 	client := newTestGitHubReleaseClient()
 	client.updateGitHubToken = "update-secret"

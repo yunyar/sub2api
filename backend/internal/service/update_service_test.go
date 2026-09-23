@@ -85,8 +85,35 @@ func TestUpdateServiceDockerCheckRejectsUnpublishedBranchHead(t *testing.T) {
 
 	require.NoError(t, err)
 	require.False(t, info.HasUpdate)
-	require.Empty(t, info.LatestCommit)
+	require.Equal(t, commit.SHA, info.LatestCommit)
 	require.Contains(t, info.Warning, "not published")
+}
+
+func TestUpdateServiceDockerCheckFallsBackToCandidateWhenPublicationCheckFails(t *testing.T) {
+	t.Setenv("UPDATE_MODE", "docker")
+	commit := &BranchCommit{SHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", HTMLURL: "https://github.com/yunyar/sub2api/commit/bbbbbbbb"}
+	commit.Commit.Message = "custom update"
+	client := &branchUpdateClientStub{
+		commit:     commit,
+		published:  false,
+		publishErr: errors.New("GitHub Actions API returned 403"),
+	}
+	svc := NewUpdateServiceWithCommit(
+		&updateServiceCacheStub{},
+		client,
+		"0.1.0",
+		"release",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.True(t, info.HasUpdate)
+	require.Equal(t, commit.SHA, info.LatestCommit)
+	require.Equal(t, "bbbbbbbbbbbb", info.LatestVersion)
+	require.Contains(t, info.Warning, "download will verify the image")
+	require.Equal(t, commit.HTMLURL, info.ReleaseInfo.HTMLURL)
 }
 
 func TestUpdateServiceDockerCheckReportsExistingStageBeforePublicationGate(t *testing.T) {

@@ -360,6 +360,20 @@ describe('useAppStore', () => {
       })
       expect(checkUpdates).toHaveBeenCalledTimes(2)
     })
+
+    it('更新检查请求失败时展示错误而不是误报最新版本', async () => {
+      vi.mocked(checkUpdates).mockRejectedValue({
+        message: 'GitHub Actions API returned 403: API rate limit exceeded'
+      })
+      const store = useAppStore()
+
+      await expect(store.fetchVersion(true)).resolves.toBeNull()
+
+      expect(store.versionWarning).toBe(
+        'GitHub Actions API returned 403: API rate limit exceeded'
+      )
+      expect(store.versionLoaded).toBe(false)
+    })
   })
 
   // --- 公开设置 ---

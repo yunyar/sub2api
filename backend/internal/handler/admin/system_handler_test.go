@@ -101,7 +101,37 @@ func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServ
 	router.POST("/api/v1/admin/system/update", handler.PerformUpdate)
 	router.POST("/api/v1/admin/system/rollback", handler.Rollback)
 	router.GET("/api/v1/admin/system/rollback-versions", handler.GetRollbackVersions)
+	router.GET("/api/v1/admin/system/version", handler.GetVersion)
 	return router
+}
+
+func TestSystemHandlerGetVersionReturnsCheckError(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		checkErr: errors.New("GitHub Actions API rate limit exceeded"),
+	}
+	router := newSystemHandlerTestRouter(t, updateSvc, newMemoryIdempotencyRepoStub())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/version", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "GitHub Actions API rate limit exceeded")
+}
+
+func TestSystemHandlerGetVersionRejectsMissingInfo(t *testing.T) {
+	router := newSystemHandlerTestRouter(
+		t,
+		&systemHandlerUpdateServiceStub{},
+		newMemoryIdempotencyRepoStub(),
+	)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/version", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Contains(t, rec.Body.String(), "version information unavailable")
 }
 
 func requireSystemLockStatus(t *testing.T, repo *memoryIdempotencyRepoStub, wantStatus string) {
