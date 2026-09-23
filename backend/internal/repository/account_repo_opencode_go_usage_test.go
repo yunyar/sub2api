@@ -79,6 +79,10 @@ func openCodeGoMergeMockColumns() []string {
 	}
 }
 
+func openCodeGoMergeMockColumnsWithExtra() []string {
+	return append(openCodeGoMergeMockColumns(), "current_extra")
+}
+
 func openCodeGoSnapshotJSON() string {
 	previousAttempt := time.Date(2026, time.August, 15, 8, 0, 0, 0, time.UTC)
 	raw, err := json.Marshal(&service.OpenCodeGoUsageSnapshot{
@@ -187,8 +191,8 @@ func TestLockAndMergeAccountProbeExtraPreservesOpenCodeGoManagedState(t *testing
 			require.NoError(t, err)
 			mock.ExpectQuery(`(?s)`+regexp.QuoteMeta("SELECT")+`.*`+regexp.QuoteMeta("FOR NO KEY UPDATE")).
 				WithArgs(tt.account.ID, tt.account.Platform, tt.account.Type, string(credentials), nil).
-				WillReturnRows(sqlmock.NewRows(openCodeGoMergeMockColumns()).
-					AddRow(false, false, tt.proxyUnchanged, nil, nil, nil, nil, nil, nil, tt.groupUnchanged, tt.databaseAuto, tt.databaseSnapshot))
+				WillReturnRows(sqlmock.NewRows(openCodeGoMergeMockColumnsWithExtra()).
+					AddRow(false, false, tt.proxyUnchanged, nil, nil, nil, nil, nil, nil, tt.groupUnchanged, tt.databaseAuto, tt.databaseSnapshot, []byte(`{}`)))
 
 			got, err := lockAndMergeAccountProbeExtra(context.Background(), client, tt.account, nil, nil)
 			require.NoError(t, err)
