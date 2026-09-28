@@ -56,7 +56,7 @@
           <div class="ml-auto hidden text-right sm:block"><span class="toolbar-label">{{ t('playground.balance') }}</span><span class="text-sm font-medium tabular-nums">${{ (authStore.user?.balance ?? 0).toFixed(4) }}</span></div>
         </header>
 
-        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" @presets="applyWorkflowPresets" />
+        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
         <div v-show="activeTab === 'standard'" class="standard-playground">
         <div ref="viewport" class="conversation-scroll">
           <div v-if="!current.messages.length && !currentImages.length" class="welcome">
@@ -74,8 +74,8 @@
                 <div v-if="message.role === 'user'" class="user-bubble">{{ message.content }}</div>
                 <div v-else>
                   <span class="mb-2 block text-xs font-semibold text-gray-400 dark:text-dark-400">{{ message.model || current.model }}</span>
-                  <div class="playground-markdown" v-html="renderMarkdown(message.content || (streaming ? '…' : ''))"></div>
-                  <button v-if="message.content" class="mt-2 text-xs text-gray-400 hover:text-primary-500 dark:text-dark-400" @click="copyMessage(message.content)">{{ t('playground.copy') }}</button>
+                  <p v-if="message.kind === 'image'">{{ pendingImageIds.includes(message.id) ? t('playground.generating') : t('playground.imagesGenerated', { count: currentImages.filter(image => image.messageId === message.id).length }) }}</p>
+                  <template v-else><div class="playground-markdown" v-html="renderMarkdown(message.content || (streaming ? '…' : ''))"></div><button v-if="message.content" class="mt-2 text-xs text-gray-400 hover:text-primary-500 dark:text-dark-400" @click="copyMessage(message.content)">{{ t('playground.copy') }}</button></template>
                 </div>
               </article>
               <div v-if="currentImages.some(image => image.messageId === message.id)" class="grid gap-4 sm:grid-cols-2">
@@ -109,8 +109,8 @@
               <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t('playground.messagePlaceholder')" :disabled="streaming || submitting" @keydown.enter.exact="onEnter" />
               <div class="flex items-center justify-between gap-3 px-3 pb-3">
                 <div class="flex items-center gap-1">
-                  <span class="mode-indicator">{{ t('playground.autoIntent') }}</span>
-                  <span v-if="imageCountResolution.explicit || imageCount > 1" class="mode-indicator">{{ t('playground.imagesToGenerate', { count: imageCountResolution.count }) }}</span>
+                  <label class="mode-control"><span class="sr-only">{{ t('playground.modeLabel') }}</span><select v-model="imageMode" class="mode-select" :disabled="streaming || submitting"><option value="auto">{{ t('playground.modeAuto') }}</option><option value="chat">{{ t('playground.modeChat') }}</option><option value="image">{{ t('playground.modeImage') }}</option></select></label>
+                  <span v-if="imageMode === 'image'" class="mode-indicator">{{ t('playground.imagesToGenerate', { count: imageCountResolution.count }) }}</span>
                   <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="streaming || submitting" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
                 </div>
                 <button v-if="streaming || generating" type="button" class="btn btn-secondary" @click="abortActiveRequests">{{ t('playground.stop') }}</button>
@@ -143,7 +143,7 @@ import { playgroundHistory, type Conversation, type ConversationMessage } from '
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
 import { isPlaygroundImageModel, isPlaygroundVideoModel } from '@/utils/playgroundModel'
-import { resolvePlaygroundIntent } from '@/utils/playgroundIntent'
+import { resolvePlaygroundIntent, type PlaygroundMode } from '@/utils/playgroundIntent'
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
 import { playgroundImageBlob, playgroundImageCache } from '@/utils/playgroundImageCache'
@@ -169,6 +169,7 @@ const loadingGroups = ref(false)
 const loadingModels = ref(false)
 const streaming = ref(false)
 const generatingCount = ref(0)
+const pendingImageIds = ref<number[]>([])
 const saving = ref(false)
 const submitting = ref(false)
 const settingsOpen = ref(false)
@@ -179,6 +180,7 @@ const deleteTarget = ref('')
 const imageSize = ref('1024x1024')
 const imageQuality = ref('auto')
 const imageCount = ref(1)
+const imageMode = ref<PlaygroundMode>('chat')
 const images = ref<ImageEntry[]>([])
 const preview = ref<ImageEntry | null>(null)
 const viewport = ref<HTMLElement | null>(null)
@@ -196,7 +198,7 @@ const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
 const canSend = computed(() => hasBalance.value && !streaming.value && !submitting.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId))
 const accountId = computed(() => authStore.user?.id ?? null)
-const imageCountResolution = computed(() => resolvePlaygroundImageCount(draft.value, imageCount.value))
+const imageCountResolution = computed(() => resolvePlaygroundImageCount('', imageCount.value))
 const chatModels = computed(() => models.value.filter((model) => !isPlaygroundImageModel(model.id) && !isPlaygroundVideoModel(model.id)))
 const imageModels = computed(() => models.value.filter((model) => isPlaygroundImageModel(model.id)))
 const normalConversations = computed(() => conversations.value.filter((conversation) => conversation.kind !== 'workflow'))
@@ -206,7 +208,7 @@ const selectedGroupId = computed({
   set: (value: number) => {
     if (activeTab.value === 'workflow') {
       workflowPresets.value.groupId = value
-      savePlaygroundPreferences(accountId.value, workflowPresets.value)
+      savePlaygroundPreferences(accountId.value, { ...workflowPresets.value, imageMode: imageMode.value })
     }
     else current.value.groupId = value
   }
@@ -216,7 +218,7 @@ const selectedChatModel = computed({
   set: (value: string) => {
     if (activeTab.value === 'workflow') {
       workflowPresets.value.chatModel = value
-      savePlaygroundPreferences(accountId.value, workflowPresets.value)
+      savePlaygroundPreferences(accountId.value, { ...workflowPresets.value, imageMode: imageMode.value })
     }
     else current.value.model = value
   }
@@ -226,7 +228,7 @@ const selectedImageModel = computed({
   set: (value: string) => {
     if (activeTab.value === 'workflow') {
       workflowPresets.value.imageModel = value
-      savePlaygroundPreferences(accountId.value, workflowPresets.value)
+      savePlaygroundPreferences(accountId.value, { ...workflowPresets.value, imageMode: imageMode.value })
     }
     else current.value.imageModel = value
   }
@@ -308,7 +310,7 @@ function openWorkflowTab() {
 }
 function applyWorkflowPresets(value: { groupId: number; chatModel: string; imageModel: string }) {
   workflowPresets.value = { ...value }
-  savePlaygroundPreferences(accountId.value, workflowPresets.value)
+  savePlaygroundPreferences(accountId.value, { ...workflowPresets.value, imageMode: imageMode.value })
   void loadModels(value.groupId, 'workflow')
 }
 function saveLastConversation(account: number, conversationId: string) {
@@ -406,7 +408,7 @@ async function loadModels(groupId: number, target: 'standard' | 'workflow') {
     if (target === 'workflow') workflowPresets.value = { groupId, chatModel, imageModel }
     else {
       current.value.model = chatModel; current.value.imageModel = imageModel
-      savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel })
+      savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel, imageMode: imageMode.value })
     }
   } catch { if (request === modelRequest) {
     if (target === 'workflow') workflowPresets.value = { groupId, chatModel: '', imageModel: '' }
@@ -416,14 +418,6 @@ async function loadModels(groupId: number, target: 'standard' | 'workflow') {
   finally { if (request === modelRequest) loadingModels.value = false }
 }
 function onEnter(event: KeyboardEvent) { if (!event.isComposing) { event.preventDefault(); send() } }
-function messageText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content
-    .filter((part): part is { type: 'text'; text: string } => typeof part === 'object' && part !== null && part.type === 'text' && typeof part.text === 'string')
-    .map((part) => part.text)
-    .join('\n')
-}
 function isImageRevisionPrompt(prompt: string): boolean {
   return /(?:再来|再生成|重画|重新画|换成|改成|换个|换一|改一|更写实|更真实|更亮|更暗|加上|去掉|去除|背景|颜色|构图|画风|风格|分辨率)|\b(?:another|redraw|regenerate|brighter|darker|background|colou?r|style|replace|remove|add)\b/i.test(prompt)
 }
@@ -432,17 +426,17 @@ async function send() {
   if (!canSend.value || submitting.value) return
   if (current.value.expiresAt && current.value.expiresAt <= Date.now()) { newConversation(); error.value = t('playground.expired'); return }
   const prompt = draft.value.trim()
-  const requestedImageCount = resolvePlaygroundImageCount(prompt, imageCount.value)
+  const requestedImageCount = resolvePlaygroundImageCount('', imageCount.value)
   const requestAccountId = accountId.value
   const conversation = current.value
   const previousIntent = [...conversation.messages].reverse().find(message => message.role === 'assistant')?.kind
-  const kind = resolvePlaygroundIntent(prompt, previousIntent)
+  const kind = resolvePlaygroundIntent(prompt, previousIntent, imageMode.value)
   const model = kind === 'image' ? conversation.imageModel : conversation.model
   const groupId = conversation.groupId
   const systemPrompt = conversation.systemPrompt
   const temperature = conversation.temperature
   const priorImagePrompt = previousIntent === 'image' && isImageRevisionPrompt(prompt)
-    ? messageText([...conversation.messages].reverse().find(message => message.role === 'assistant' && message.kind === 'image')?.content)
+    ? conversation.messages.filter(message => message.role === 'user' && message.kind === 'image').map(message => message.content).join('\n\n')
     : ''
   if (!model) { error.value = t(kind === 'image' ? 'playground.noImageModel' : 'playground.noChatModel'); return }
   if (kind === 'image' && requestedImageCount.error) {
@@ -467,13 +461,19 @@ async function send() {
   draft.value = ''; error.value = ''
   if (kind === 'image') {
     generatingCount.value += 1
+    const assistantId = createMessageId()
+    const generationPrompt = priorImagePrompt ? `${priorImagePrompt}\n\n${prompt}` : prompt
+    conversation.messages.push({ id: assistantId, role: 'assistant', content: '', model, kind })
+    pendingImageIds.value.push(assistantId)
     const imageController = new AbortController()
     imageControllers.add(imageController)
     try {
-      const generationPrompt = priorImagePrompt ? `${priorImagePrompt}\n\n${prompt}` : prompt
+      const deliveredImageURLs = new Set<string>()
       const saveImage = async (image: PlaygroundImage) => {
-        const generatedImage: ImageEntry = { id: createPlaygroundId(), conversationId, messageId: userId, url: image.url, prompt: generationPrompt, expiresAt: Date.now() + 600000 }
+        const generatedImage: ImageEntry = { id: createPlaygroundId(), conversationId, messageId: assistantId, url: image.url, prompt: generationPrompt, expiresAt: Date.now() + 600000 }
         if (disposed || accountId.value !== requestAccountId) return
+        if (deliveredImageURLs.has(generatedImage.url)) return
+        deliveredImageURLs.add(generatedImage.url)
         images.value.push(generatedImage)
         const cached = await cacheGeneratedImage(generatedImage).catch(() => null)
         if (disposed || accountId.value !== requestAccountId) return
@@ -491,16 +491,21 @@ async function send() {
         } else throw caught
       }
       if (!generated.length) throw new Error(t('playground.imageFailed'))
-      conversation.messages.push({ id: createMessageId(), role: 'assistant', content: generated[0].revisedPrompt || generationPrompt, model, kind })
+      for (const image of generated) await saveImage(image)
+      const assistant = conversation.messages.find(message => message.id === assistantId)
+      if (assistant) assistant.content = t('playground.imagesGenerated', { count: deliveredImageURLs.size })
       if (generationError) error.value = (generationError as PlaygroundImageGenerationError).status === 402
         ? t('playground.insufficientBalance')
         : (generationError as Error).message
     } catch (caught) {
+      if (!images.value.some(image => image.messageId === assistantId)) {
+        conversation.messages = conversation.messages.filter(message => message.id !== assistantId)
+      }
       error.value = (caught as { status?: number } | null)?.status === 402
         ? t('playground.insufficientBalance')
         : caught instanceof Error ? caught.message : t('playground.imageFailed')
     }
-    finally { imageControllers.delete(imageController); generatingCount.value -= 1 }
+    finally { imageControllers.delete(imageController); pendingImageIds.value = pendingImageIds.value.filter(id => id !== assistantId); generatingCount.value -= 1 }
   } else {
     const history: PlaygroundMessage[] = conversation.messages.map(message => ({ role: message.role, content: message.content }))
     if (systemPrompt) history.unshift({ role: 'system', content: systemPrompt })
@@ -541,8 +546,12 @@ watch(
 )
 watch(
   () => [current.value.groupId, current.value.model, current.value.imageModel || ''] as const,
-  ([groupId, chatModel, imageModel]) => savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel })
+  ([groupId, chatModel, imageModel]) => savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel, imageMode: imageMode.value })
 )
+watch(imageMode, (value) => {
+  const preferences = loadPlaygroundPreferences(accountId.value)
+  savePlaygroundPreferences(accountId.value, { ...preferences, imageMode: value })
+})
 watch(accountId, (account, previousAccount) => {
   if (account === previousAccount) return
   releaseImages(images.value)
@@ -566,6 +575,7 @@ onMounted(async () => {
     current.value.groupId = groups.value.some(group => group.id === preferences.groupId) ? preferences.groupId : (groups.value[0]?.id ?? 0)
     current.value.model = preferences.chatModel
     current.value.imageModel = preferences.imageModel
+    imageMode.value = preferences.imageMode
   }
   catch { error.value = t('playground.loadModelsFailed') }
   finally { loadingGroups.value = false }
@@ -606,6 +616,7 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 .composer:focus-within { border-color:#a5b4fc; }
 .composer-input { display:block; width:100%; resize:none; padding:16px 18px 8px; background:transparent; outline:none; font-size:14px; }
 .mode-button { border-radius:8px; padding:7px 10px; color:#9ca3af; font-size:12px; }
+.mode-select { border-radius:8px; padding:7px 10px; background:#eef2ff; color:#4f46e5; font-size:12px; }
 .mode-indicator { border-radius:8px; padding:7px 10px; background:#eef2ff; color:#6366f1; font-size:12px; }
 .settings-panel { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:12px; padding:16px; border:1px solid #e5e7eb; border-radius:12px; }
 .image-card { overflow:hidden; border:1px solid #e5e7eb; border-radius:14px; background:#fff; }
@@ -622,6 +633,7 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 :global(html.dark .composer),:global(html.dark .settings-panel),:global(html.dark .image-card),:global(html.dark .suggestion),:global(html.dark .playground-tabs) { border-color:#303747; background:#1b2432; }
 :global(html.dark .composer-input),:global(html.dark .toolbar-select),:global(html.dark .toolbar-warning) { color:#e5e7eb; }
 :global(html.dark .mode-button) { color:#94a3b8; }
+:global(html.dark .mode-select) { background:#252e3f; color:#a5b4fc; }
 :global(html.dark .mode-indicator),:global(html.dark .playground-tab.active) { background:#252e3f; color:#a5b4fc; }
 :global(html.dark .playground-tab),:global(html.dark .suggestion) { color:#cbd5e1; }
 :global(html.dark .playground-markdown td),:global(html.dark .playground-markdown th) { border-color:#475569; }

@@ -185,6 +185,7 @@ export async function generatePlaygroundImages(input: PlaygroundImageGenerationR
   if (input.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
 
   const images = new Array<PlaygroundImage | undefined>(count)
+  const delivered = new Set<string>()
   let imageCallbackQueue = Promise.resolve()
   const requests = Array.from({ length: count }, async (_, index) => {
     const { data } = await apiClient.post('/playground/images/generations', {
@@ -204,6 +205,8 @@ export async function generatePlaygroundImages(input: PlaygroundImageGenerationR
       .find((item: PlaygroundImage) => Boolean(item.url))
     if (!image) throw new Error('Image generation returned no image')
 
+    if (delivered.has(image.url)) return
+    delivered.add(image.url)
     images[index] = image
     imageCallbackQueue = imageCallbackQueue.then(() => input.onImage?.(image))
     await imageCallbackQueue

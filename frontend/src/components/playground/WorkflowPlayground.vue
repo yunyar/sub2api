@@ -12,7 +12,7 @@
       </div>
     </aside>
     <main class="workflow-main">
-      <header class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-3 dark:border-dark-600"><h2>{{ t('workflow.title') }}</h2><div class="flex gap-2"><button class="btn btn-secondary" :disabled="locked" @click="save">{{ t('workflow.save') }}</button><button class="btn btn-secondary" :disabled="steps.length >= 50 || locked" @click="addStep">{{ t('workflow.addStep') }}</button></div></header>
+      <header class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-3 dark:border-dark-600"><h2>{{ t('workflow.title') }}</h2><div class="flex flex-wrap items-center gap-2"><label class="text-xs text-gray-500 dark:text-dark-400">{{ t('playground.modeLabel') }}<select v-model="imageMode" class="input ml-2" :disabled="locked"><option value="auto">{{ t('playground.modeAuto') }}</option><option value="chat">{{ t('playground.modeChat') }}</option><option value="image">{{ t('playground.modeImage') }}</option></select></label><button class="btn btn-secondary" :disabled="locked" @click="save">{{ t('workflow.save') }}</button><button class="btn btn-secondary" :disabled="steps.length >= 50 || locked" @click="addStep">{{ t('workflow.addStep') }}</button></div></header>
       <p class="mt-2 text-xs text-gray-500 dark:text-dark-400">{{ t('workflow.retention') }}</p>
       <p v-if="steps.length >= 50" class="mt-2 text-sm text-amber-600">{{ t('workflow.limit') }}</p>
       <p v-if="!hasBalance" class="mt-2 text-sm text-amber-600">{{ t('workflow.insufficientBalance') }}</p>
@@ -24,7 +24,7 @@
           <p v-if="promptTooLong(step.prompt)" class="mt-1 text-sm text-red-500">{{ t('workflow.promptTooLong') }}</p>
           <div v-if="index === currentStep" class="mt-2 flex flex-wrap items-center gap-2"><input v-if="isImageStep(step)" v-model.number="imageCount" class="input w-20" type="number" min="1" max="10" :disabled="locked" :aria-label="t('workflow.imageCount')" /><button class="btn btn-primary" :disabled="locked || !canRun(step)" @click="runCurrent()">{{ result(step.id) ? t('workflow.regenerate') : t('workflow.run') }}</button><button v-if="result(step.id) && index < steps.length - 1" class="btn btn-secondary" :disabled="locked" @click="next">{{ t('workflow.next') }}</button><button v-if="busy" class="btn btn-secondary" @click="controller?.abort()">{{ t('workflow.stop') }}</button></div>
           <div v-if="index === currentStep && result(step.id)" class="mt-3"><textarea v-model="guidance" class="input w-full min-h-20" :disabled="locked" :placeholder="t('workflow.revisionPlaceholder')" :maxlength="8000" /><button class="btn btn-secondary mt-2" :disabled="locked || !guidance.trim()" @click="regenerate">{{ t('workflow.revise') }}</button></div>
-          <article v-if="result(step.id)" class="mt-3 whitespace-pre-wrap text-sm">{{ result(step.id)?.content }}</article>
+          <article v-if="result(step.id)" class="mt-3 whitespace-pre-wrap text-sm">{{ result(step.id)?.kind === 'image' ? t('playground.imagesGenerated', { count: images[step.id]?.length || 0 }) : result(step.id)?.content }}</article>
           <div v-if="images[step.id]?.length" class="mt-3 space-y-3"><figure v-for="(image, imageIndex) in images[step.id]" :key="image.id"><img v-if="!expired(image)" :src="image.url" class="max-h-96 max-w-full object-contain" /><p v-else class="text-sm text-amber-600">{{ t('workflow.imageExpired') }}</p><button v-if="!expired(image)" class="btn btn-secondary mt-2" @click="download(image, imageIndex)">{{ t('workflow.download') }}</button></figure></div><p v-else-if="result(step.id)?.kind === 'image'" class="mt-2 text-sm text-amber-600">{{ t('workflow.imageExpired') }}</p>
         </article>
       </div>
@@ -40,12 +40,12 @@ import { useAuthStore } from '@/stores'
 import { PlaygroundImageGenerationError, playgroundAPI, type PlaygroundImage, type PlaygroundMessage, type PlaygroundMultimodalMessage } from '@/api/playground'
 import { playgroundHistory, type Conversation, type ConversationMessage, type WorkflowStep } from '@/api/playgroundHistory'
 import { createPlaygroundId } from '@/utils/playgroundId'
-import { resolvePlaygroundIntent } from '@/utils/playgroundIntent'
+import { resolvePlaygroundIntent, type PlaygroundMode } from '@/utils/playgroundIntent'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
 import { playgroundImageBlob, playgroundImageCache, type CachedPlaygroundImage } from '@/utils/playgroundImageCache'
 
-const props = defineProps<{ groups: Group[]; groupId: number; chatModel: string; imageModel: string }>()
-const emit = defineEmits<{ presets: [value: { groupId: number; chatModel: string; imageModel: string }] }>()
+const props = defineProps<{ groups: Group[]; groupId: number; chatModel: string; imageModel: string; imageMode?: PlaygroundMode }>()
+const emit = defineEmits<{ presets: [value: { groupId: number; chatModel: string; imageModel: string }]; mode: [value: PlaygroundMode] }>()
 const { t } = useI18n()
 const auth = useAuthStore()
 type Result = { content: string; model: string; kind: 'chat' | 'image' }
@@ -67,6 +67,7 @@ const saveError = ref('')
 const cacheError = ref('')
 const guidance = ref('')
 const imageCount = ref(1)
+const imageMode = ref<PlaygroundMode>(props.imageMode ?? 'chat')
 let controller: AbortController | null = null
 let saveQueue: Promise<boolean> = Promise.resolve(true)
 let messageSequence = 0
@@ -94,7 +95,7 @@ function canRun(step: WorkflowStep) {
 }
 function isImageStep(step: WorkflowStep) {
   const previous = currentStep.value ? result(steps.value[currentStep.value - 1].id)?.kind : undefined
-  return resolvePlaygroundIntent(step.prompt, previous) === 'image'
+  return resolvePlaygroundIntent(step.prompt, previous, imageMode.value) === 'image'
 }
 function cloneSteps(value: WorkflowStep[]) {
   return value.map(step => ({ id: step.id, prompt: step.prompt }))
@@ -300,14 +301,14 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       return false
     }
     const previous = currentStep.value ? result(steps.value[currentStep.value - 1].id)?.kind : undefined
-    const intent = resolvePlaygroundIntent(step.prompt, previous)
+    const intent = resolvePlaygroundIntent(step.prompt, previous, imageMode.value)
     const model = intent === 'image' ? presets.value.imageModel : presets.value.chatModel
     const groupId = presets.value.groupId
     if (!model) {
       error.value = t('workflow.noModel')
       return false
     }
-    const count = intent === 'image' ? resolvePlaygroundImageCount(`${step.prompt}\n${instruction}`, imageCount.value) : null
+    const count = intent === 'image' ? resolvePlaygroundImageCount('', imageCount.value) : null
     if (count?.error) {
       error.value = t(count.error === 'too_many' ? 'workflow.imageCountTooMany' : 'workflow.imageCountInvalid')
       return false
@@ -323,8 +324,11 @@ async function runCurrent(instruction = ''): Promise<boolean> {
         : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')), prompt].join('\n\n')
       let replacedImages = false
       let cacheCleared = false
+      const deliveredImageURLs = new Set<string>()
       const saveImage = async (image: PlaygroundImage) => {
         if (disposed || controller?.signal.aborted) return
+        if (deliveredImageURLs.has(image.url)) return
+        deliveredImageURLs.add(image.url)
         if (!replacedImages) {
           cacheCleared = await deleteCachedStep(step.id)
           clearStepImages(step.id, false)
@@ -347,7 +351,8 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       }
       if (disposed || controller.signal.aborted) return false
       if (!generated[0]) throw new Error(t('workflow.imageFailed'))
-      results.value[step.id] = { content: generated[0].revisedPrompt || text, model, kind: 'image' }
+      for (const image of generated) await saveImage(image)
+      results.value[step.id] = { content: generated[0].revisedPrompt || prompt, model, kind: 'image' }
       if (generationError) error.value = (generationError as PlaygroundImageGenerationError).status === 402
         ? t('workflow.insufficientBalance')
         : (generationError as Error).message
@@ -379,6 +384,7 @@ async function next() {
   if (locked.value || !current.value || !result(current.value.id) || currentStep.value >= steps.value.length - 1) return
   const previous = currentStep.value
   currentStep.value += 1
+  if (result(steps.value[previous].id)?.kind === 'image') imageMode.value = 'chat'
   if (!await runCurrent()) currentStep.value = previous
 }
 
@@ -395,6 +401,8 @@ watch(
     if (!isLocked) presets.value = { groupId, chatModel, imageModel }
   }
 )
+watch(() => props.imageMode, value => { if (value) imageMode.value = value })
+watch(imageMode, value => emit('mode', value))
 onBeforeUnmount(() => { disposed = true; controller?.abort(); if (ticker) clearInterval(ticker); clearImages() })
 </script>
 

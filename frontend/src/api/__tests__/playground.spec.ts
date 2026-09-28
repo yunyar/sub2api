@@ -148,7 +148,7 @@ describe('generatePlaygroundImages', () => {
     await vi.waitFor(() => expect(onImage).toHaveBeenCalledTimes(1))
     callbackGate.resolve()
     await generated
-    expect(onImage).toHaveBeenCalledTimes(3)
+    expect(onImage).toHaveBeenCalledTimes(1)
     expect(maxActiveCallbacks).toBe(1)
   })
 
@@ -186,7 +186,7 @@ describe('generatePlaygroundImages', () => {
     expect(onImage).toHaveBeenCalledWith({ url: 'https://images.example/three.png', revisedPrompt: undefined })
   })
 
-  it('makes exactly one n=1 request per requested image and caps provider over-returns', async () => {
+  it('makes exactly one n=1 request per requested image and deduplicates provider over-returns', async () => {
     post.mockResolvedValue({ data: { data: [
       { url: 'https://images.example/first.png' },
       { url: 'https://images.example/unexpected.png' },
@@ -198,8 +198,7 @@ describe('generatePlaygroundImages', () => {
 
     expect(post).toHaveBeenCalledTimes(3)
     expect(post.mock.calls.every(([, body]) => body.n === 1)).toBe(true)
-    expect(images).toHaveLength(3)
-    expect(images.every(image => image.url === 'https://images.example/first.png')).toBe(true)
+    expect(images).toEqual([{ url: 'https://images.example/first.png', revisedPrompt: undefined }])
   })
 
   it('propagates cancellation after launching the concurrent batch', async () => {

@@ -69,6 +69,7 @@ function button(wrapper: ReturnType<typeof mount>, label: string) {
 }
 
 async function enterFirstPrompt(wrapper: ReturnType<typeof mount>, value = 'first prompt') {
+  if (/^(draw|generate)/i.test(value)) await wrapper.get('select').setValue('image')
   await wrapper.find('textarea').setValue(value)
 }
 
@@ -110,6 +111,23 @@ describe('WorkflowPlayground', () => {
     expect(state.streamChat).toHaveBeenCalledWith(expect.objectContaining({ groupId: 7, model: 'chat-7' }))
   })
 
+  it('obeys explicit chat and image modes regardless of prompt wording', async () => {
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await wrapper.get('select').setValue('chat')
+    await wrapper.find('textarea').setValue('draw a lighthouse')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+    expect(state.generateImages).not.toHaveBeenCalled()
+    expect(state.streamChat).toHaveBeenCalledTimes(1)
+
+    await wrapper.get('select').setValue('image')
+    await enterFirstPrompt(wrapper, 'a lighthouse at sunset')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 1, model: 'image-1' }))
+  })
+
   it('saves a draft retaining an empty second step', async () => {
     const wrapper = mountWorkflow()
     await flushPromises()
@@ -138,7 +156,7 @@ describe('WorkflowPlayground', () => {
     expect(wrapper.text()).toContain('save failed')
   })
 
-  it('uses the natural-language image count and displays every generated image', async () => {
+  it('uses the manual image count and displays every unique generated image', async () => {
     state.generateImages.mockImplementation(async (input: { onImage?: (image: { url: string; revisedPrompt: string }) => void | Promise<void> }) => {
       const generated = [
         { url: 'https://images.example/one.png', revisedPrompt: 'first image' },
@@ -154,7 +172,7 @@ describe('WorkflowPlayground', () => {
     await button(wrapper, 'workflow.run')!.trigger('click')
     await flushPromises()
 
-    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }))
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 1 }))
     expect(wrapper.findAll('img')).toHaveLength(3)
   })
 
@@ -195,7 +213,7 @@ describe('WorkflowPlayground', () => {
 
     expect(wrapper.findAll('img')).toHaveLength(1)
     expect(state.cacheDeleteStep).toHaveBeenCalledTimes(1)
-    expect(wrapper.text()).toContain('image result')
+    expect(wrapper.text()).toContain('playground.imagesGenerated')
   })
 
   it('keeps a cache failure visible after the workflow save succeeds', async () => {
@@ -270,7 +288,7 @@ describe('WorkflowPlayground', () => {
     await button(wrapper, 'workflow.revise')!.trigger('click')
     await flushPromises()
 
-    expect(state.generateImages).toHaveBeenLastCalledWith(expect.objectContaining({ count: 3 }))
+    expect(state.generateImages).toHaveBeenLastCalledWith(expect.objectContaining({ count: 1 }))
     expect(state.cacheDeleteStep).toHaveBeenCalled()
   })
 
@@ -334,7 +352,7 @@ describe('WorkflowPlayground', () => {
   })
 
   it('blocks expired images from later context without submitting base64 data', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['Date'] })
     state.cachePut.mockRejectedValueOnce(new Error('storage unavailable'))
     const wrapper = mountWorkflow()
     await flushPromises()
@@ -343,7 +361,7 @@ describe('WorkflowPlayground', () => {
     await flushPromises()
     await button(wrapper, 'workflow.addStep')!.trigger('click')
     await wrapper.findAll('.workflow-step')[1].find('textarea').setValue('describe it')
-    await vi.advanceTimersByTimeAsync(600_001)
+    vi.setSystemTime(Date.now() + 600_001)
     await button(wrapper, 'workflow.next')!.trigger('click')
     await flushPromises()
 

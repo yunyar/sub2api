@@ -40,4 +40,9 @@ describe('resolvePlaygroundIntent', () => {
     expect(resolvePlaygroundIntent('背景换成蓝色，更写实一些', 'chat')).toBe('chat')
     expect(resolvePlaygroundIntent('我们接下来聊聊旅行', 'image')).toBe('chat')
   })
+
+  it('honors an explicit chat or image mode before natural-language intent', () => {
+    expect(resolvePlaygroundIntent('画一只猫', undefined, 'chat')).toBe('chat')
+    expect(resolvePlaygroundIntent('解释这张图片', undefined, 'image')).toBe('image')
+  })
 })

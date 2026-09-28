@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   cacheDeleteConversation: vi.fn(),
   cacheDeleteExpired: vi.fn(),
   accountId: undefined as number | undefined,
+  preferenceMode: 'auto',
   PartialImageError: class PartialImageError extends Error {
     constructor(message: string, readonly images: unknown[], readonly status?: number) { super(message) }
   },
@@ -49,12 +50,17 @@ vi.mock('@/api/playground', () => ({
 vi.mock('@/api/playgroundHistory', () => ({
   playgroundHistory: { list: state.list, save: state.save, delete: state.remove }
 }))
+vi.mock('@/utils/playgroundPreferences', () => ({
+  loadPlaygroundPreferences: () => ({ groupId: 0, chatModel: '', imageModel: '', imageMode: state.preferenceMode }),
+  savePlaygroundPreferences: vi.fn()
+}))
 vi.mock('@/utils/playgroundModel', () => ({
   isPlaygroundImageModel: (model: string) => model.includes('image'),
   isPlaygroundVideoModel: (model: string) => model === 'video-model'
 }))
 vi.mock('@/utils/playgroundIntent', () => ({
-  resolvePlaygroundIntent: (prompt: string, previous?: string) => prompt.startsWith('draw') || (previous === 'image' && prompt === 'brighter') ? 'image' : 'chat'
+  resolvePlaygroundIntent: (prompt: string, previous?: string, mode = 'auto') =>
+    mode !== 'auto' ? mode : prompt.startsWith('draw') || (previous === 'image' && prompt === 'brighter') ? 'image' : 'chat'
 }))
 vi.mock('@/utils/playgroundId', () => ({ createPlaygroundId: () => `id-${++state.nextId}` }))
 vi.mock('@/utils/playgroundImageCache', () => ({
@@ -77,6 +83,7 @@ describe('PlaygroundView model and intent routing', () => {
     state.nextId = 0
     state.balance = 10
     state.accountId = undefined
+    state.preferenceMode = 'auto'
     state.getAvailable.mockResolvedValue([{ id: 7, name: 'Default' }])
     state.listModels.mockResolvedValue([
       { id: 'chat-model' },
@@ -125,6 +132,40 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.streamChat).not.toHaveBeenCalled()
   })
 
+  it('never generates when chat-only mode is selected, even for an image prompt', async () => {
+    state.preferenceMode = 'chat'
+    state.streamChat.mockImplementation(async (input: { onDelta: (value: string) => void }) => input.onDelta('text reply'))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('.mode-select').setValue('chat')
+    await wrapper.get('textarea.composer-input').setValue('draw a lighthouse')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.generateImages).not.toHaveBeenCalled()
+    expect(state.streamChat).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('text reply')
+  })
+
+  it('generates one image only when image mode is selected for an ordinary prompt', async () => {
+    state.generateImages.mockImplementation(async (input: { onImage: (image: { url: string }) => Promise<void> }) => {
+      const image = { url: 'data:image/png;base64,first' }
+      await input.onImage(image)
+      await input.onImage(image)
+      return [image]
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('.mode-select').setValue('image')
+    await wrapper.get('textarea.composer-input').setValue('a lighthouse at sunset')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 1, model: 'image-model' }))
+    expect(state.streamChat).not.toHaveBeenCalled()
+    expect(wrapper.findAll('img')).toHaveLength(1)
+  })
+
   it('shows the existing insufficient-balance warning and blocks requests', async () => {
     state.balance = 0
     const wrapper = mountView()
@@ -139,7 +180,7 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.streamChat).not.toHaveBeenCalled()
   })
 
-  it('uses an explicit natural-language image count over the manual count', async () => {
+  it('uses the manual image count instead of guessing from natural language', async () => {
     state.generateImages.mockResolvedValue([{ url: 'data:image/png;base64,image' }])
     const wrapper = mountView()
     await flushPromises()
@@ -148,7 +189,7 @@ describe('PlaygroundView model and intent routing', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }))
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 1 }))
   })
 
   it('shows insufficient balance when the server rejects a multi-image request', async () => {
