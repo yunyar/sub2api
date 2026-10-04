@@ -42,6 +42,6 @@ fi
 (cd backend && "$go_bin" test ./internal/server/routes -run Playground)
 (cd backend && "$go_bin" test ./internal/repository -run TestPlaygroundImageBalanceWithPostgres)
 (cd backend && "$go_bin" test ./internal/service -run 'PlaygroundImage|PlaygroundHoldSettlesResolvedOutputPrice')
-(cd backend && "$go_bin" test -tags unit ./internal/handler -run 'GrokPlaygroundImages')
+(cd backend && "$go_bin" test -tags unit ./internal/handler -run 'GrokPlaygroundImages|ReserveImageInflightBalance')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')
-(cd backend && "$go_bin" test -tags unit ./internal/service -run 'ImageRateAlways|ImageCountOverridesChannelTokenPricing|ImageMultiplierIgnores|ChannelImageBillingUsesImageCount|ListPlazaGroups_GroupImagePrice|BatchImagePublicService_Submit')
+(cd backend && "$go_bin" test -tags unit ./internal/service -run 'ImageRateAlways|ImageCountOverridesChannelTokenPricing|ImageMultiplierIgnores|ChannelImageBillingUsesImageCount|ListPlazaGroups_GroupImagePrice|BatchImagePublicService_Submit|InflightEstimate_ImageUsesDedicatedGroupMultiplier|InflightEstimate_MediaKinds')
