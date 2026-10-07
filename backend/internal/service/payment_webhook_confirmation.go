@@ -25,7 +25,7 @@ func (s *PaymentService) confirmEasyPayCallback(
 ) (*payment.QueryOrderResponse, error) {
 	reject := func(reason string) (*payment.QueryOrderResponse, error) {
 		if order != nil {
-			s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMATION_FAILED", payment.TypeEasyPay, map[string]any{
+			_ = s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMATION_FAILED", payment.TypeEasyPay, map[string]any{
 				"reason": reason,
 			})
 		}
@@ -124,7 +124,7 @@ func (s *PaymentService) confirmEasyPayCallback(
 	}
 	result.Metadata["sub2api_gateway_identity"] = gatewayIdentity
 
-	s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMED", payment.TypeEasyPay, map[string]any{
+	_ = s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMED", payment.TypeEasyPay, map[string]any{
 		"reason":   "authoritative_query_match",
 		"provider": payment.TypeEasyPay,
 	})
@@ -140,7 +140,7 @@ func (s *PaymentService) confirmEasyPayFulfillment(ctx context.Context, order *d
 		return nil
 	}
 	reject := func(reason string) error {
-		s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMATION_FAILED", payment.TypeEasyPay, map[string]any{
+		_ = s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMATION_FAILED", payment.TypeEasyPay, map[string]any{
 			"reason": reason,
 			"source": "fulfillment_retry",
 		})
@@ -218,7 +218,7 @@ func (s *PaymentService) confirmEasyPayFulfillment(ctx context.Context, order *d
 	if reused {
 		return reject("transaction_already_bound")
 	}
-	s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMED", payment.TypeEasyPay, map[string]any{
+	_ = s.writeAuditLog(ctx, order.ID, "PAYMENT_GATEWAY_CONFIRMED", payment.TypeEasyPay, map[string]any{
 		"reason":   "authoritative_query_match",
 		"provider": payment.TypeEasyPay,
 		"source":   "fulfillment_retry",
