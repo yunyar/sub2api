@@ -126,13 +126,13 @@ func paymentRiskDisableUsers(ctx context.Context, client *dbent.Client, address,
 		for rows.Next() {
 			var accountID int64
 			if err := rows.Scan(&accountID); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			accountIDs = append(accountIDs, accountID)
 		}
 		rowErr := rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if rowErr != nil {
 			return nil, rowErr
 		}
@@ -169,7 +169,7 @@ func (s *PaymentRiskService) RecordUserIP(ctx context.Context, userID int64, raw
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	now := s.now().Unix()
 	if err := paymentRiskLock(ctx, client, address, now); err != nil {
@@ -219,7 +219,7 @@ func (s *PaymentRiskService) ReserveRecharge(ctx context.Context, userID int64, 
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	now := s.now().Unix()
 	if err := paymentRiskLock(ctx, client, address, now); err != nil {
@@ -240,12 +240,12 @@ func (s *PaymentRiskService) ReserveRecharge(ctx context.Context, userID int64, 
 	}
 	var count, completed int
 	if !rows.Next() {
-		rows.Close()
+		_ = rows.Close()
 		return "", fmt.Errorf("payment risk counter unavailable")
 	}
 	err = rows.Scan(&count, &completed)
 	rowErr := rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return "", err
 	}
@@ -319,7 +319,7 @@ func (s *PaymentRiskService) BlockOrderIP(ctx context.Context, orderID int64, re
 			err = rows.Scan(&firstSeen)
 		}
 		rowErr := rows.Err()
-		rows.Close()
+		_ = rows.Close()
 		if err != nil {
 			return err
 		}
@@ -341,7 +341,7 @@ func (s *PaymentRiskService) BlockOrderIP(ctx context.Context, orderID int64, re
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	now := s.now().Unix()
 	if err := paymentRiskLock(ctx, client, address, now); err != nil {
@@ -381,7 +381,7 @@ func (s *PaymentRiskService) UnblockIP(ctx context.Context, rawIP, actor, reason
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	now := s.now().Unix()
 	if err := paymentRiskLock(ctx, client, address, now); err != nil {
@@ -413,11 +413,11 @@ func (s *PaymentRiskService) ListBlockedIPs(ctx context.Context, page, size int)
 	}
 	var total int
 	if !totalRows.Next() {
-		totalRows.Close()
+		_ = totalRows.Close()
 		return nil, 0, fmt.Errorf("payment risk count unavailable")
 	}
 	err = totalRows.Scan(&total)
-	totalRows.Close()
+	_ = totalRows.Close()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -430,13 +430,13 @@ func (s *PaymentRiskService) ListBlockedIPs(ctx context.Context, page, size int)
 	for rows.Next() {
 		var record PaymentRiskIPRecord
 		if err := rows.Scan(&record.IP, &record.Reason, &record.Evidence, &record.Actor, &record.CreatedAt, &record.Active); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, 0, err
 		}
 		records = append(records, record)
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -449,11 +449,11 @@ func (s *PaymentRiskService) ListBlockedIPs(ctx context.Context, page, size int)
 			return nil, 0, err
 		}
 		if !linked.Next() {
-			linked.Close()
+			_ = linked.Close()
 			return nil, 0, sql.ErrNoRows
 		}
 		err = linked.Scan(&records[index].LinkedUsers)
-		linked.Close()
+		_ = linked.Close()
 		if err != nil {
 			return nil, 0, err
 		}
@@ -470,7 +470,7 @@ func (s *PaymentRiskService) ScanBlockedAccounts(ctx context.Context) (int, erro
 	for rows.Next() {
 		var address string
 		if err := rows.Scan(&address); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return 0, err
 		}
 		if clientip.PublicClientIP(address) != "" {
@@ -478,7 +478,7 @@ func (s *PaymentRiskService) ScanBlockedAccounts(ctx context.Context) (int, erro
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if err != nil {
 		return 0, err
 	}
@@ -499,7 +499,7 @@ func (s *PaymentRiskService) scanAddress(ctx context.Context, address string) ([
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
 	now := s.now().Unix()
 	if err := paymentRiskLock(ctx, client, address, now); err != nil {
