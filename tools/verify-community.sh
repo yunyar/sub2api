@@ -19,6 +19,7 @@ fi
 "${pnpm_cmd[@]}" --dir frontend run typecheck
 "${pnpm_cmd[@]}" --dir frontend exec vitest run \
   src/api/__tests__/communityQRCodes.spec.ts \
+  src/api/__tests__/admin.paymentRechargeRisk.spec.ts \
   src/api/__tests__/playground.spec.ts \
   src/api/__tests__/url.spec.ts \
   src/utils/__tests__/playgroundId.spec.ts \
@@ -28,6 +29,9 @@ fi
   src/utils/__tests__/playgroundPreferences.spec.ts \
   src/utils/__tests__/playgroundModel.spec.ts \
   src/views/user/__tests__/PlaygroundView.spec.ts \
+  src/components/admin/payment/__tests__/PaymentRechargeRiskPanel.spec.ts \
+  src/components/payment/__tests__/PaymentProviderDialog.spec.ts \
+  src/components/payment/__tests__/providerConfig.spec.ts \
   src/components/playground/__tests__/WorkflowPlayground.spec.ts
 
 if [[ -n "${GO_BIN:-}" ]]; then
@@ -45,3 +49,6 @@ fi
 (cd backend && "$go_bin" test -tags unit ./internal/handler -run 'GrokPlaygroundImages|ReserveImageInflightBalance')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'ImageRateAlways|ImageCountOverridesChannelTokenPricing|ImageMultiplierIgnores|ChannelImageBillingUsesImageCount|ListPlazaGroups_GroupImagePrice|BatchImagePublicService_Submit|InflightEstimate_ImageUsesDedicatedGroupMultiplier|InflightEstimate_MediaKinds')
+(cd backend && "$go_bin" test -tags unit ./internal/payment/provider ./internal/pkg/ip)
+(cd backend && "$go_bin" test -tags unit ./internal/service -run 'EasyPay|PaymentRechargeRisk|PaymentRisk|AuthIPRisk|CanonicalizeReturnURL|PaymentReturnURLDrops|BuildPaymentReturnURL')
+(cd backend && "$go_bin" test -tags unit ./internal/handler ./internal/handler/admin ./internal/repository -run 'PaymentWebhook|PaymentRechargeRisk|ClientIP|EasyPayTransactionIdentity')

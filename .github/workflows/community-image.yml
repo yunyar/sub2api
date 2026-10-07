@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   verify-and-build:
+    if: github.ref == 'refs/heads/custom/community-qrcode'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

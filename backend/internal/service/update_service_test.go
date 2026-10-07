@@ -426,6 +426,35 @@ func TestUpdateServiceListRollbackVersionsSortsUnorderedInput(t *testing.T) {
 	require.Equal(t, "0.1.144", versions[2].Version)
 }
 
+func TestUpdateServiceUsesNumericReleaseVersions(t *testing.T) {
+	client := &updateServiceGitHubClientStub{
+		release: &GitHubRelease{TagName: "v0.2.14"},
+		recentReleases: []*GitHubRelease{
+			{TagName: "v0.2.9"},
+			{TagName: "v0.2.13"},
+			{TagName: "v0.2.10"},
+		},
+	}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.2.9", "release")
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+
+	require.NoError(t, err)
+	require.True(t, info.HasUpdate)
+	require.Equal(t, "0.2.14", info.LatestVersion)
+
+	rollbackSvc := newRollbackTestService("0.2.14", client.recentReleases)
+	versions, err := rollbackSvc.ListRollbackVersions(context.Background())
+
+	require.NoError(t, err)
+	require.Len(t, versions, 3)
+	require.Equal(t, []string{"0.2.13", "0.2.10", "0.2.9"}, []string{
+		versions[0].Version,
+		versions[1].Version,
+		versions[2].Version,
+	})
+}
+
 func TestUpdateServiceListRollbackVersionsEmptyWhenNoneOlder(t *testing.T) {
 	releases := []*GitHubRelease{
 		{TagName: "v0.1.147"},
