@@ -141,7 +141,7 @@ func (s *PaymentService) cancelCore(ctx context.Context, o *dbent.PaymentOrder, 
 		if fs == OrderStatusExpired {
 			auditAction = "ORDER_EXPIRED"
 		}
-		s.writeAuditLog(ctx, o.ID, auditAction, op, map[string]any{"detail": ad})
+		_ = s.writeAuditLog(ctx, o.ID, auditAction, op, map[string]any{"detail": ad})
 	}
 	return checkPaidResultCancelled, nil
 }
@@ -187,7 +187,7 @@ func (s *PaymentService) checkPaidWithOptions(ctx context.Context, o *dbent.Paym
 	}
 	if resp.Status == payment.ProviderStatusPaid {
 		if !isValidProviderAmount(resp.Amount) {
-			s.writeAuditLog(ctx, o.ID, "PAYMENT_INVALID_AMOUNT", prov.ProviderKey(), map[string]any{
+			_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_INVALID_AMOUNT", prov.ProviderKey(), map[string]any{
 				"expected": o.PayAmount,
 				"paid":     resp.Amount,
 				"tradeNo":  resp.TradeNo,
