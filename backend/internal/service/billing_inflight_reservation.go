@@ -523,9 +523,6 @@ func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, m
 				}
 			}
 		}
-		if cost <= 0 {
-			cost = tokenCost()
-		}
 	case InflightEstimateVideo:
 		if perRequestMode {
 			cost = maxPerRequestPrice(resolved) * float64(units) * math.Max(textRate, imageRate)
@@ -616,10 +613,23 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 		}
 	}
 	if best <= 0 {
+		if req.Kind == InflightEstimateImage && apiKeyHasExplicitlyFreeImagePricing(apiKey) {
+			return 0, true
+		}
 		logInflightUnpriced(req.Model, apiKey.GroupID)
 		return 0, false
 	}
 	return best, true
+}
+
+func apiKeyHasExplicitlyFreeImagePricing(apiKey *APIKey) bool {
+	if apiKey == nil || apiKey.Group == nil {
+		return false
+	}
+	group := apiKey.Group
+	return group.ImagePrice1K != nil && *group.ImagePrice1K == 0 &&
+		group.ImagePrice2K != nil && *group.ImagePrice2K == 0 &&
+		group.ImagePrice4K != nil && *group.ImagePrice4K == 0
 }
 
 // EstimateInflightReservationCost 仅用基础定价的简化估算（保留给无 resolver 的调用方/测试）。

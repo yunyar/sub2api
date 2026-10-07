@@ -350,7 +350,7 @@ func (s *PaymentService) blockEasyPayRSA2AmountMismatch(
 		"trade_no":            strings.TrimSpace(result.TradeNo),
 		"gateway_key_id":      firstEasyPayMetadataValue(result.Metadata, "gateway_key_id", "key_id"),
 		"signatureVerified":   result.SignatureVerified,
-	}
+	})
 	if s.riskService == nil {
 		return
 	}

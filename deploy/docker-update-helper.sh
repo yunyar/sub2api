@@ -14,6 +14,14 @@ fail() {
 [ -n "$image" ] || fail 'update image is required'
 [ -n "$compose_file" ] || fail 'absolute compose file path is required'
 [ -n "$service_name" ] || fail 'compose service is required'
+case "$image" in
+    ghcr.io/*:custom-*) image_commit=${image##*:custom-} ;;
+    *) fail 'update image must use an immutable custom commit tag' ;;
+esac
+case "$image_commit" in
+    ''|*[!0-9a-f]*) fail 'update image must use an immutable custom commit tag' ;;
+esac
+[ "${#image_commit}" -eq 40 ] || fail 'update image must use an immutable custom commit tag'
 case "$compose_file" in /*) ;; *) fail 'compose file path must be absolute' ;; esac
 [ -f "$compose_file" ] || fail "compose file does not exist: $compose_file"
 

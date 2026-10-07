@@ -103,7 +103,7 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 	}
 	expectedProviderKey := expectedNotificationProviderKeyForOrder(s.registry, o, instanceProviderKey)
 	if expectedProviderKey != "" && strings.TrimSpace(pk) != "" && !strings.EqualFold(expectedProviderKey, strings.TrimSpace(pk)) {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_MISMATCH", pk, map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_MISMATCH", pk, map[string]any{
 			"expectedProvider": expectedProviderKey,
 			"actualProvider":   pk,
 			"tradeNo":          tradeNo,
@@ -111,14 +111,14 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 		return fmt.Errorf("provider mismatch: expected %s, got %s", expectedProviderKey, pk)
 	}
 	if err := validateProviderNotificationMetadata(o, pk, metadata); err != nil {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_METADATA_MISMATCH", pk, map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_METADATA_MISMATCH", pk, map[string]any{
 			"detail":  err.Error(),
 			"tradeNo": tradeNo,
 		})
 		return err
 	}
 	if !isValidProviderAmount(paid) {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_INVALID_AMOUNT", pk, map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_INVALID_AMOUNT", pk, map[string]any{
 			"expected": o.PayAmount,
 			"paid":     paid,
 			"tradeNo":  tradeNo,
@@ -126,7 +126,7 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 		return fmt.Errorf("invalid paid amount from provider: %v", paid)
 	}
 	if math.Abs(paid-o.PayAmount) > paymentAmountToleranceForCurrency(PaymentOrderCurrency(o)) {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_AMOUNT_MISMATCH", pk, map[string]any{"expected": o.PayAmount, "paid": paid, "tradeNo": tradeNo})
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_AMOUNT_MISMATCH", pk, map[string]any{"expected": o.PayAmount, "paid": paid, "tradeNo": tradeNo})
 		return fmt.Errorf("amount mismatch: expected %s, got %s", strconv.FormatFloat(o.PayAmount, 'f', -1, 64), strconv.FormatFloat(paid, 'f', -1, 64))
 	}
 	merchantID := ""
@@ -198,7 +198,7 @@ func (s *PaymentService) toPaid(ctx context.Context, o *dbent.PaymentOrder, trad
 	c, err := update.Save(ctx)
 	if err != nil {
 		if strings.EqualFold(strings.TrimSpace(pk), payment.TypeEasyPay) && dbent.IsConstraintError(err) {
-			s.writeAuditLog(ctx, o.ID, "PAYMENT_GATEWAY_CONFIRMATION_FAILED", payment.TypeEasyPay, map[string]any{
+			_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_GATEWAY_CONFIRMATION_FAILED", payment.TypeEasyPay, map[string]any{
 				"reason": "transaction_already_bound",
 			})
 			return fmt.Errorf("%w: transaction_already_bound", ErrPaymentGatewayConfirmation)
@@ -215,14 +215,14 @@ func (s *PaymentService) toPaid(ctx context.Context, o *dbent.PaymentOrder, trad
 			"tradeNo", tradeNo,
 			"provider", pk,
 		)
-		s.writeAuditLog(ctx, o.ID, "ORDER_RECOVERED", pk, map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "ORDER_RECOVERED", pk, map[string]any{
 			"previous_status": previousStatus,
 			"tradeNo":         tradeNo,
 			"paidAmount":      paid,
 			"reason":          "webhook payment success received after order " + previousStatus,
 		})
 	}
-	s.writeAuditLog(ctx, o.ID, "ORDER_PAID", pk, map[string]any{"tradeNo": tradeNo, "paidAmount": paid})
+	_ = s.writeAuditLog(ctx, o.ID, "ORDER_PAID", pk, map[string]any{"tradeNo": tradeNo, "paidAmount": paid})
 	return s.executeFulfillment(ctx, o.ID)
 }
 
@@ -242,7 +242,7 @@ func (s *PaymentService) alreadyProcessed(ctx context.Context, o *dbent.PaymentO
 			"status", cur.Status,
 			"updatedAt", cur.UpdatedAt,
 		)
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_AFTER_EXPIRY", "system", map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_AFTER_EXPIRY", "system", map[string]any{
 			"status":    cur.Status,
 			"updatedAt": cur.UpdatedAt,
 			"reason":    "payment arrived after expiry grace period",
@@ -462,7 +462,7 @@ func (s *PaymentService) markCompleted(ctx context.Context, o *dbent.PaymentOrde
 		return infraerrors.Conflict("CONFLICT", "fulfillment lease was lost before completion")
 	}
 	if !s.hasAuditLog(ctx, o.ID, auditAction) {
-		s.writeAuditLog(ctx, o.ID, auditAction, "system", map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, auditAction, "system", map[string]any{
 			"rechargeCode":   o.RechargeCode,
 			"creditedAmount": o.Amount,
 			"payAmount":      o.PayAmount,
@@ -716,7 +716,7 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
-		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": fmt.Sprintf("begin affiliate rebate tx: %v", err),
 		})
 		return fmt.Errorf("begin affiliate rebate tx: %w", err)
@@ -726,7 +726,7 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 	txCtx := dbent.NewTxContext(ctx, tx)
 	claimed, err := s.tryClaimAffiliateRebateAudit(txCtx, tx.Client(), o.ID, baseAmount)
 	if err != nil {
-		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": err.Error(),
 		})
 		return fmt.Errorf("claim affiliate rebate audit: %w", err)
@@ -738,7 +738,7 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 	sourceOrderID := o.ID
 	rebateAmount, err := s.affiliateService.AccrueInviteRebateForOrder(txCtx, o.UserID, baseAmount, &sourceOrderID)
 	if err != nil {
-		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": err.Error(),
 		})
 		return fmt.Errorf("accrue affiliate rebate: %w", err)
@@ -749,13 +749,13 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 			"baseAmount": baseAmount,
 			"reason":     "no inviter bound or rebate amount <= 0",
 		}); err != nil {
-			s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
+			_ = s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 				"error": err.Error(),
 			})
 			return fmt.Errorf("update affiliate rebate skipped audit: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
-			s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
+			_ = s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 				"error": fmt.Sprintf("commit affiliate rebate tx: %v", err),
 			})
 			return fmt.Errorf("commit affiliate rebate tx: %w", err)
@@ -767,14 +767,14 @@ func (s *PaymentService) applyAffiliateRebateForOrder(ctx context.Context, o *db
 		"baseAmount":   baseAmount,
 		"rebateAmount": rebateAmount,
 	}); err != nil {
-		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": err.Error(),
 		})
 		return fmt.Errorf("update affiliate rebate applied audit: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "AFFILIATE_REBATE_FAILED", "system", map[string]any{
 			"error": fmt.Sprintf("commit affiliate rebate tx: %v", err),
 		})
 		return fmt.Errorf("commit affiliate rebate tx: %w", err)
@@ -910,7 +910,7 @@ func (s *PaymentService) markFailed(ctx context.Context, oid int64, lease *payme
 		slog.Error("mark FAILED", "orderID", oid, "error", e)
 	}
 	if c > 0 {
-		s.writeAuditLog(ctx, oid, "FULFILLMENT_FAILED", "system", map[string]any{"reason": r})
+		_ = s.writeAuditLog(ctx, oid, "FULFILLMENT_FAILED", "system", map[string]any{"reason": r})
 	}
 }
 
@@ -931,6 +931,6 @@ func (s *PaymentService) RetryFulfillment(ctx context.Context, oid int64) error 
 	if o.Status != OrderStatusFailed && o.Status != OrderStatusPaid && o.Status != OrderStatusRecharging {
 		return infraerrors.BadRequest("INVALID_STATUS", "only paid, failed, and recoverable recharging orders can retry")
 	}
-	s.writeAuditLog(ctx, oid, "RECHARGE_RETRY", "admin", map[string]any{"detail": "admin manual retry"})
+	_ = s.writeAuditLog(ctx, oid, "RECHARGE_RETRY", "admin", map[string]any{"detail": "admin manual retry"})
 	return s.executeFulfillment(ctx, oid)
 }

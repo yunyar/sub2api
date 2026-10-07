@@ -92,14 +92,14 @@ func easyPayRSACanonical(params map[string]string, purpose string) ([]byte, erro
 	}
 	sort.Strings(keys)
 	var canonical strings.Builder
-	canonical.WriteString(prefix)
+	_, _ = canonical.WriteString(prefix)
 	for index, key := range keys {
 		if index > 0 {
-			canonical.WriteByte('&')
+			_ = canonical.WriteByte('&')
 		}
-		canonical.WriteString(easyPayRFC3986(key))
-		canonical.WriteByte('=')
-		canonical.WriteString(easyPayRFC3986(params[key]))
+		_, _ = canonical.WriteString(easyPayRFC3986(key))
+		_ = canonical.WriteByte('=')
+		_, _ = canonical.WriteString(easyPayRFC3986(params[key]))
 	}
 	return []byte(canonical.String()), nil
 }
@@ -110,12 +110,12 @@ func easyPayRFC3986(value string) string {
 	for _, b := range []byte(value) {
 		if b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' ||
 			b == '-' || b == '.' || b == '_' || b == '~' {
-			result.WriteByte(b)
+			_ = result.WriteByte(b)
 			continue
 		}
-		result.WriteByte('%')
-		result.WriteByte(hexDigits[b>>4])
-		result.WriteByte(hexDigits[b&15])
+		_ = result.WriteByte('%')
+		_ = result.WriteByte(hexDigits[b>>4])
+		_ = result.WriteByte(hexDigits[b&15])
 	}
 	return result.String()
 }

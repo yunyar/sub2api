@@ -180,6 +180,24 @@ func TestInflightEstimate_ImageUsesDedicatedGroupMultiplier(t *testing.T) {
 	require.Zero(t, estimate)
 }
 
+func TestInflightEstimate_ExplicitlyFreeImageDoesNotFallbackToTokenPricing(t *testing.T) {
+	groupID := int64(33)
+	free := 0.0
+	group := &Group{
+		ID: groupID, Platform: PlatformOpenAI, RateMultiplier: 9, ImageRateMultiplier: 1,
+		ImagePrice1K: &free, ImagePrice2K: &free, ImagePrice4K: &free,
+	}
+	svc := newInflightEstimateGateway(t, nil)
+	apiKey := &APIKey{User: &User{ID: 1}, GroupID: &groupID, Group: group}
+
+	estimate, priced := svc.EstimateInflightReservation(context.Background(), apiKey, InflightEstimateRequest{
+		Model: "gpt-image-1", Kind: InflightEstimateImage, Units: 3,
+	})
+
+	require.True(t, priced)
+	require.Zero(t, estimate, "explicitly free per-image pricing must not reserve a text-token estimate")
+}
+
 // ---------------------------------------------------------------------------
 // reservation handle: hand-off to billing task, renewal
 // ---------------------------------------------------------------------------
