@@ -103,7 +103,7 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 	}
 	expectedProviderKey := expectedNotificationProviderKeyForOrder(s.registry, o, instanceProviderKey)
 	if expectedProviderKey != "" && strings.TrimSpace(pk) != "" && !strings.EqualFold(expectedProviderKey, strings.TrimSpace(pk)) {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_MISMATCH", pk, map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_MISMATCH", pk, map[string]any{
 			"expectedProvider": expectedProviderKey,
 			"actualProvider":   pk,
 			"tradeNo":          tradeNo,
@@ -111,14 +111,14 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 		return fmt.Errorf("provider mismatch: expected %s, got %s", expectedProviderKey, pk)
 	}
 	if err := validateProviderNotificationMetadata(o, pk, metadata); err != nil {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_METADATA_MISMATCH", pk, map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_PROVIDER_METADATA_MISMATCH", pk, map[string]any{
 			"detail":  err.Error(),
 			"tradeNo": tradeNo,
 		})
 		return err
 	}
 	if !isValidProviderAmount(paid) {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_INVALID_AMOUNT", pk, map[string]any{
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_INVALID_AMOUNT", pk, map[string]any{
 			"expected": o.PayAmount,
 			"paid":     paid,
 			"tradeNo":  tradeNo,
@@ -126,7 +126,7 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 		return fmt.Errorf("invalid paid amount from provider: %v", paid)
 	}
 	if math.Abs(paid-o.PayAmount) > paymentAmountToleranceForCurrency(PaymentOrderCurrency(o)) {
-		s.writeAuditLog(ctx, o.ID, "PAYMENT_AMOUNT_MISMATCH", pk, map[string]any{"expected": o.PayAmount, "paid": paid, "tradeNo": tradeNo})
+		_ = s.writeAuditLog(ctx, o.ID, "PAYMENT_AMOUNT_MISMATCH", pk, map[string]any{"expected": o.PayAmount, "paid": paid, "tradeNo": tradeNo})
 		return fmt.Errorf("amount mismatch: expected %s, got %s", strconv.FormatFloat(o.PayAmount, 'f', -1, 64), strconv.FormatFloat(paid, 'f', -1, 64))
 	}
 	merchantID := ""

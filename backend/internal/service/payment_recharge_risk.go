@@ -68,7 +68,7 @@ func paymentRiskIPBlocked(ctx context.Context, client *dbent.Client, address str
 	if err != nil {
 		return false, fmt.Errorf("read payment IP policy: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return false, rows.Err()
 	}
