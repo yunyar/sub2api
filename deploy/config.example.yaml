@@ -36,12 +36,15 @@ server:
   # Keep-alive idle timeout in seconds.
   # Keep-Alive 空闲连接超时（秒）。
   idle_timeout: 120
-  # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
+  # Trusted proxies used by verified client-IP consumers, including payment,
+  # usage, session, and audit records. The legacy API-key ACL resolver also uses
+  # this chain when security.trust_forwarded_ip_for_api_key_acl is false.
   # List only the exact proxy addresses that connect directly to Sub2API.
-  # Set [] explicitly to disable forwarded-IP trust in high-security mode.
-  # security.trust_forwarded_ip_for_api_key_acl=false 时使用的可信代理。
-  # 只填写直接连接 Sub2API 的精确代理地址；显式设置 [] 可在高安全模式下
-  # 禁用转发 IP 信任。
+  # Set [] to disable trusted-proxy forwarding; also disable the legacy
+  # compatibility preference to reject all forwarded client-IP headers.
+  # 可信客户端 IP 的代理链（支付、用量、会话、审计记录始终使用）。
+  # security.trust_forwarded_ip_for_api_key_acl=false 时 API Key ACL 也使用此链。
+  # 只填写直接连接 Sub2API 的精确代理地址；设置 [] 并关闭旧兼容开关才会拒绝所有转发 IP 头。
   trusted_proxies:
     - 127.0.0.1/32
     - ::1/128

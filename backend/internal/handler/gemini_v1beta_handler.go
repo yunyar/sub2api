@@ -411,7 +411,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		parsedReq, _ := service.ParseGatewayRequest(service.NewRequestBodyRef(body), domain.PlatformGemini)
 		if parsedReq != nil {
 			parsedReq.SessionContext = &service.SessionContext{
-				ClientIP:  ip.GetClientIP(c),
+				ClientIP:  ip.GetTrustedClientIP(c),
 				UserAgent: c.GetHeader("User-Agent"),
 				APIKeyID:  apiKey.ID,
 			}
@@ -454,7 +454,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			if geminiDigestChain != "" {
 				// 生成前缀 hash
 				userAgent := c.GetHeader("User-Agent")
-				clientIP := ip.GetClientIP(c)
+				clientIP := ip.GetTrustedClientIP(c)
 				platform := ""
 				if apiKey.Group != nil {
 					platform = apiKey.Group.Platform
@@ -699,7 +699,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 		// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
 		userAgent := c.GetHeader("User-Agent")
-		clientIP := ip.GetClientIP(c)
+		clientIP := ip.GetTrustedClientIP(c)
 
 		// 保存 Gemini 内容摘要会话（用于 Fallback 匹配）
 		if useDigestFallback && geminiDigestChain != "" && geminiPrefixHash != "" {

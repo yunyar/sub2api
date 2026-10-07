@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,13 +13,17 @@ import (
 )
 
 type paymentOrderProviderSnapshot struct {
-	SchemaVersion      int
-	ProviderInstanceID string
-	ProviderKey        string
-	PaymentMode        string
-	MerchantAppID      string
-	MerchantID         string
-	Currency           string
+	SchemaVersion          int
+	ProviderInstanceID     string
+	ProviderKey            string
+	PaymentMode            string
+	MerchantAppID          string
+	MerchantID             string
+	GatewayIdentity        string
+	Currency               string
+	GatewaySignType        string
+	GatewayKeyID           string
+	GatewayPublicKeySHA256 string
 }
 
 func psOrderProviderSnapshot(order *dbent.PaymentOrder) *paymentOrderProviderSnapshot {
@@ -26,13 +32,17 @@ func psOrderProviderSnapshot(order *dbent.PaymentOrder) *paymentOrderProviderSna
 	}
 
 	snapshot := &paymentOrderProviderSnapshot{
-		SchemaVersion:      psSnapshotIntValue(order.ProviderSnapshot["schema_version"]),
-		ProviderInstanceID: psSnapshotStringValue(order.ProviderSnapshot["provider_instance_id"]),
-		ProviderKey:        psSnapshotStringValue(order.ProviderSnapshot["provider_key"]),
-		PaymentMode:        psSnapshotStringValue(order.ProviderSnapshot["payment_mode"]),
-		MerchantAppID:      psSnapshotStringValue(order.ProviderSnapshot["merchant_app_id"]),
-		MerchantID:         psSnapshotStringValue(order.ProviderSnapshot["merchant_id"]),
-		Currency:           psSnapshotStringValue(order.ProviderSnapshot["currency"]),
+		SchemaVersion:          psSnapshotIntValue(order.ProviderSnapshot["schema_version"]),
+		ProviderInstanceID:     psSnapshotStringValue(order.ProviderSnapshot["provider_instance_id"]),
+		ProviderKey:            psSnapshotStringValue(order.ProviderSnapshot["provider_key"]),
+		PaymentMode:            psSnapshotStringValue(order.ProviderSnapshot["payment_mode"]),
+		MerchantAppID:          psSnapshotStringValue(order.ProviderSnapshot["merchant_app_id"]),
+		MerchantID:             psSnapshotStringValue(order.ProviderSnapshot["merchant_id"]),
+		GatewayIdentity:        psSnapshotStringValue(order.ProviderSnapshot["gateway_identity"]),
+		Currency:               psSnapshotStringValue(order.ProviderSnapshot["currency"]),
+		GatewaySignType:        psSnapshotStringValue(order.ProviderSnapshot["gateway_sign_type"]),
+		GatewayKeyID:           psSnapshotStringValue(order.ProviderSnapshot["gateway_key_id"]),
+		GatewayPublicKeySHA256: psSnapshotStringValue(order.ProviderSnapshot["gateway_public_key_sha256"]),
 	}
 	if snapshot.SchemaVersion == 0 &&
 		snapshot.ProviderInstanceID == "" &&
@@ -40,7 +50,11 @@ func psOrderProviderSnapshot(order *dbent.PaymentOrder) *paymentOrderProviderSna
 		snapshot.PaymentMode == "" &&
 		snapshot.MerchantAppID == "" &&
 		snapshot.MerchantID == "" &&
-		snapshot.Currency == "" {
+		snapshot.GatewayIdentity == "" &&
+		snapshot.Currency == "" &&
+		snapshot.GatewaySignType == "" &&
+		snapshot.GatewayKeyID == "" &&
+		snapshot.GatewayPublicKeySHA256 == "" {
 		return nil
 	}
 	return snapshot
@@ -74,6 +88,15 @@ func psSnapshotIntValue(value any) int {
 		}
 	}
 	return 0
+}
+
+func easyPayPublicKeyFingerprint(publicKey string) string {
+	publicKey = strings.TrimSpace(publicKey)
+	if publicKey == "" {
+		return ""
+	}
+	fingerprint := sha256.Sum256([]byte(publicKey))
+	return hex.EncodeToString(fingerprint[:])
 }
 
 func (s *PaymentService) resolveSnapshotOrderProviderInstance(ctx context.Context, order *dbent.PaymentOrder, snapshot *paymentOrderProviderSnapshot) (*dbent.PaymentProviderInstance, error) {

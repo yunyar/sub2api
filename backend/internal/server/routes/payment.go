@@ -101,6 +101,12 @@ func RegisterPaymentRoutes(
 		adminGroup.GET("/config", adminPaymentHandler.GetConfig)
 		adminGroup.PUT("/config", adminPaymentHandler.UpdateConfig)
 
+		// Recharge risk
+		adminGroup.GET("/risk-ips", adminPaymentHandler.ListRiskIPs)
+		adminGroup.POST("/risk-ips/block-order", adminPaymentHandler.BlockRiskOrderIP)
+		adminGroup.POST("/risk-ips/unblock", adminPaymentHandler.UnblockRiskIP)
+		adminGroup.POST("/risk-ips/scan", adminPaymentHandler.ScanRiskAccounts)
+
 		// Orders
 		adminOrders := adminGroup.Group("/orders")
 		{

@@ -172,7 +172,7 @@ func liveCallIdentity(
 		GroupID:         apiKey.GroupID,
 		SubscriptionID:  subscriptionID,
 		UserAgent:       c.GetHeader("User-Agent"),
-		IPAddress:       ip.GetClientIP(c),
+		IPAddress:       ip.GetTrustedClientIP(c),
 		InboundEndpoint: GetInboundEndpoint(c),
 	}
 }

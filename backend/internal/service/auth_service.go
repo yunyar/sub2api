@@ -86,6 +86,7 @@ type AuthService struct {
 	affiliateService      *AffiliateService
 	defaultSubAssigner    DefaultSubscriptionAssigner
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	paymentRiskService    AuthIPRiskService
 }
 
 type CaptchaProof struct {
@@ -245,6 +246,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 		Status:       StatusActive,
 	}
 
+	if err := s.checkRegistrationIPRisk(ctx); err != nil {
+		return "", nil, err
+	}
 	if err := s.createUserAndClaimInvitation(ctx, user, invitationRedeemCode); err != nil {
 		// 优先检查邮箱冲突错误（竞态条件下可能发生）
 		switch {
@@ -258,6 +262,9 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 			logger.LegacyPrintf("service.auth", "[Auth] Database error creating user: %v", err)
 			return "", nil, ErrServiceUnavailable
 		}
+	}
+	if err := s.recordUserIP(ctx, user.ID, "registration"); err != nil {
+		return "", nil, err
 	}
 	s.postAuthUserBootstrap(ctx, user, "email", true)
 	s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
@@ -554,6 +561,9 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (string
 		return "", nil, ErrUserNotActive
 	}
 
+	if err := s.recordUserIP(ctx, user.ID, "login"); err != nil {
+		return "", nil, err
+	}
 	// 生成JWT token
 	token, err := s.GenerateToken(ctx, user)
 	if err != nil {
@@ -584,11 +594,15 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 	}
 
 	user, err := s.userRepo.GetByEmail(ctx, email)
+	created := false
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			// OAuth 首次登录视为注册（fail-close：settingService 未配置时不允许注册）
 			if s.settingService == nil || !s.settingService.IsRegistrationEnabled(ctx) {
 				return "", nil, ErrRegDisabled
+			}
+			if err := s.checkRegistrationIPRisk(ctx); err != nil {
+				return "", nil, err
 			}
 
 			randomPassword, err := randomHexString(32)
@@ -634,6 +648,7 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 				}
 			} else {
 				user = newUser
+				created = true
 				s.postAuthUserBootstrap(ctx, user, signupSource, false)
 				s.assignSubscriptions(ctx, user.ID, grantPlan.Subscriptions, "auto assigned by signup defaults")
 				// snapshot user × platform quota（fail-open）
@@ -655,6 +670,13 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 		if err := s.userRepo.Update(ctx, user, UserUpdateFields{Username: true}); err != nil {
 			logger.LegacyPrintf("service.auth", "[Auth] Failed to update username after oauth login: %v", err)
 		}
+	}
+	ipSource := "login"
+	if created {
+		ipSource = "registration"
+	}
+	if err := s.recordUserIP(ctx, user.ID, ipSource); err != nil {
+		return "", nil, err
 	}
 	token, err := s.GenerateToken(ctx, user)
 	if err != nil {
@@ -718,6 +740,9 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 			// OAuth 首次登录视为注册
 			if s.settingService == nil || (!s.settingService.IsRegistrationEnabled(ctx) && !s.canBypassRegistrationDisabledForOAuth(ctx, signupSource)) {
 				return nil, nil, ErrRegDisabled
+			}
+			if err := s.checkRegistrationIPRisk(ctx); err != nil {
+				return nil, nil, err
 			}
 
 			// 检查是否需要邀请码
@@ -850,6 +875,13 @@ func (s *AuthService) loginOrRegisterOAuthWithTokenPair(ctx context.Context, ema
 	}
 	if created {
 		user = s.applyOAuthSignupPromoCode(ctx, user, promoCode)
+	}
+	ipSource := "login"
+	if created {
+		ipSource = "registration"
+	}
+	if err := s.recordSuccessfulAuth(ctx, user.ID, ipSource); err != nil {
+		return nil, nil, err
 	}
 	tokenPair, err := s.GenerateTokenPair(ctx, user, "")
 	if err != nil {
@@ -1047,15 +1079,15 @@ func (s *AuthService) shouldApplyEmailFirstBindDefaults(
 	identity *dbent.AuthIdentity,
 	created bool,
 ) bool {
+	if s == nil || s.entClient == nil || userID <= 0 || identity == nil || identity.UserID != userID {
+		return false
+	}
 	source := emailAuthIdentitySource(identity.Metadata)
 	if source == "auth_service_login_backfill" {
 		return false
 	}
 	if created {
 		return true
-	}
-	if s == nil || s.entClient == nil || userID <= 0 || identity == nil || identity.UserID != userID {
-		return false
 	}
 	if source != "auth_service_dual_write" {
 		return false

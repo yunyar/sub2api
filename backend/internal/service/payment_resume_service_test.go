@@ -85,8 +85,8 @@ func TestCanonicalizeReturnURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CanonicalizeReturnURL returned error: %v", err)
 	}
-	if got != "https://example.com/payment/result?b=2" {
-		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://example.com/payment/result?b=2")
+	if got != "https://example.com/payment/result" {
+		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://example.com/payment/result")
 	}
 }
 
@@ -95,6 +95,40 @@ func TestCanonicalizeReturnURLRejectsRelativeURL(t *testing.T) {
 
 	if _, err := CanonicalizeReturnURL("/payment/result", "example.com", ""); err == nil {
 		t.Fatal("CanonicalizeReturnURL should reject relative URLs")
+	}
+}
+
+func TestPaymentReturnURLDropsAllUntrustedQueryParameters(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{
+		"?trade_status=TRADE_SUCCESS",
+		"?trade_status=FAILED&trade_status=TRADE_SUCCESS",
+		"?%74rade_status=TRADE_SUCCESS",
+		"?return_url=x%26trade_status%3DTRADE_SUCCESS",
+		"?order_id=99&out_trade_no=OTHER&resume_token=forged&status=success",
+		"?",
+	} {
+		t.Run(suffix, func(t *testing.T) {
+			base := "https://example.com/payment/result"
+			canonical, err := CanonicalizeReturnURL(base+suffix, "example.com", "")
+			if err != nil || canonical != base {
+				t.Fatalf("untrusted query survived canonicalization: %q, %v", canonical, err)
+			}
+			result, err := buildPaymentReturnURL(base+suffix, 42, "ORDER42", "server-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := url.Parse(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			query := parsed.Query()
+			if len(query) != 4 || query.Get("order_id") != "42" ||
+				query.Get("out_trade_no") != "ORDER42" || query.Get("resume_token") != "server-token" ||
+				query.Get("status") != "success" {
+				t.Fatalf("return URL must contain only server-generated values: %v", query)
+			}
+		})
 	}
 }
 
@@ -117,8 +151,8 @@ func TestCanonicalizeReturnURLAllowsConfiguredFrontendHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CanonicalizeReturnURL returned error: %v", err)
 	}
-	if got != "https://app.example.com/payment/result?from=checkout" {
-		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://app.example.com/payment/result?from=checkout")
+	if got != "https://app.example.com/payment/result" {
+		t.Fatalf("CanonicalizeReturnURL = %q, want %q", got, "https://app.example.com/payment/result")
 	}
 }
 
@@ -146,8 +180,8 @@ func TestBuildPaymentReturnURL(t *testing.T) {
 		t.Fatalf("buildPaymentReturnURL should strip fragments, got %q", parsed.Fragment)
 	}
 	query := parsed.Query()
-	if query.Get("from") != "checkout" {
-		t.Fatalf("expected original query to be preserved, got %q", query.Get("from"))
+	if query.Has("from") {
+		t.Fatalf("untrusted query must be removed, got %v", query)
 	}
 	if query.Get("order_id") != strconv.FormatInt(42, 10) {
 		t.Fatalf("order_id = %q", query.Get("order_id"))

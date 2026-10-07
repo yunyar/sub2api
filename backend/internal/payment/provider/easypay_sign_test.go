@@ -184,12 +184,29 @@ func TestEasyPayMerchantIdentityMetadata(t *testing.T) {
 
 	provider := &EasyPay{
 		config: map[string]string{
-			"pid": "1001",
+			"pid":     "1001",
+			"apiBase": "https://gateway.example.test/api.php",
 		},
 	}
 
 	metadata := provider.MerchantIdentityMetadata()
 	if metadata["pid"] != "1001" {
 		t.Fatalf("pid = %q, want %q", metadata["pid"], "1001")
+	}
+	if metadata["gateway_identity"] != EasyPayGatewayIdentity("https://gateway.example.test") {
+		t.Fatalf("gateway_identity = %q, want normalized endpoint identity", metadata["gateway_identity"])
+	}
+}
+
+func TestEasyPayGatewayIdentityCanonicalizesEndpointAndScopesGateways(t *testing.T) {
+	first := EasyPayGatewayIdentity("https://GATEWAY.example.test:443/base/api.php?tenant=ignored")
+	same := EasyPayGatewayIdentity("https://gateway.example.test/base/")
+	different := EasyPayGatewayIdentity("https://other-gateway.example.test/base/")
+
+	if first == "" || first != same {
+		t.Fatalf("canonical endpoint identities differ: %q != %q", first, same)
+	}
+	if first == different {
+		t.Fatalf("different gateway endpoints share an identity: %q", first)
 	}
 }

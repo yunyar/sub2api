@@ -145,7 +145,14 @@ func (s *AuthService) loginOrRegisterVerifiedEmailOAuth(
 	} else {
 		user = s.applyOAuthSignupPromoCode(ctx, user, promoCode)
 	}
-	s.RecordSuccessfulLogin(ctx, user.ID)
+	if created {
+		err = s.RecordSuccessfulRegistration(ctx, user.ID)
+	} else {
+		err = s.RecordSuccessfulLogin(ctx, user.ID)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
 
 	tokenPair, err := s.GenerateTokenPair(ctx, user, "")
 	if err != nil {
@@ -189,6 +196,9 @@ func (s *AuthService) createEmailOAuthUser(ctx context.Context, email, username,
 		RPMLimit:     defaultRPMLimit,
 		Status:       StatusActive,
 		SignupSource: providerType,
+	}
+	if err := s.checkRegistrationIPRisk(ctx); err != nil {
+		return nil, err
 	}
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		if errors.Is(err, ErrEmailExists) {

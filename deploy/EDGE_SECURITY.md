@@ -30,8 +30,11 @@ the application's responsibility.
 ## Trusted client IPs
 
 `security.trust_forwarded_ip_for_api_key_acl` is enabled by default for upgrade
-compatibility. While enabled, raw forwarding headers take over client-IP
-resolution for logs and security-sensitive paths. Custom headers from
+compatibility. Legacy resolver consumers, including API-key IP restrictions,
+may use raw forwarding headers while it is enabled. Payment orders, usage
+records, session-derived routing keys, audit/security records, and operational
+error records use Gin's trusted-proxy resolver independently of this setting.
+Custom headers from
 `security.forwarded_client_ip_headers` are checked in configured order before
 the built-in `CF-Connecting-IP`, `X-Real-IP`, and `X-Forwarded-For` fallback.
 Header names are case-insensitive, normalized when loaded, de-duplicated, and
@@ -61,10 +64,13 @@ migration write fails, the computed mode remains active for the current process
 and startup records a warning.
 
 Compatibility takeover accepts forwarded headers without validating the direct
-peer, including any configured custom header. Protect the origin from direct
-access while it is enabled. A CDN deployment must firewall the origin so only
-the CDN or load balancer can reach it, and that proxy must overwrite every
-trusted client-IP header rather than append an untrusted client value.
+peer, including any configured custom header. For consumers that still use this
+legacy resolver, protect the origin from direct access while it is enabled. A
+CDN deployment must firewall the origin so only the CDN or load balancer can
+reach it, and that proxy must overwrite every trusted client-IP header rather
+than append an untrusted client value. If direct origin access must remain
+available, configure an exact `server.trusted_proxies` chain and disable the
+compatibility preference for API-key IP restrictions.
 
 Example for a proxy on the same host:
 

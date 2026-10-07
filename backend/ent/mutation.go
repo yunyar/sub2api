@@ -30101,62 +30101,64 @@ func (m *PaymentAuditLogMutation) ResetEdge(name string) error {
 // PaymentOrderMutation represents an operation that mutates the PaymentOrder nodes in the graph.
 type PaymentOrderMutation struct {
 	config
-	op                       Op
-	typ                      string
-	id                       *int64
-	user_email               *string
-	user_name                *string
-	user_notes               *string
-	amount                   *float64
-	addamount                *float64
-	pay_amount               *float64
-	addpay_amount            *float64
-	fee_rate                 *float64
-	addfee_rate              *float64
-	bonus_amount             *float64
-	addbonus_amount          *float64
-	recharge_code            *string
-	out_trade_no             *string
-	payment_type             *string
-	payment_trade_no         *string
-	pay_url                  *string
-	qr_code                  *string
-	qr_code_img              *string
-	order_type               *string
-	plan_id                  *int64
-	addplan_id               *int64
-	subscription_group_id    *int64
-	addsubscription_group_id *int64
-	subscription_days        *int
-	addsubscription_days     *int
-	provider_instance_id     *string
-	provider_key             *string
-	provider_snapshot        *map[string]interface{}
-	status                   *string
-	refund_amount            *float64
-	addrefund_amount         *float64
-	refund_reason            *string
-	refund_at                *time.Time
-	force_refund             *bool
-	refund_requested_at      *time.Time
-	refund_request_reason    *string
-	refund_requested_by      *string
-	expires_at               *time.Time
-	paid_at                  *time.Time
-	completed_at             *time.Time
-	failed_at                *time.Time
-	failed_reason            *string
-	client_ip                *string
-	src_host                 *string
-	src_url                  *string
-	created_at               *time.Time
-	updated_at               *time.Time
-	clearedFields            map[string]struct{}
-	user                     *int64
-	cleareduser              bool
-	done                     bool
-	oldValue                 func(context.Context) (*PaymentOrder, error)
-	predicates               []predicate.PaymentOrder
+	op                        Op
+	typ                       string
+	id                        *int64
+	user_email                *string
+	user_name                 *string
+	user_notes                *string
+	amount                    *float64
+	addamount                 *float64
+	pay_amount                *float64
+	addpay_amount             *float64
+	fee_rate                  *float64
+	addfee_rate               *float64
+	bonus_amount              *float64
+	addbonus_amount           *float64
+	recharge_code             *string
+	out_trade_no              *string
+	payment_type              *string
+	payment_trade_no          *string
+	pay_url                   *string
+	qr_code                   *string
+	qr_code_img               *string
+	order_type                *string
+	plan_id                   *int64
+	addplan_id                *int64
+	subscription_group_id     *int64
+	addsubscription_group_id  *int64
+	subscription_days         *int
+	addsubscription_days      *int
+	provider_instance_id      *string
+	provider_key              *string
+	provider_merchant_id      *string
+	provider_gateway_identity *string
+	provider_snapshot         *map[string]interface{}
+	status                    *string
+	refund_amount             *float64
+	addrefund_amount          *float64
+	refund_reason             *string
+	refund_at                 *time.Time
+	force_refund              *bool
+	refund_requested_at       *time.Time
+	refund_request_reason     *string
+	refund_requested_by       *string
+	expires_at                *time.Time
+	paid_at                   *time.Time
+	completed_at              *time.Time
+	failed_at                 *time.Time
+	failed_reason             *string
+	client_ip                 *string
+	src_host                  *string
+	src_url                   *string
+	created_at                *time.Time
+	updated_at                *time.Time
+	clearedFields             map[string]struct{}
+	user                      *int64
+	cleareduser               bool
+	done                      bool
+	oldValue                  func(context.Context) (*PaymentOrder, error)
+	predicates                []predicate.PaymentOrder
 }
 
 var _ ent.Mutation = (*PaymentOrderMutation)(nil)
@@ -31273,6 +31275,104 @@ func (m *PaymentOrderMutation) ResetProviderKey() {
 	delete(m.clearedFields, paymentorder.FieldProviderKey)
 }
 
+// SetProviderMerchantID sets the "provider_merchant_id" field.
+func (m *PaymentOrderMutation) SetProviderMerchantID(s string) {
+	m.provider_merchant_id = &s
+}
+
+// ProviderMerchantID returns the value of the "provider_merchant_id" field in the mutation.
+func (m *PaymentOrderMutation) ProviderMerchantID() (r string, exists bool) {
+	v := m.provider_merchant_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderMerchantID returns the old "provider_merchant_id" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldProviderMerchantID(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderMerchantID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderMerchantID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderMerchantID: %w", err)
+	}
+	return oldValue.ProviderMerchantID, nil
+}
+
+// ClearProviderMerchantID clears the value of the "provider_merchant_id" field.
+func (m *PaymentOrderMutation) ClearProviderMerchantID() {
+	m.provider_merchant_id = nil
+	m.clearedFields[paymentorder.FieldProviderMerchantID] = struct{}{}
+}
+
+// ProviderMerchantIDCleared returns if the "provider_merchant_id" field was cleared in this mutation.
+func (m *PaymentOrderMutation) ProviderMerchantIDCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldProviderMerchantID]
+	return ok
+}
+
+// ResetProviderMerchantID resets all changes to the "provider_merchant_id" field.
+func (m *PaymentOrderMutation) ResetProviderMerchantID() {
+	m.provider_merchant_id = nil
+	delete(m.clearedFields, paymentorder.FieldProviderMerchantID)
+}
+
+// SetProviderGatewayIdentity sets the "provider_gateway_identity" field.
+func (m *PaymentOrderMutation) SetProviderGatewayIdentity(s string) {
+	m.provider_gateway_identity = &s
+}
+
+// ProviderGatewayIdentity returns the value of the "provider_gateway_identity" field in the mutation.
+func (m *PaymentOrderMutation) ProviderGatewayIdentity() (r string, exists bool) {
+	v := m.provider_gateway_identity
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProviderGatewayIdentity returns the old "provider_gateway_identity" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldProviderGatewayIdentity(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProviderGatewayIdentity is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProviderGatewayIdentity requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProviderGatewayIdentity: %w", err)
+	}
+	return oldValue.ProviderGatewayIdentity, nil
+}
+
+// ClearProviderGatewayIdentity clears the value of the "provider_gateway_identity" field.
+func (m *PaymentOrderMutation) ClearProviderGatewayIdentity() {
+	m.provider_gateway_identity = nil
+	m.clearedFields[paymentorder.FieldProviderGatewayIdentity] = struct{}{}
+}
+
+// ProviderGatewayIdentityCleared returns if the "provider_gateway_identity" field was cleared in this mutation.
+func (m *PaymentOrderMutation) ProviderGatewayIdentityCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldProviderGatewayIdentity]
+	return ok
+}
+
+// ResetProviderGatewayIdentity resets all changes to the "provider_gateway_identity" field.
+func (m *PaymentOrderMutation) ResetProviderGatewayIdentity() {
+	m.provider_gateway_identity = nil
+	delete(m.clearedFields, paymentorder.FieldProviderGatewayIdentity)
+}
+
 // SetProviderSnapshot sets the "provider_snapshot" field.
 func (m *PaymentOrderMutation) SetProviderSnapshot(value map[string]interface{}) {
 	m.provider_snapshot = &value
@@ -32181,7 +32281,7 @@ func (m *PaymentOrderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *PaymentOrderMutation) Fields() []string {
-	fields := make([]string, 0, 40)
+	fields := make([]string, 0, 42)
 	if m.user != nil {
 		fields = append(fields, paymentorder.FieldUserID)
 	}
@@ -32244,6 +32344,12 @@ func (m *PaymentOrderMutation) Fields() []string {
 	}
 	if m.provider_key != nil {
 		fields = append(fields, paymentorder.FieldProviderKey)
+	}
+	if m.provider_merchant_id != nil {
+		fields = append(fields, paymentorder.FieldProviderMerchantID)
+	}
+	if m.provider_gateway_identity != nil {
+		fields = append(fields, paymentorder.FieldProviderGatewayIdentity)
 	}
 	if m.provider_snapshot != nil {
 		fields = append(fields, paymentorder.FieldProviderSnapshot)
@@ -32352,6 +32458,10 @@ func (m *PaymentOrderMutation) Field(name string) (ent.Value, bool) {
 		return m.ProviderInstanceID()
 	case paymentorder.FieldProviderKey:
 		return m.ProviderKey()
+	case paymentorder.FieldProviderMerchantID:
+		return m.ProviderMerchantID()
+	case paymentorder.FieldProviderGatewayIdentity:
+		return m.ProviderGatewayIdentity()
 	case paymentorder.FieldProviderSnapshot:
 		return m.ProviderSnapshot()
 	case paymentorder.FieldStatus:
@@ -32441,6 +32551,10 @@ func (m *PaymentOrderMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldProviderInstanceID(ctx)
 	case paymentorder.FieldProviderKey:
 		return m.OldProviderKey(ctx)
+	case paymentorder.FieldProviderMerchantID:
+		return m.OldProviderMerchantID(ctx)
+	case paymentorder.FieldProviderGatewayIdentity:
+		return m.OldProviderGatewayIdentity(ctx)
 	case paymentorder.FieldProviderSnapshot:
 		return m.OldProviderSnapshot(ctx)
 	case paymentorder.FieldStatus:
@@ -32634,6 +32748,20 @@ func (m *PaymentOrderMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetProviderKey(v)
+		return nil
+	case paymentorder.FieldProviderMerchantID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderMerchantID(v)
+		return nil
+	case paymentorder.FieldProviderGatewayIdentity:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProviderGatewayIdentity(v)
 		return nil
 	case paymentorder.FieldProviderSnapshot:
 		v, ok := value.(map[string]interface{})
@@ -32924,6 +33052,12 @@ func (m *PaymentOrderMutation) ClearedFields() []string {
 	if m.FieldCleared(paymentorder.FieldProviderKey) {
 		fields = append(fields, paymentorder.FieldProviderKey)
 	}
+	if m.FieldCleared(paymentorder.FieldProviderMerchantID) {
+		fields = append(fields, paymentorder.FieldProviderMerchantID)
+	}
+	if m.FieldCleared(paymentorder.FieldProviderGatewayIdentity) {
+		fields = append(fields, paymentorder.FieldProviderGatewayIdentity)
+	}
 	if m.FieldCleared(paymentorder.FieldProviderSnapshot) {
 		fields = append(fields, paymentorder.FieldProviderSnapshot)
 	}
@@ -32997,6 +33131,12 @@ func (m *PaymentOrderMutation) ClearField(name string) error {
 		return nil
 	case paymentorder.FieldProviderKey:
 		m.ClearProviderKey()
+		return nil
+	case paymentorder.FieldProviderMerchantID:
+		m.ClearProviderMerchantID()
+		return nil
+	case paymentorder.FieldProviderGatewayIdentity:
+		m.ClearProviderGatewayIdentity()
 		return nil
 	case paymentorder.FieldProviderSnapshot:
 		m.ClearProviderSnapshot()
@@ -33101,6 +33241,12 @@ func (m *PaymentOrderMutation) ResetField(name string) error {
 		return nil
 	case paymentorder.FieldProviderKey:
 		m.ResetProviderKey()
+		return nil
+	case paymentorder.FieldProviderMerchantID:
+		m.ResetProviderMerchantID()
+		return nil
+	case paymentorder.FieldProviderGatewayIdentity:
+		m.ResetProviderGatewayIdentity()
 		return nil
 	case paymentorder.FieldProviderSnapshot:
 		m.ResetProviderSnapshot()

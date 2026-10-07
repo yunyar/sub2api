@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -20,12 +21,13 @@ import (
 
 // Cancel rate limit configuration constants.
 const (
-	rateLimitUnitDay           = "day"
-	rateLimitUnitMinute        = "minute"
-	rateLimitUnitHour          = "hour"
-	rateLimitModeFixed         = "fixed"
-	checkPaidResultAlreadyPaid = "already_paid"
-	checkPaidResultCancelled   = "cancelled"
+	rateLimitUnitDay                   = "day"
+	rateLimitUnitMinute                = "minute"
+	rateLimitUnitHour                  = "hour"
+	rateLimitModeFixed                 = "fixed"
+	checkPaidResultAlreadyPaid         = "already_paid"
+	checkPaidResultCancelled           = "cancelled"
+	checkPaidResultConfirmationPending = "confirmation_pending"
 
 	pendingPaymentReconcileLimit = 20
 )
@@ -123,8 +125,11 @@ func (s *PaymentService) AdminCancelOrder(ctx context.Context, orderID int64) (s
 
 func (s *PaymentService) cancelCore(ctx context.Context, o *dbent.PaymentOrder, fs, op, ad string) (string, error) {
 	if o.PaymentTradeNo != "" || o.PaymentType != "" {
-		if s.checkPaid(ctx, o) == checkPaidResultAlreadyPaid {
+		switch s.checkPaid(ctx, o) {
+		case checkPaidResultAlreadyPaid:
 			return checkPaidResultAlreadyPaid, nil
+		case checkPaidResultConfirmationPending:
+			return "", infraerrors.Conflict("PAYMENT_CONFIRMATION_PENDING", "payment confirmation is pending; retry later")
 		}
 	}
 	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusPending)).SetStatus(fs).Save(ctx)
@@ -152,10 +157,16 @@ func (s *PaymentService) reconcilePaid(ctx context.Context, o *dbent.PaymentOrde
 func (s *PaymentService) checkPaidWithOptions(ctx context.Context, o *dbent.PaymentOrder, opts checkPaidOptions) string {
 	prov, err := s.getOrderProvider(ctx, o)
 	if err != nil {
+		if strings.EqualFold(expectedNotificationProviderKeyForOrder(s.registry, o, ""), payment.TypeEasyPay) {
+			return checkPaidResultConfirmationPending
+		}
 		return ""
 	}
 	queryRef := paymentOrderQueryReference(o, prov)
 	if queryRef == "" {
+		if strings.EqualFold(strings.TrimSpace(prov.ProviderKey()), payment.TypeEasyPay) {
+			return checkPaidResultConfirmationPending
+		}
 		return ""
 	}
 	finishProviderCall := servertiming.ObserveDependency(ctx, "payment")
@@ -163,6 +174,15 @@ func (s *PaymentService) checkPaidWithOptions(ctx context.Context, o *dbent.Paym
 	finishProviderCall()
 	if err != nil {
 		slog.Warn("query upstream failed", "orderID", o.ID, "error", err)
+		if strings.EqualFold(strings.TrimSpace(prov.ProviderKey()), payment.TypeEasyPay) {
+			return checkPaidResultConfirmationPending
+		}
+		return ""
+	}
+	if resp == nil {
+		if strings.EqualFold(strings.TrimSpace(prov.ProviderKey()), payment.TypeEasyPay) {
+			return checkPaidResultConfirmationPending
+		}
 		return ""
 	}
 	if resp.Status == payment.ProviderStatusPaid {
@@ -176,12 +196,18 @@ func (s *PaymentService) checkPaidWithOptions(ctx context.Context, o *dbent.Paym
 			slog.Warn("query upstream returned invalid paid amount", "orderID", o.ID, "queryRef", queryRef, "paid", resp.Amount)
 			retriedResp, retryOK := requeryPaidOrderOnce(ctx, prov, queryRef)
 			if !retryOK {
+				if strings.EqualFold(strings.TrimSpace(prov.ProviderKey()), payment.TypeEasyPay) {
+					return checkPaidResultConfirmationPending
+				}
 				return ""
 			}
 			resp = retriedResp
 		}
 		notificationTradeNo := o.PaymentTradeNo
-		if upstreamTradeNo := strings.TrimSpace(resp.TradeNo); paymentOrderShouldPersistUpstreamTradeNo(queryRef, upstreamTradeNo, notificationTradeNo) {
+		upstreamTradeNo := strings.TrimSpace(resp.TradeNo)
+		if strings.EqualFold(strings.TrimSpace(prov.ProviderKey()), payment.TypeEasyPay) {
+			notificationTradeNo = upstreamTradeNo
+		} else if paymentOrderShouldPersistUpstreamTradeNo(queryRef, upstreamTradeNo, notificationTradeNo) {
 			if _, updateErr := s.entClient.PaymentOrder.Update().
 				Where(paymentorder.IDEQ(o.ID)).
 				SetPaymentTradeNo(upstreamTradeNo).
@@ -192,8 +218,11 @@ func (s *PaymentService) checkPaidWithOptions(ctx context.Context, o *dbent.Paym
 			}
 			notificationTradeNo = upstreamTradeNo
 		}
-		if err := s.HandlePaymentNotification(ctx, &payment.PaymentNotification{TradeNo: notificationTradeNo, OrderID: o.OutTradeNo, Amount: resp.Amount, Status: payment.ProviderStatusSuccess, Metadata: resp.Metadata}, prov.ProviderKey()); err != nil {
+		if err := s.handlePaymentNotification(ctx, &payment.PaymentNotification{TradeNo: notificationTradeNo, OrderID: o.OutTradeNo, Amount: resp.Amount, Status: payment.ProviderStatusSuccess, Metadata: resp.Metadata}, prov.ProviderKey(), resp); err != nil {
 			slog.Error("fulfillment failed during checkPaid", "orderID", o.ID, "error", err)
+			if errors.Is(err, ErrPaymentGatewayConfirmation) {
+				return checkPaidResultConfirmationPending
+			}
 			// Still return already_paid — order was paid, fulfillment can be retried
 		}
 		return checkPaidResultAlreadyPaid
@@ -408,7 +437,8 @@ func (s *PaymentService) getOrderProvider(ctx context.Context, o *dbent.PaymentO
 	if inst != nil {
 		return s.createProviderFromInstance(ctx, inst)
 	}
-	if !paymentOrderAllowsRegistryFallback(o) {
+	confirmedLegacyIdentity := paymentOrderHasConfirmedLegacyEasyPayIdentity(o)
+	if !paymentOrderAllowsRegistryFallback(o) && !confirmedLegacyIdentity {
 		return nil, fmt.Errorf("order %d provider instance is unresolved", o.ID)
 	}
 	providerKey := paymentOrderFallbackProviderKey(s.registry, o)
@@ -419,7 +449,36 @@ func (s *PaymentService) getOrderProvider(ctx context.Context, o *dbent.PaymentO
 		return nil, fmt.Errorf("order %d provider fallback is ambiguous for %s", o.ID, providerKey)
 	}
 	s.EnsureProviders(ctx)
-	return s.registry.GetProvider(o.PaymentType)
+	resolved, err := s.registry.GetProvider(o.PaymentType)
+	if err != nil {
+		return nil, err
+	}
+	if confirmedLegacyIdentity {
+		identity := providerMerchantIdentityMetadata(resolved)
+		if resolved.ProviderKey() != payment.TypeEasyPay ||
+			strings.TrimSpace(identity["pid"]) != strings.TrimSpace(psStringValue(o.ProviderMerchantID)) ||
+			strings.TrimSpace(identity["gateway_identity"]) != strings.TrimSpace(psStringValue(o.ProviderGatewayIdentity)) {
+			return nil, fmt.Errorf("order %d confirmed legacy provider identity changed", o.ID)
+		}
+	}
+	return resolved, nil
+}
+
+func paymentOrderHasConfirmedLegacyEasyPayIdentity(order *dbent.PaymentOrder) bool {
+	if order == nil || psOrderProviderSnapshot(order) != nil ||
+		strings.TrimSpace(psStringValue(order.ProviderInstanceID)) != "" ||
+		psStringValue(order.ProviderKey) != payment.TypeEasyPay ||
+		strings.TrimSpace(psStringValue(order.ProviderMerchantID)) == "" ||
+		strings.TrimSpace(psStringValue(order.ProviderGatewayIdentity)) == "" ||
+		strings.TrimSpace(order.PaymentTradeNo) == "" || order.PaidAt == nil {
+		return false
+	}
+	switch order.Status {
+	case OrderStatusPaid, OrderStatusRecharging, OrderStatusFailed, OrderStatusCompleted:
+		return true
+	default:
+		return false
+	}
 }
 
 func paymentOrderAllowsRegistryFallback(order *dbent.PaymentOrder) bool {

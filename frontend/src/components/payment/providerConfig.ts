@@ -13,6 +13,7 @@ export interface ConfigFieldDef {
   defaultValue?: string
   hintKey?: string
   options?: TypeOption[]
+  multiline?: boolean
 }
 
 export interface TypeOption {
@@ -127,10 +128,36 @@ export const PROVIDER_CALLBACK_PATHS: Record<string, CallbackPaths> = {
 export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
   easypay: [
     { key: 'pid', label: 'PID', sensitive: false },
-    { key: 'pkey', label: 'PKey', sensitive: true },
+    { key: 'pkey', label: 'PKey', sensitive: true, hintKey: 'admin.settings.payment.field_pkeyHint' },
     { key: 'apiBase', label: '', sensitive: false },
     { key: 'cidAlipay', label: '', sensitive: false, optional: true },
     { key: 'cidWxpay', label: '', sensitive: false, optional: true },
+    {
+      key: 'gatewaySignType',
+      label: '',
+      sensitive: false,
+      defaultValue: 'MD5',
+      hintKey: 'admin.settings.payment.field_gatewaySignTypeHint',
+      options: [
+        { value: 'MD5', label: 'MD5' },
+        { value: 'RSA2', label: 'RSA2' },
+      ],
+    },
+    {
+      key: 'gatewayPublicKey',
+      label: '',
+      sensitive: false,
+      optional: true,
+      multiline: true,
+      hintKey: 'admin.settings.payment.field_gatewayPublicKeyHint',
+    },
+    {
+      key: 'gatewayKeyId',
+      label: '',
+      sensitive: false,
+      optional: true,
+      hintKey: 'admin.settings.payment.field_gatewayKeyIdHint',
+    },
   ],
   alipay: [
     { key: 'appId', label: 'App ID', sensitive: false },
@@ -164,6 +191,27 @@ export const PROVIDER_CONFIG_FIELDS: Record<string, ConfigFieldDef[]> = {
 }
 
 // --- Helpers ---
+
+export function isValidEasyPayGatewaySignType(value: string): boolean {
+  return value === 'MD5' || value === 'RSA2'
+}
+
+export function isValidEasyPayRsaKeyId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(value)
+}
+
+export function isEasyPayRsaPublicKeyPem(value: string): boolean {
+  const match = value.trim().match(
+    /^-----BEGIN (PUBLIC KEY|RSA PUBLIC KEY)-----[\r\n]*([A-Za-z0-9+/=\r\n]+?)[\r\n]*-----END \1-----$/,
+  )
+  if (!match) return false
+  const encoded = match[2].replace(/[\r\n]/g, '')
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)
+}
+
+export function isEasyPayPrivateKeyConfigField(key: string): boolean {
+  return key.replace(/[^a-z]/gi, '').toLowerCase().includes('privatekey')
+}
 
 /** Resolve type label for display. */
 export function resolveTypeLabel(

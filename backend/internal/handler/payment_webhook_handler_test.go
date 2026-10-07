@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -142,9 +143,28 @@ func TestWebhookConstants(t *testing.T) {
 		assert.Equal(t, int64(1<<20), int64(maxWebhookBodySize))
 	})
 
-	t.Run("webhookLogTruncateLen is 200", func(t *testing.T) {
-		assert.Equal(t, 200, webhookLogTruncateLen)
-	})
+}
+
+func TestWebhookRejectsOversizedPayloadBeforeProviderLookup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewPaymentWebhookHandler(nil, nil)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			payload := strings.Repeat("a", maxWebhookBodySize+1)
+			request := httptest.NewRequest(method, "/api/v1/payment/webhook/easypay", strings.NewReader(payload))
+			if method == http.MethodGet {
+				request.URL.RawQuery = payload
+			}
+			response := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(response)
+			context.Request = request
+
+			handler.EasyPayNotify(context)
+
+			assert.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
+			assert.Equal(t, "webhook payload too large", response.Body.String())
+		})
+	}
 }
 
 func TestExtractOutTradeNo(t *testing.T) {

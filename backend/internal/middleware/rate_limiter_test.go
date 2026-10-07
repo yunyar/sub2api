@@ -140,7 +140,7 @@ func TestRateLimiterAllow(t *testing.T) {
 	require.Equal(t, time.Minute, res.RetryAfter)
 }
 
-func TestRateLimiterHonorsForwardedIPSnapshot(t *testing.T) {
+func TestRateLimiterUsesOnlyTrustedClientIPProvenance(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	callCounts := make(map[string]int64)
@@ -156,9 +156,10 @@ func TestRateLimiterHonorsForwardedIPSnapshot(t *testing.T) {
 	limiter := NewRateLimiter(redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}))
 
 	router := gin.New()
-	// 模拟 SessionBindingContext：开启转发 IP 兼容模式快照
+	require.NoError(t, router.SetTrustedProxies([]string{"172.21.0.1/32"}))
+	// 即使请求快照启用了旧兼容模式，限流也不采信未验证的原始头。
 	router.Use(func(c *gin.Context) {
-		ippkg.SetForwardedIPSettings(c, true, nil)
+		ippkg.SetForwardedIPSettings(c, true, []string{"X-Client-IP"})
 		c.Next()
 	})
 	router.Use(limiter.Limit("fwd", 1, time.Second))
@@ -166,24 +167,30 @@ func TestRateLimiterHonorsForwardedIPSnapshot(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
-	send := func(xff string) int {
+	send := func(remoteAddr, xff, xrealIP, cfIP string) int {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		// 所有请求都来自同一个反代地址
-		req.RemoteAddr = "127.0.0.1:5678"
+		req.RemoteAddr = remoteAddr
 		req.Header.Set("X-Forwarded-For", xff)
+		req.Header.Set("X-Real-IP", xrealIP)
+		req.Header.Set("CF-Connecting-IP", cfIP)
+		req.Header.Set("X-Client-IP", "198.51.100.250")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		return rec.Code
 	}
 
-	// 反代后两个不同的真实客户端应各自独立计数，不因共享代理地址被合并限流
-	require.Equal(t, http.StatusOK, send("198.51.100.1"))
-	require.Equal(t, http.StatusOK, send("198.51.100.2"))
-	// 同一真实客户端第二次请求应被限流
-	require.Equal(t, http.StatusTooManyRequests, send("198.51.100.1"))
+	// 直连端口的请求按实际 TCP 对端计数，任意 XFF/X-Real-IP/CF 头均不能换桶。
+	require.Equal(t, http.StatusOK, send("198.51.100.10:5678", "198.51.100.1", "198.51.100.2", "198.51.100.3"))
+	require.Equal(t, http.StatusTooManyRequests, send("198.51.100.10:5678", "198.51.100.4", "198.51.100.5", "198.51.100.6"))
 
-	require.Contains(t, callCounts, "rate_limit:fwd:198.51.100.1")
-	require.Contains(t, callCounts, "rate_limit:fwd:198.51.100.2")
+	// 仅精确可信的代理对端可用追加链末端识别真实客户端。
+	require.Equal(t, http.StatusOK, send("172.21.0.1:5678", "198.51.100.99, 203.0.113.1", "198.51.100.77", "198.51.100.78"))
+	require.Equal(t, http.StatusOK, send("172.21.0.1:5678", "203.0.113.2", "198.51.100.77", "198.51.100.78"))
+	require.Equal(t, http.StatusTooManyRequests, send("172.21.0.1:5678", "198.51.100.99, 203.0.113.1", "198.51.100.77", "198.51.100.78"))
+
+	require.Equal(t, int64(2), callCounts["rate_limit:fwd:198.51.100.10"])
+	require.Equal(t, int64(2), callCounts["rate_limit:fwd:203.0.113.1"])
+	require.Equal(t, int64(1), callCounts["rate_limit:fwd:203.0.113.2"])
 }
 
 func TestRateLimiterSuccessAndLimit(t *testing.T) {

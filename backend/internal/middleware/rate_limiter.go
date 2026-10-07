@@ -108,16 +108,9 @@ func (r *RateLimiter) Allow(ctx context.Context, key string, limit int, window t
 	return result, nil
 }
 
-// clientIPForRateLimit 返回 IP 维度限流使用的客户端地址。
-// 与审计日志/会话绑定/API Key IP ACL 共用同一套安全客户端 IP 解析
-// （SessionBindingContext 快照：兼容开关开启时信任反代转发头，关闭时走
-// server.trusted_proxies 可信链）。避免默认反代部署下 Gin ClientIP 恒等于
-// 代理地址、所有用户坍缩进同一个限流桶造成整体误拦截。
+// clientIPForRateLimit 返回由直接对端及 server.trusted_proxies 链验证的地址。
 func clientIPForRateLimit(c *gin.Context) string {
-	if resolved := ippkg.GetSecurityClientIP(c, false); resolved != "" {
-		return resolved
-	}
-	return c.ClientIP()
+	return ippkg.GetTrustedClientIP(c)
 }
 
 // Limit 返回速率限制中间件

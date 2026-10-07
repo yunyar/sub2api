@@ -1271,8 +1271,8 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		}
 
 		var clientIP string
-		if ip := strings.TrimSpace(ip.GetClientIP(c)); ip != "" {
-			clientIP = ip
+		if resolvedIP := strings.TrimSpace(ip.GetTrustedClientIP(c)); resolvedIP != "" {
+			clientIP = resolvedIP
 			entry.ClientIP = &clientIP
 		}
 
@@ -1388,7 +1388,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 			entry.Platform = apiKey.Group.Platform
 		}
 	}
-	if clientIP := strings.TrimSpace(ip.GetClientIP(c)); clientIP != "" {
+	if clientIP := strings.TrimSpace(ip.GetTrustedClientIP(c)); clientIP != "" {
 		entry.ClientIP = &clientIP
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
@@ -1577,7 +1577,7 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 		}
 	}
 
-	if clientIP := strings.TrimSpace(ip.GetClientIP(c)); clientIP != "" {
+	if clientIP := strings.TrimSpace(ip.GetTrustedClientIP(c)); clientIP != "" {
 		entry.ClientIP = &clientIP
 	}
 

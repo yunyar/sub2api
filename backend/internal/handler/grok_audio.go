@@ -330,7 +330,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 		result.RequestID = service.StableGrokAudioBillingRequestID(result.RequestID)
 	}
 	userAgent := c.GetHeader("User-Agent")
-	clientIP := ip.GetClientIP(c)
+	clientIP := ip.GetTrustedClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
 	requestPayloadHash := service.HashUsageRequestPayload(body)
 	if requestPayloadHash == "" {

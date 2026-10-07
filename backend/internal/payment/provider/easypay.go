@@ -5,10 +5,13 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/md5"
+	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -29,15 +32,19 @@ const (
 	maxEasypayErrorSummary = 512
 	tradeStatusSuccess     = "TRADE_SUCCESS"
 	signTypeMD5            = "MD5"
+	signTypeRSA2           = "RSA2"
 	paymentModePopup       = "popup"
 	deviceMobile           = "mobile"
 )
 
 // EasyPay implements payment.Provider for the EasyPay aggregation platform.
 type EasyPay struct {
-	instanceID string
-	config     map[string]string
-	httpClient *http.Client
+	instanceID       string
+	config           map[string]string
+	httpClient       *http.Client
+	gatewaySignType  string
+	gatewayPublicKey *rsa.PublicKey
+	gatewayKeyID     string
 }
 
 type easyPayCustomMethod struct {
@@ -59,10 +66,32 @@ func NewEasyPay(instanceID string, config map[string]string) (*EasyPay, error) {
 		cfg[k] = v
 	}
 	cfg["apiBase"] = normalizeEasyPayAPIBase(cfg["apiBase"])
+	signType := strings.ToUpper(strings.TrimSpace(cfg["gatewaySignType"]))
+	if signType == "" {
+		signType = signTypeMD5
+	}
+	if signType != signTypeMD5 && signType != signTypeRSA2 {
+		return nil, fmt.Errorf("easypay unsupported gatewaySignType")
+	}
+	keyID := strings.TrimSpace(cfg["gatewayKeyId"])
+	var publicKey *rsa.PublicKey
+	if signType == signTypeRSA2 {
+		if !easyPayValidKeyID(keyID) {
+			return nil, fmt.Errorf("easypay invalid gatewayKeyId")
+		}
+		var err error
+		publicKey, err = parseEasyPayRSAPublicKey(cfg["gatewayPublicKey"])
+		if err != nil {
+			return nil, fmt.Errorf("easypay invalid gatewayPublicKey: %w", err)
+		}
+	}
 	return &EasyPay{
-		instanceID: instanceID,
-		config:     cfg,
-		httpClient: &http.Client{Timeout: easypayHTTPTimeout},
+		instanceID:       instanceID,
+		config:           cfg,
+		httpClient:       &http.Client{Timeout: easypayHTTPTimeout},
+		gatewaySignType:  signType,
+		gatewayPublicKey: publicKey,
+		gatewayKeyID:     keyID,
 	}, nil
 }
 
@@ -79,6 +108,36 @@ func normalizeEasyPayAPIBase(apiBase string) string {
 		return strings.TrimRight(parsed.String(), "/")
 	}
 	return strings.TrimRight(trimEasyPayEndpointPath(base), "/")
+}
+
+func EasyPayGatewayIdentity(apiBase string) string {
+	normalized := normalizeEasyPayAPIBase(apiBase)
+	if normalized == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(normalized); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parsed.Scheme = strings.ToLower(parsed.Scheme)
+		host := strings.ToLower(parsed.Hostname())
+		port := parsed.Port()
+		if (parsed.Scheme == "http" && port == "80") || (parsed.Scheme == "https" && port == "443") {
+			port = ""
+		}
+		if port != "" {
+			parsed.Host = net.JoinHostPort(host, port)
+		} else if strings.Contains(host, ":") {
+			parsed.Host = "[" + host + "]"
+		} else {
+			parsed.Host = host
+		}
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		normalized = parsed.String()
+	} else {
+		normalized = strings.ToLower(strings.TrimRight(normalized, "/"))
+	}
+	fingerprint := sha256.Sum256([]byte("easypay-gateway-v1:" + normalized))
+	return hex.EncodeToString(fingerprint[:])
 }
 
 func trimEasyPayEndpointPath(path string) string {
@@ -119,7 +178,10 @@ func (e *EasyPay) MerchantIdentityMetadata() map[string]string {
 	if pid == "" {
 		return nil
 	}
-	return map[string]string{"pid": pid}
+	return map[string]string{
+		"pid":              pid,
+		"gateway_identity": EasyPayGatewayIdentity(e.config["apiBase"]),
+	}
 }
 
 func (e *EasyPay) CreatePayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
@@ -137,6 +199,11 @@ func (e *EasyPay) CreatePayment(ctx context.Context, req payment.CreatePaymentRe
 // TradeNo is empty; it arrives via the notify callback after payment.
 func (e *EasyPay) createRedirectPayment(req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	notifyURL, returnURL := e.resolveURLs(req)
+	var err error
+	notifyURL, err = e.rsaNotifyURL(notifyURL)
+	if err != nil {
+		return nil, err
+	}
 	paymentType := e.upstreamPaymentType(req.PaymentType)
 	params := map[string]string{
 		"pid": e.config["pid"], "type": paymentType,
@@ -164,6 +231,11 @@ func (e *EasyPay) createRedirectPayment(req payment.CreatePaymentRequest) (*paym
 // createAPIPayment calls mapi.php to get payurl/qrcode (existing behavior).
 func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymentRequest) (*payment.CreatePaymentResponse, error) {
 	notifyURL, returnURL := e.resolveURLs(req)
+	var err error
+	notifyURL, err = e.rsaNotifyURL(notifyURL)
+	if err != nil {
+		return nil, err
+	}
 	paymentType := e.upstreamPaymentType(req.PaymentType)
 	params := map[string]string{
 		"pid": e.config["pid"], "type": paymentType,
@@ -301,31 +373,117 @@ func (e *EasyPay) upstreamPaymentType(paymentType string) string {
 }
 
 func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
+	tradeNo = strings.TrimSpace(tradeNo)
+	if tradeNo == "" {
+		return nil, fmt.Errorf("easypay query missing order identifier")
+	}
 	params := map[string]string{
 		"act": "order", "pid": e.config["pid"],
 		"key": e.config["pkey"], "out_trade_no": tradeNo,
 	}
-	body, err := e.post(ctx, e.apiBase()+"/api.php", params)
+	if e.gatewaySignType == signTypeRSA2 {
+		nonce, err := easyPayRandomNonce()
+		if err != nil {
+			return nil, fmt.Errorf("easypay query nonce: %w", err)
+		}
+		params["gateway_sign_type"] = signTypeRSA2
+		params["gateway_key_id"] = e.gatewayKeyID
+		params["query_nonce"] = nonce
+	}
+	body, httpStatus, err := e.postRaw(ctx, e.apiBase()+"/api.php", params)
 	if err != nil {
 		return nil, fmt.Errorf("easypay query: %w", err)
+	}
+	if httpStatus < http.StatusOK || httpStatus >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("easypay query HTTP %d: %s", httpStatus, summarizeEasyPayResponse(body))
+	}
+	if e.gatewaySignType == signTypeRSA2 {
+		return e.parseRSAQueryResponse(body, tradeNo, params["query_nonce"])
+	}
+	if err := validateEasyPayJSONFields(body); err != nil {
+		return nil, fmt.Errorf("easypay parse query: %w", err)
 	}
 	type easyPayQueryData struct {
 		TradeStatus *string `json:"trade_status"`
 		Status      *int    `json:"status"`
 		Money       *string `json:"money"`
 		TradeNo     *string `json:"trade_no"`
+		OutTradeNo  *string `json:"out_trade_no"`
+		PID         *string `json:"pid"`
 	}
 	var resp struct {
-		Code        int              `json:"code"`
+		Code        *int             `json:"code"`
 		Msg         string           `json:"msg"`
+		PID         *string          `json:"pid"`
 		TradeStatus *string          `json:"trade_status"`
 		Status      *int             `json:"status"`
 		Money       *string          `json:"money"`
 		TradeNo     *string          `json:"trade_no"`
+		OutTradeNo  *string          `json:"out_trade_no"`
 		Data        easyPayQueryData `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("easypay parse query: %w", err)
+	}
+	if resp.Code == nil {
+		return nil, fmt.Errorf("easypay query response missing code")
+	}
+	if *resp.Code != easypayCodeSuccess {
+		msg := strings.TrimSpace(resp.Msg)
+		if msg == "" {
+			msg = fmt.Sprintf("gateway code %d", *resp.Code)
+		}
+		return nil, fmt.Errorf("easypay query failed: %s", msg)
+	}
+	if resp.PID != nil && strings.TrimSpace(*resp.PID) != strings.TrimSpace(e.config["pid"]) {
+		return nil, fmt.Errorf("easypay query returned mismatched merchant")
+	}
+	if resp.Data.PID != nil && strings.TrimSpace(*resp.Data.PID) != strings.TrimSpace(e.config["pid"]) {
+		return nil, fmt.Errorf("easypay query returned mismatched merchant")
+	}
+	if resp.PID != nil && resp.Data.PID != nil &&
+		strings.TrimSpace(*resp.PID) != strings.TrimSpace(*resp.Data.PID) {
+		return nil, fmt.Errorf("easypay query returned conflicting merchant values")
+	}
+	if resp.OutTradeNo != nil && resp.Data.OutTradeNo != nil &&
+		strings.TrimSpace(*resp.OutTradeNo) != strings.TrimSpace(*resp.Data.OutTradeNo) {
+		return nil, fmt.Errorf("easypay query returned conflicting out_trade_no values")
+	}
+	responseOrderID := resp.OutTradeNo
+	if responseOrderID == nil {
+		responseOrderID = resp.Data.OutTradeNo
+	}
+	if responseOrderID != nil && strings.TrimSpace(*responseOrderID) != tradeNo {
+		return nil, fmt.Errorf("easypay query returned mismatched out_trade_no")
+	}
+	if resp.TradeNo != nil && resp.Data.TradeNo != nil &&
+		strings.TrimSpace(*resp.TradeNo) != strings.TrimSpace(*resp.Data.TradeNo) {
+		return nil, fmt.Errorf("easypay query returned conflicting trade_no values")
+	}
+	if resp.Money != nil && resp.Data.Money != nil {
+		rootAmount, rootErr := parseEasyPayAmount(strings.TrimSpace(*resp.Money))
+		nestedAmount, nestedErr := parseEasyPayAmount(strings.TrimSpace(*resp.Data.Money))
+		if rootErr != nil || nestedErr != nil || rootAmount != nestedAmount {
+			return nil, fmt.Errorf("easypay query returned conflicting money values")
+		}
+	}
+	if resp.TradeStatus != nil && resp.Data.TradeStatus != nil && *resp.TradeStatus != *resp.Data.TradeStatus {
+		return nil, fmt.Errorf("easypay query returned conflicting trade_status values")
+	}
+	if resp.Status != nil && resp.Data.Status != nil && *resp.Status != *resp.Data.Status {
+		return nil, fmt.Errorf("easypay query returned conflicting status values")
+	}
+	textStatus := resp.TradeStatus
+	if textStatus == nil {
+		textStatus = resp.Data.TradeStatus
+	}
+	numericStatus := resp.Status
+	if numericStatus == nil {
+		numericStatus = resp.Data.Status
+	}
+	if textStatus != nil && numericStatus != nil &&
+		(*textStatus == tradeStatusSuccess) != (*numericStatus == easypayStatusPaid) {
+		return nil, fmt.Errorf("easypay query returned contradictory payment status")
 	}
 	status := payment.ProviderStatusPending
 	if resp.TradeStatus != nil {
@@ -350,22 +508,53 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 	} else if resp.Data.Money != nil {
 		money = *resp.Data.Money
 	}
-	responseTradeNo := tradeNo
+	responseTradeNo := ""
 	if resp.TradeNo != nil {
-		if *resp.TradeNo != "" {
-			responseTradeNo = *resp.TradeNo
-		}
+		responseTradeNo = strings.TrimSpace(*resp.TradeNo)
 	} else if resp.Data.TradeNo != nil && *resp.Data.TradeNo != "" {
-		responseTradeNo = *resp.Data.TradeNo
+		responseTradeNo = strings.TrimSpace(*resp.Data.TradeNo)
 	}
 
-	amount, _ := strconv.ParseFloat(money, 64)
+	amount := 0.0
+	if strings.TrimSpace(money) != "" {
+		amount, err = parseEasyPayAmount(money)
+		if err != nil || amount < 0 {
+			return nil, fmt.Errorf("easypay query returned invalid money")
+		}
+	}
+	if status == payment.ProviderStatusPaid && (amount <= 0 || responseTradeNo == "") {
+		return nil, fmt.Errorf("easypay query returned paid order without valid money and trade_no")
+	}
+	responseMerchantID := resp.PID
+	if responseMerchantID == nil {
+		responseMerchantID = resp.Data.PID
+	}
+	if status == payment.ProviderStatusPaid &&
+		(responseOrderID == nil || strings.TrimSpace(*responseOrderID) == "" ||
+			responseMerchantID == nil || strings.TrimSpace(*responseMerchantID) == "") {
+		return nil, fmt.Errorf("easypay query returned paid order without merchant and order identity")
+	}
+	metadata := e.MerchantIdentityMetadata()
+	if responseOrderID != nil {
+		metadata["out_trade_no"] = strings.TrimSpace(*responseOrderID)
+	}
 	return &payment.QueryOrderResponse{
 		TradeNo:  responseTradeNo,
 		Status:   status,
 		Amount:   amount,
-		Metadata: e.MerchantIdentityMetadata(),
+		Metadata: metadata,
 	}, nil
+}
+
+func easyPayNotifyFieldAllowed(key string, rsaMode bool) bool {
+	switch key {
+	case "pid", "trade_no", "out_trade_no", "type", "name", "money", "trade_status", "param", "sign", "sign_type":
+		return true
+	case "key_id", "timestamp", "nonce_str":
+		return rsaMode
+	default:
+		return false
+	}
 }
 
 func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[string]string) (*payment.PaymentNotification, error) {
@@ -375,8 +564,54 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	}
 	// url.ParseQuery already decodes values — no additional decode needed.
 	params := make(map[string]string)
-	for k := range values {
-		params[k] = values.Get(k)
+	for key, entries := range values {
+		if !easyPayNotifyFieldAllowed(key, e.gatewaySignType == signTypeRSA2) {
+			return nil, fmt.Errorf("unexpected notify field")
+		}
+		if len(entries) != 1 {
+			return nil, fmt.Errorf("duplicate notify field: %s", key)
+		}
+		if !easyPayRSAFieldPattern.MatchString(key) {
+			return nil, fmt.Errorf("invalid notify field name")
+		}
+		params[key] = entries[0]
+	}
+	if e.gatewaySignType == signTypeRSA2 {
+		if err := verifyEasyPayRSA(params, e.gatewayPublicKey, e.gatewayKeyID, "notify", time.Now()); err != nil {
+			return nil, err
+		}
+		if params["pid"] != e.config["pid"] ||
+			strings.TrimSpace(params["out_trade_no"]) == "" ||
+			strings.TrimSpace(params["trade_no"]) == "" {
+			return nil, fmt.Errorf("invalid RSA notification identity")
+		}
+		amount, err := parseEasyPayAmount(params["money"])
+		if err != nil || amount <= 0 {
+			return nil, fmt.Errorf("invalid notification amount")
+		}
+		if strings.TrimSpace(params["trade_status"]) == "" {
+			return nil, fmt.Errorf("missing notification trade_status")
+		}
+		status := payment.ProviderStatusFailed
+		if params["trade_status"] == tradeStatusSuccess {
+			status = payment.ProviderStatusSuccess
+		}
+		metadata := e.rsaIdentityMetadata()
+		metadata["pid"] = params["pid"]
+		return &payment.PaymentNotification{
+			TradeNo: strings.TrimSpace(params["trade_no"]), OrderID: strings.TrimSpace(params["out_trade_no"]),
+			Amount: amount, Status: status, RawData: rawBody,
+			Metadata: metadata,
+		}, nil
+	}
+	if signType := strings.TrimSpace(params["sign_type"]); signType != "" && !strings.EqualFold(signType, signTypeMD5) {
+		return nil, fmt.Errorf("easypay notification signing mode mismatch")
+	}
+	if strings.TrimSpace(params["pid"]) != strings.TrimSpace(e.config["pid"]) {
+		return nil, fmt.Errorf("easypay notification merchant mismatch")
+	}
+	if strings.TrimSpace(params["out_trade_no"]) == "" || strings.TrimSpace(params["trade_no"]) == "" {
+		return nil, fmt.Errorf("easypay notification missing order or trade identifier")
 	}
 	sign := params["sign"]
 	if sign == "" {
@@ -385,21 +620,20 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	if !easyPayVerifySign(params, e.config["pkey"], sign) {
 		return nil, fmt.Errorf("invalid signature")
 	}
+	amount, err := parseEasyPayAmount(params["money"])
+	if err != nil || amount <= 0 {
+		return nil, fmt.Errorf("invalid notification amount")
+	}
+	if strings.TrimSpace(params["trade_status"]) == "" {
+		return nil, fmt.Errorf("missing notification trade_status")
+	}
 	status := payment.ProviderStatusFailed
 	if params["trade_status"] == tradeStatusSuccess {
 		status = payment.ProviderStatusSuccess
 	}
-	amount, _ := strconv.ParseFloat(params["money"], 64)
-
 	metadata := e.MerchantIdentityMetadata()
-	if pid := strings.TrimSpace(params["pid"]); pid != "" {
-		if metadata == nil {
-			metadata = map[string]string{}
-		}
-		metadata["pid"] = pid
-	}
 	return &payment.PaymentNotification{
-		TradeNo: params["trade_no"], OrderID: params["out_trade_no"],
+		TradeNo: strings.TrimSpace(params["trade_no"]), OrderID: strings.TrimSpace(params["out_trade_no"]),
 		Amount: amount, Status: status, RawData: rawBody, Metadata: metadata,
 	}, nil
 }
@@ -565,14 +799,21 @@ func (e *EasyPay) postRaw(ctx context.Context, endpoint string, params map[strin
 	if client == nil {
 		client = &http.Client{Timeout: easypayHTTPTimeout}
 	}
-	resp, err := client.Do(req)
+	requestClient := *client
+	requestClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := requestClient.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEasypayResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxEasypayResponseSize+1))
 	if err != nil {
 		return nil, resp.StatusCode, err
+	}
+	if len(body) > maxEasypayResponseSize {
+		return nil, resp.StatusCode, fmt.Errorf("easypay response exceeds size limit")
 	}
 	return body, resp.StatusCode, nil
 }

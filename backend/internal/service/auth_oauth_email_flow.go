@@ -163,6 +163,9 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		SignupSource: signupSource,
 	}
 
+	if err := s.checkRegistrationIPRisk(ctx); err != nil {
+		return nil, nil, err
+	}
 	if err := s.createUserWithRegistrationEmailGuard(ctx, user); err != nil {
 		switch {
 		case errors.Is(err, ErrEmailExists):
@@ -175,12 +178,7 @@ func (s *AuthService) RegisterOAuthEmailAccount(
 		}
 	}
 
-	tokenPair, err := s.GenerateTokenPair(ctx, user, "")
-	if err != nil {
-		_ = s.RollbackOAuthEmailAccountCreation(ctx, user.ID, "")
-		return nil, nil, fmt.Errorf("generate token pair: %w", err)
-	}
-	return tokenPair, user, nil
+	return nil, user, nil
 }
 
 // RegisterVerifiedOAuthEmailAccount creates a local account from an OAuth
@@ -250,6 +248,9 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 		SignupSource: signupSource,
 	}
 
+	if err := s.checkRegistrationIPRisk(ctx); err != nil {
+		return nil, nil, err
+	}
 	if err := s.createUserWithRegistrationEmailGuard(ctx, user); err != nil {
 		switch {
 		case errors.Is(err, ErrEmailExists):
@@ -261,12 +262,7 @@ func (s *AuthService) RegisterVerifiedOAuthEmailAccount(
 		}
 	}
 
-	tokenPair, err := s.GenerateTokenPair(ctx, user, "")
-	if err != nil {
-		_ = s.RollbackOAuthEmailAccountCreation(ctx, user.ID, "")
-		return nil, nil, fmt.Errorf("generate token pair: %w", err)
-	}
-	return tokenPair, user, nil
+	return nil, user, nil
 }
 
 // FinalizeOAuthEmailAccount applies invitation usage and normal signup bootstrap
@@ -489,12 +485,31 @@ func (s *AuthService) ValidatePasswordCredentials(ctx context.Context, email, pa
 
 // RecordSuccessfulLogin updates last-login activity after a non-standard login
 // flow finishes with a real session.
-func (s *AuthService) RecordSuccessfulLogin(ctx context.Context, userID int64) {
-	if s != nil && s.userRepo != nil && userID > 0 {
-		user, err := s.userRepo.GetByID(ctx, userID)
-		if err == nil && user != nil && !isReservedEmail(user.Email) {
-			s.backfillEmailIdentityOnSuccessfulLogin(ctx, user)
-		}
+func (s *AuthService) RecordSuccessfulLogin(ctx context.Context, userID int64) error {
+	return s.recordSuccessfulAuth(ctx, userID, "login")
+}
+
+func (s *AuthService) RecordSuccessfulRegistration(ctx context.Context, userID int64) error {
+	return s.recordSuccessfulAuth(ctx, userID, "registration")
+}
+
+func (s *AuthService) recordSuccessfulAuth(ctx context.Context, userID int64, source string) error {
+	if s == nil || s.userRepo == nil || userID <= 0 {
+		return ErrServiceUnavailable
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil || user == nil || user.ID != userID {
+		return ErrServiceUnavailable
+	}
+	if !user.IsActive() {
+		return ErrUserNotActive
+	}
+	if err := s.recordUserIP(ctx, userID, source); err != nil {
+		return err
+	}
+	if s.entClient != nil && !isReservedEmail(user.Email) {
+		s.backfillEmailIdentityOnSuccessfulLogin(ctx, user)
 	}
 	s.touchUserLogin(ctx, userID)
+	return nil
 }

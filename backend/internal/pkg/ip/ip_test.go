@@ -10,6 +10,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGetTrustedPublicClientIPUsesVerifiedPeerOrProxyChain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	require.NoError(t, r.SetTrustedProxies([]string{"172.21.0.1/32", "8.8.4.4/32"}))
+	r.GET("/t", func(c *gin.Context) {
+		SetTrustedProxySnapshot(c, []string{"172.21.0.1/32", "8.8.4.4/32"})
+		c.String(200, GetTrustedPublicClientIP(c))
+	})
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		want       string
+	}{
+		{
+			name:       "direct peer wins over spoofed forwarding headers",
+			remoteAddr: "8.8.8.8:12345",
+			xff:        "1.1.1.1",
+			want:       "8.8.8.8",
+		},
+		{
+			name:       "trusted proxy chain selects the nearest untrusted client",
+			remoteAddr: "172.21.0.1:12345",
+			xff:        "1.1.1.1, 8.8.8.8",
+			want:       "8.8.8.8",
+		},
+		{
+			name:       "trusted proxy address is not recorded without client chain",
+			remoteAddr: "8.8.4.4:12345",
+			want:       "",
+		},
+		{
+			name:       "trusted proxy chain with no forwarded data cannot record private peer",
+			remoteAddr: "172.21.0.1:12345",
+			xff:        "",
+			want:       "",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/t", nil)
+			req.RemoteAddr = test.remoteAddr
+			req.Header.Set("X-Forwarded-For", test.xff)
+			r.ServeHTTP(recorder, req)
+			require.Equal(t, test.want, recorder.Body.String())
+		})
+	}
+}
+
 func TestGetTrustedClientIPUsesGinClientIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -30,6 +82,58 @@ func TestGetTrustedClientIPUsesGinClientIP(t *testing.T) {
 
 	require.Equal(t, 200, w.Code)
 	require.Equal(t, "9.9.9.9", w.Body.String())
+}
+
+func TestGetTrustedClientIPRejectsSpoofedHeadersAndResolvesTrustedProxyChain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	r := gin.New()
+	require.NoError(t, r.SetTrustedProxies([]string{"172.21.0.1/32"}))
+	r.GET("/t", func(c *gin.Context) {
+		SetForwardedIPSettings(c, true, []string{"X-Client-IP"})
+		c.String(200, GetTrustedClientIP(c))
+	})
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		xrealIP    string
+		customIP   string
+		want       string
+	}{
+		{
+			name:       "untrusted direct peer cannot spoof forwarding headers",
+			remoteAddr: "9.9.9.9:12345",
+			xff:        "1.2.3.4",
+			xrealIP:    "5.6.7.8",
+			customIP:   "8.8.8.8",
+			want:       "9.9.9.9",
+		},
+		{
+			name:       "trusted proxy chain ignores client-supplied leftmost value",
+			remoteAddr: "172.21.0.1:12345",
+			xff:        "198.51.100.99, 203.0.113.42",
+			xrealIP:    "192.0.2.55",
+			customIP:   "192.0.2.56",
+			want:       "203.0.113.42",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/t", nil)
+			req.RemoteAddr = test.remoteAddr
+			req.Header.Set("X-Forwarded-For", test.xff)
+			req.Header.Set("X-Real-IP", test.xrealIP)
+			req.Header.Set("X-Client-IP", test.customIP)
+			r.ServeHTTP(recorder, req)
+
+			require.Equal(t, 200, recorder.Code)
+			require.Equal(t, test.want, recorder.Body.String())
+		})
+	}
 }
 
 func TestGetClientIPPreservesLegacyDockerForwardedHeaders(t *testing.T) {

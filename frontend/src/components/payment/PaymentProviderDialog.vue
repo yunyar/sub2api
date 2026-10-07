@@ -153,17 +153,18 @@
           {{ paymentGuide.summary }}
         </p>
         <div class="space-y-3">
-          <div v-for="field in resolvedFields" :key="field.key">
+          <div v-for="field in visibleResolvedFields" :key="field.key">
             <label class="input-label">
               {{ field.label }}
               <span v-if="field.optional" class="text-xs text-gray-400">({{ t('common.optional') }})</span>
               <span v-else class="text-red-500"> *</span>
             </label>
             <textarea
-              v-if="field.sensitive && field.key.toLowerCase().includes('key') && field.key !== 'pkey'"
+              v-if="field.multiline || (field.sensitive && field.key.toLowerCase().includes('key') && field.key !== 'pkey')"
               v-model="config[field.key]"
               rows="3"
               class="input font-mono text-xs"
+              :data-config-key="field.key"
               autocomplete="new-password"
               data-1p-ignore
               data-lpignore="true"
@@ -176,6 +177,7 @@
                 :type="visibleFields[field.key] ? 'text' : 'password'"
                 v-model="config[field.key]"
                 class="input pr-10"
+                :data-config-key="field.key"
                 autocomplete="new-password"
                 data-1p-ignore
                 data-lpignore="true"
@@ -196,6 +198,7 @@
               v-else-if="field.options?.length"
               v-model="config[field.key]"
               :options="field.options"
+              :data-config-key="field.key"
               :searchable="field.options.length > 5"
             />
             <input
@@ -203,6 +206,7 @@
               type="text"
               v-model="config[field.key]"
               class="input"
+              :data-config-key="field.key"
               :placeholder="field.defaultValue || ''"
             />
             <p v-if="field.hintKey" class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
@@ -327,6 +331,10 @@ import {
   extractBaseUrl,
   parseEasyPayCustomMethods,
   serializeEasyPayCustomMethods,
+  isEasyPayPrivateKeyConfigField,
+  isEasyPayRsaPublicKeyPem,
+  isValidEasyPayGatewaySignType,
+  isValidEasyPayRsaKeyId,
 } from './providerConfig'
 
 /** Default payment_mode per provider key — "" means "no preference, use
@@ -476,6 +484,13 @@ const resolvedFields = computed(() => {
   }))
 })
 
+const visibleResolvedFields = computed(() =>
+  resolvedFields.value.filter(field =>
+    (form.provider_key !== 'easypay' || !['gatewayPublicKey', 'gatewayKeyId'].includes(field.key)) ||
+    config.gatewaySignType === 'RSA2',
+  ),
+)
+
 const paymentGuide = computed<PaymentGuide | null>(() => {
   if (form.provider_key === 'alipay') {
     return {
@@ -592,7 +607,7 @@ function onKeyChange() {
   form.supported_types = [...(PROVIDER_SUPPORTED_TYPES[form.provider_key] || [])]
   form.payment_mode = defaultPaymentMode(form.provider_key)
   clearConfig()
-  applyDefaults()
+  applyDefaults(true)
 }
 
 function clearConfig() {
@@ -605,9 +620,12 @@ function clearConfig() {
   easyPayCustomMethods.splice(0, easyPayCustomMethods.length)
 }
 
-function applyDefaults() {
+function applyDefaults(recommendEasyPayRsa2 = false) {
   for (const f of PROVIDER_CONFIG_FIELDS[form.provider_key] || []) {
     if (f.defaultValue && !config[f.key]) config[f.key] = f.defaultValue
+  }
+  if (recommendEasyPayRsa2 && form.provider_key === 'easypay') {
+    config.gatewaySignType = 'RSA2'
   }
 }
 
@@ -667,6 +685,21 @@ function handleSave() {
       return
     }
     syncEasyPayCustomMethods()
+    const signType = (config.gatewaySignType || 'MD5').trim().toUpperCase()
+    if (!isValidEasyPayGatewaySignType(signType)) {
+      emitValidationError(t('admin.settings.payment.validationEasyPaySignTypeInvalid'))
+      return
+    }
+    if (signType === 'RSA2') {
+      if (!isEasyPayRsaPublicKeyPem(config.gatewayPublicKey || '')) {
+        emitValidationError(t('admin.settings.payment.validationEasyPayRsaPublicKeyInvalid'))
+        return
+      }
+      if (!isValidEasyPayRsaKeyId((config.gatewayKeyId || '').trim())) {
+        emitValidationError(t('admin.settings.payment.validationEasyPayRsaKeyIdInvalid'))
+        return
+      }
+    }
   }
   // Validate required config fields — all non-optional fields must be filled.
   // In edit mode, sensitive fields may be left blank to preserve the stored
@@ -689,6 +722,9 @@ function handleSave() {
   )
   const filteredConfig: Record<string, string> = {}
   for (const [k, v] of Object.entries(config)) {
+    if (form.provider_key === 'easypay' && isEasyPayPrivateKeyConfigField(k)) {
+      continue
+    }
     if (!v || !v.trim()) {
       if (clearableConfigKeys.has(k)) {
         filteredConfig[k] = ''
@@ -698,6 +734,11 @@ function handleSave() {
     filteredConfig[k] = v
   }
   if (form.provider_key === 'easypay') {
+    filteredConfig.gatewaySignType = (config.gatewaySignType || 'MD5').trim().toUpperCase()
+    if (filteredConfig.gatewaySignType === 'RSA2') {
+      filteredConfig.gatewayKeyId = (config.gatewayKeyId || '').trim()
+      filteredConfig.gatewayPublicKey = (config.gatewayPublicKey || '').trim()
+    }
     filteredConfig.customMethods = serializeEasyPayCustomMethods(normalizedEasyPayCustomMethods())
   }
 
@@ -792,7 +833,7 @@ function reset(defaultKey: string) {
   form.refund_enabled = false
   form.allow_user_refund = false
   clearConfig()
-  applyDefaults()
+  applyDefaults(true)
 }
 
 function loadProvider(provider: ProviderInstance) {
@@ -817,6 +858,7 @@ function loadProvider(provider: ProviderInstance) {
     for (const [k, v] of Object.entries(provider.config)) {
       // Skip notifyUrl/returnUrl — they are derived from callbackBaseUrl
       if (k === 'notifyUrl' || k === 'returnUrl') continue
+      if (provider.provider_key === 'easypay' && isEasyPayPrivateKeyConfigField(k)) continue
       if (k === 'customMethods' && provider.provider_key === 'easypay') {
         easyPayCustomMethods.push(...parseEasyPayCustomMethods(v))
         continue

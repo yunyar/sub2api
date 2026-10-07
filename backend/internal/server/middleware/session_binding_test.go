@@ -15,21 +15,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSessionBindingContextFollowsForwardedIPSwitch(t *testing.T) {
+func TestSessionBindingContextUsesTrustedProxyProvenance(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	for _, tc := range []struct {
 		name           string
 		trustForwarded bool
 		trustedProxies []string
+		remoteAddr     string
+		forwardedFor   string
+		xrealIP        string
+		omitXRealIP    bool
 		wantIP         string
+		wantRiskIP     string
 	}{
-		{name: "enabled switch takes over raw headers", trustForwarded: true, wantIP: "1.2.3.4"},
-		{name: "disabled switch ignores untrusted headers", trustForwarded: false, wantIP: "127.0.0.1"},
-		{name: "disabled switch uses configured Gin proxy", trustForwarded: false, trustedProxies: []string{"127.0.0.1"}, wantIP: "1.2.3.4"},
+		{
+			name:           "legacy switch cannot trust an untrusted direct peer",
+			trustForwarded: true,
+			remoteAddr:     "9.9.9.9:54321",
+			forwardedFor:   "198.51.100.99",
+			wantIP:         "9.9.9.9",
+			wantRiskIP:     "9.9.9.9",
+		},
+		{
+			name:         "disabled switch ignores untrusted headers",
+			remoteAddr:   "127.0.0.1:54321",
+			forwardedFor: "198.51.100.99",
+			wantIP:       "127.0.0.1",
+		},
+		{
+			name:           "trusted proxy chain resolves client and rejects spoofed prefix",
+			trustForwarded: true,
+			trustedProxies: []string{"172.21.0.1/32"},
+			remoteAddr:     "172.21.0.1:54321",
+			forwardedFor:   "198.51.100.99, 8.8.8.8",
+			wantIP:         "8.8.8.8",
+			wantRiskIP:     "8.8.8.8",
+		},
+		{
+			name:           "trusted public proxy without forwarded client is not risk evidence",
+			trustForwarded: true,
+			trustedProxies: []string{"8.8.4.4/32"},
+			remoteAddr:     "8.8.4.4:54321",
+			omitXRealIP:    true,
+			wantIP:         "8.8.4.4",
+			wantRiskIP:     "",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.Config{}
+			cfg.Server.TrustedProxiesConfigured = len(tc.trustedProxies) > 0
+			cfg.Server.TrustedProxies = tc.trustedProxies
 			cfg.SetTrustForwardedIPForAPIKeyACL(tc.trustForwarded)
 
 			r := gin.New()
@@ -41,13 +77,21 @@ func TestSessionBindingContextFollowsForwardedIPSwitch(t *testing.T) {
 				require.Equal(t, tc.wantIP, binding.IP)
 				require.Equal(t, "test-agent", binding.UserAgent)
 				require.Equal(t, tc.wantIP, SecurityClientIP(c))
+				riskIP, riskIPSet := service.PaymentRiskIPFromContext(c.Request.Context())
+				require.True(t, riskIPSet)
+				require.Equal(t, tc.wantRiskIP, riskIP)
 				c.Status(200)
 			})
 
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", "/t", nil)
-			req.RemoteAddr = "127.0.0.1:54321"
-			req.Header.Set("X-Real-IP", "1.2.3.4")
+			req.RemoteAddr = tc.remoteAddr
+			xrealIP := tc.xrealIP
+			if !tc.omitXRealIP && xrealIP == "" {
+				xrealIP = "1.2.3.4"
+			}
+			req.Header.Set("X-Real-IP", xrealIP)
+			req.Header.Set("X-Forwarded-For", tc.forwardedFor)
 			req.Header.Set("User-Agent", "test-agent")
 			r.ServeHTTP(w, req)
 
@@ -68,7 +112,8 @@ func TestSessionBindingContextSnapshotsForwardedModeAndHeaders(t *testing.T) {
 	r.GET("/t", func(c *gin.Context) {
 		binding := service.SessionBindingFromContext(c.Request.Context())
 		require.NotNil(t, binding)
-		require.Equal(t, "1.2.3.4", binding.IP)
+		require.Equal(t, "9.9.9.9", binding.IP)
+		require.Equal(t, "9.9.9.9", SecurityClientIP(c))
 
 		cfg.SetForwardedClientIPSettings(false, []string{"X-Changed-IP"})
 		require.Equal(t, "1.2.3.4", ip.GetSecurityClientIP(c, false))

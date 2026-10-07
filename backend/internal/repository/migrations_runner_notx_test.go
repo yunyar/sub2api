@@ -310,6 +310,81 @@ DROP INDEX CONCURRENTLY IF EXISTS paymentorder_out_trade_no;
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestApplyMigrationsFS_EasyPayTradeIdentityIndexFailsOnExistingDuplicates(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	prepareMigrationsBootstrapExpectations(mock)
+	mock.ExpectQuery("SELECT checksum FROM schema_migrations WHERE filename = \\$1").
+		WithArgs(easyPayTradeIdentityUniqueMigration).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM \\(").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec("SELECT pg_advisory_unlock\\(\\$1\\)").
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	fsys := fstest.MapFS{
+		easyPayTradeIdentityUniqueMigration: &fstest.MapFile{Data: []byte(`
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS paymentorder_easypay_trade_identity_unique
+    ON payment_orders (provider_key, provider_gateway_identity, provider_merchant_id, payment_trade_no)
+    WHERE provider_key = 'easypay'
+      AND provider_gateway_identity IS NOT NULL
+      AND TRIM(provider_gateway_identity) <> ''
+      AND provider_merchant_id IS NOT NULL
+      AND TRIM(provider_merchant_id) <> ''
+      AND payment_trade_no <> '';
+`)},
+	}
+
+	err = applyMigrationsFS(context.Background(), db, fsys)
+	require.ErrorContains(t, err, "duplicate EasyPay transaction identities")
+	require.ErrorContains(t, err, "no orders or balances were modified")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestApplyMigrationsFS_EasyPayTradeIdentityIndexCreatesAfterCleanPrecheck(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	prepareMigrationsBootstrapExpectations(mock)
+	mock.ExpectQuery("SELECT checksum FROM schema_migrations WHERE filename = \\$1").
+		WithArgs(easyPayTradeIdentityUniqueMigration).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM \\(").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("SELECT EXISTS \\(").
+		WithArgs(easyPayTradeIdentityUniqueIndex).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectExec("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS paymentorder_easypay_trade_identity_unique").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO schema_migrations \\(filename, checksum\\) VALUES \\(\\$1, \\$2\\)").
+		WithArgs(easyPayTradeIdentityUniqueMigration, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("SELECT pg_advisory_unlock\\(\\$1\\)").
+		WithArgs(migrationsAdvisoryLockID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	fsys := fstest.MapFS{
+		easyPayTradeIdentityUniqueMigration: &fstest.MapFile{Data: []byte(`
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS paymentorder_easypay_trade_identity_unique
+    ON payment_orders (provider_key, provider_gateway_identity, provider_merchant_id, payment_trade_no)
+    WHERE provider_key = 'easypay'
+      AND provider_gateway_identity IS NOT NULL
+      AND TRIM(provider_gateway_identity) <> ''
+      AND provider_merchant_id IS NOT NULL
+      AND TRIM(provider_merchant_id) <> ''
+      AND payment_trade_no <> '';
+`)},
+	}
+
+	err = applyMigrationsFS(context.Background(), db, fsys)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestApplyMigrationsFS_SchedulerOutboxPendingDedupKeyMigration_DropsInvalidIndexBeforeRetry(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
