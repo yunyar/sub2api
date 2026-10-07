@@ -34,7 +34,7 @@ func (h *AuthHandler) requireActionCaptchaForOAuthLoginStart(c *gin.Context) boo
 		TurnstileToken: req.TurnstileToken,
 		TencentTicket:  req.TencentCaptchaTicket,
 		TencentRandstr: req.TencentCaptchaRandstr,
-	}, ip.GetClientIP(c)); err != nil {
+	}, ip.GetTrustedClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return false
 	}

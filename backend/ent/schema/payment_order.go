@@ -99,6 +99,14 @@ func (PaymentOrder) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			MaxLen(30),
+		field.String("provider_merchant_id").
+			Optional().
+			Nillable().
+			MaxLen(128),
+		field.String("provider_gateway_identity").
+			Optional().
+			Nillable().
+			MaxLen(64),
 		field.JSON("provider_snapshot", map[string]any{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
@@ -192,6 +200,9 @@ func (PaymentOrder) Indexes() []ent.Index {
 		index.Fields("out_trade_no").
 			Unique().
 			Annotations(entsql.IndexWhere("out_trade_no <> ''")),
+		index.Fields("provider_key", "provider_gateway_identity", "provider_merchant_id", "payment_trade_no").
+			Unique().
+			Annotations(entsql.IndexWhere("provider_key = 'easypay' AND provider_gateway_identity IS NOT NULL AND TRIM(provider_gateway_identity) <> '' AND provider_merchant_id IS NOT NULL AND TRIM(provider_merchant_id) <> '' AND NULLIF(TRIM(payment_trade_no), '') IS NOT NULL")),
 		index.Fields("user_id"),
 		index.Fields("status"),
 		index.Fields("expires_at"),

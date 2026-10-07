@@ -251,7 +251,7 @@ func (h *GatewayHandler) SystemOne(c *gin.Context) {
 
 func (h *GatewayHandler) recordSystemOneUsage(c *gin.Context, apiKey *service.APIKey, account *service.Account, subscription *service.UserSubscription, mapping service.ChannelMappingResult, model string, body []byte, result *service.SystemOneForwardResult, userID int64, pricingAt time.Time) {
 	userAgent := c.GetHeader("User-Agent")
-	clientIP := ip.GetClientIP(c)
+	clientIP := ip.GetTrustedClientIP(c)
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)

@@ -84,7 +84,7 @@ func (h *PasskeyHandler) BeginLogin(c *gin.Context) {
 		TurnstileToken: req.TurnstileToken,
 		TencentTicket:  req.TencentCaptchaTicket,
 		TencentRandstr: req.TencentCaptchaRandstr,
-	}, ip.GetClientIP(c)); err != nil {
+	}, ip.GetTrustedClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -120,7 +120,10 @@ func (h *PasskeyHandler) FinishLogin(c *gin.Context) {
 	}
 	middleware2.SetAuditActor(c, user.ID, user.Email)
 	c.Set("auth_method", service.AuditAuthMethodPasskey)
-	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
+	if err := h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 	respondWithTokenPair(c, h.authService, user)
 }
 

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   PAYMENT_CURRENCY_OPTIONS,
   PROVIDER_CONFIG_FIELDS,
+  isEasyPayPrivateKeyConfigField,
+  isEasyPayRsaPublicKeyPem,
+  isValidEasyPayGatewaySignType,
+  isValidEasyPayRsaKeyId,
   isBuiltInAlipayMethod,
   isBuiltInWxpayMethod,
   parseEasyPayCustomMethods,
@@ -55,6 +59,47 @@ describe('PROVIDER_CONFIG_FIELDS.stripe', () => {
     expect(currency?.defaultValue).toBe('CNY')
     expect(currency?.hintKey).toBe('admin.settings.payment.field_paymentCurrencyHint')
     expect(currency?.options).toBe(PAYMENT_CURRENCY_OPTIONS)
+  })
+})
+
+describe('PROVIDER_CONFIG_FIELDS.easypay RSA2', () => {
+  it('keeps legacy MD5 as the edit fallback and recommends RSA2 for new instances in the dialog', () => {
+    expect(findField('easypay', 'gatewaySignType')?.defaultValue).toBe('MD5')
+    expect(findField('easypay', 'gatewaySignType')?.options?.map(option => option.value)).toEqual(['MD5', 'RSA2'])
+    expect(findField('easypay', 'gatewayPublicKey')).toMatchObject({
+      optional: true,
+      multiline: true,
+      sensitive: false,
+    })
+    expect(findField('easypay', 'gatewayKeyId')).toMatchObject({ optional: true, sensitive: false })
+    expect(findField('easypay', 'pkey')?.sensitive).toBe(true)
+    expect(findField('easypay', 'privateKey')).toBeUndefined()
+  })
+
+  it('validates the supported sign modes, Key ID syntax, and public PEM structure', () => {
+    expect(isValidEasyPayGatewaySignType('MD5')).toBe(true)
+    expect(isValidEasyPayGatewaySignType('RSA2')).toBe(true)
+    expect(isValidEasyPayGatewaySignType('RSA')).toBe(false)
+    expect(isValidEasyPayRsaKeyId('paypro_key-1')).toBe(true)
+    expect(isValidEasyPayRsaKeyId('bad/key')).toBe(false)
+    expect(isValidEasyPayRsaKeyId('x'.repeat(65))).toBe(false)
+    expect(isEasyPayRsaPublicKeyPem(
+      '-----BEGIN PUBLIC KEY-----\nAQIDBA==\n-----END PUBLIC KEY-----',
+    )).toBe(true)
+    expect(isEasyPayRsaPublicKeyPem(
+      '-----BEGIN PRIVATE KEY-----\nAQIDBA==\n-----END PRIVATE KEY-----',
+    )).toBe(false)
+    expect(isEasyPayRsaPublicKeyPem(
+      '-----BEGIN PUBLIC KEY-----\nAQID BA==\n-----END PUBLIC KEY-----',
+    )).toBe(false)
+    expect(isEasyPayRsaPublicKeyPem('not-a-pem')).toBe(false)
+  })
+
+  it('recognizes private-key-like EasyPay config names for exclusion', () => {
+    expect(isEasyPayPrivateKeyConfigField('merchantPrivateKey')).toBe(true)
+    expect(isEasyPayPrivateKeyConfigField('rsa_private_key')).toBe(true)
+    expect(isEasyPayPrivateKeyConfigField('pkey')).toBe(false)
+    expect(isEasyPayPrivateKeyConfigField('gatewayKeyId')).toBe(false)
   })
 })
 

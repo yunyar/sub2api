@@ -97,6 +97,17 @@ func (s *PaymentOrderExpiryService) runOnce() {
 	}
 	defer release()
 
+	if s.paymentSvc.riskService != nil {
+		riskCtx, riskCancel := context.WithTimeout(context.Background(), expiryCheckTimeout)
+		restricted, riskErr := s.paymentSvc.riskService.ScanBlockedAccounts(riskCtx)
+		riskCancel()
+		if riskErr != nil {
+			slog.Error("[PaymentOrderExpiry] payment IP policy scan failed", "error", riskErr)
+		} else if restricted > 0 {
+			slog.Warn("[PaymentOrderExpiry] payment IP policy restricted linked accounts", "count", restricted)
+		}
+	}
+
 	reconcileCtx, cancel := context.WithTimeout(context.Background(), expiryCheckTimeout)
 	recovered, err := s.paymentSvc.ReconcilePendingPaymentOrders(reconcileCtx)
 	cancel()

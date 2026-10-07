@@ -7,6 +7,9 @@ import type { ProviderInstance } from '@/types/payment'
 
 const messages: Record<string, string> = {
   'admin.settings.payment.providerConfig': 'Credentials',
+  'admin.settings.payment.field_gatewaySignTypeHint': 'RSA2 is recommended for new setups.',
+  'admin.settings.payment.validationEasyPayRsaPublicKeyInvalid': 'Enter an RSA public key in PEM format.',
+  'admin.settings.payment.validationEasyPayRsaKeyIdInvalid': 'Enter a valid PayPro Key ID.',
   'admin.settings.payment.easypayCustomMethods': 'Custom EasyPay methods',
   'admin.settings.payment.easypayCustomMethodsHint': 'Add provider-specific EasyPay type values.',
   'admin.settings.payment.addCustomMethod': 'Add method',
@@ -22,6 +25,12 @@ const messages: Record<string, string> = {
   'admin.settings.payment.stripeWebhookApiVersionHint': 'Use Stripe API version {version}.',
   'admin.settings.payment.airwallexWebhookHint': 'Select payment_intent.succeeded and use the latest stable API version.',
 }
+
+const showError = vi.hoisted(() => vi.fn())
+
+vi.mock('@/stores', () => ({
+  useAppStore: () => ({ showError }),
+}))
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
@@ -85,7 +94,8 @@ function mountDialog(options: { editing?: ProviderInstance | null } = {}) {
         },
         Select: {
           props: ['modelValue', 'options', 'disabled'],
-          template: '<div />',
+          emits: ['update:modelValue'],
+          template: '<select :value="modelValue" :disabled="disabled" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
         },
         ToggleSwitch: {
           template: '<div />',
@@ -117,6 +127,121 @@ describe('PaymentProviderDialog callback URLs', () => {
     const payload = wrapper.emitted('save')?.[0]?.[0] as { config: Record<string, string> }
     expect(payload.config.notifyUrl).toBe(expectedNotify + '/api/v1/payment/webhook/easypay')
     expect(payload.config.returnUrl).toBe(expectedReturn + '/payment/result')
+    wrapper.unmount()
+  })
+})
+
+describe('PaymentProviderDialog EasyPay RSA2 configuration', () => {
+  const rsaPublicKey = [
+    '-----BEGIN PUBLIC KEY-----',
+    'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm9jNiuZasGrUN4s1ssE0',
+    'ehRRSj9JxkVTAsRsOS55t6adjuZgfzk+DroeVa8rgzItg5rUhhvznoFILFr0xcFZ',
+    'EZYr7lFuJGCAwLOQsgQD1T3nmPi5jdC5Xy9GSDrDLpeteRpQymqxVmueLeDulUKo',
+    'jAGWe856TCEOCBMl8Gd/SRTocLh4WZiMKWN9TPsqPqhfFjkegRLV7eRBCMfrObnz',
+    'a07WnELwCZ0q3BOWOTEXBm/Fc0Si4c1HU+e/G0XQdDn9O2aO4itRNN3RAqSoQebx',
+    'cto3KizJzPITqcxNtYfCdTP2m48FAaPU0VXj4vdsxzMKtGZOhL2kpC9REFpnIhbl',
+    'oQIDAQAB',
+    '-----END PUBLIC KEY-----',
+  ].join('\n')
+
+  function easypayProvider(config: Record<string, string>) {
+    return providerFactory({
+      provider_key: 'easypay',
+      name: 'EasyPay',
+      config: {
+        pid: 'pid-1',
+        apiBase: 'https://pay.example.com',
+        notifyUrl: 'https://example.com/api/v1/payment/webhook/easypay',
+        returnUrl: 'https://example.com/payment/result',
+        ...config,
+      },
+      supported_types: ['alipay'],
+      payment_mode: 'qrcode',
+    })
+  }
+
+  it('defaults new EasyPay providers to RSA2 and shows its public-key fields', async () => {
+    const wrapper = mountDialog()
+    ;(wrapper.vm as unknown as { reset: (providerKey: string) => void }).reset('easypay')
+    await nextTick()
+
+    expect((wrapper.find('[data-config-key="gatewaySignType"]').element as HTMLSelectElement).value).toBe('RSA2')
+    expect(wrapper.find('[data-config-key="gatewayPublicKey"]').element.tagName).toBe('TEXTAREA')
+    expect(wrapper.find('[data-config-key="gatewayKeyId"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain(messages['admin.settings.payment.field_gatewaySignTypeHint'])
+    wrapper.unmount()
+  })
+
+  it('keeps legacy instances on MD5 and preserves unknown existing values without exposing private keys', async () => {
+    const provider = easypayProvider({
+      legacyOption: 'keep-me',
+      merchantPrivateKey: 'must-not-render-or-resubmit',
+      rsa_private_key: 'must-not-render-or-resubmit',
+    })
+    const wrapper = mountDialog({ editing: provider })
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+
+    expect((wrapper.find('[data-config-key="gatewaySignType"]').element as HTMLSelectElement).value).toBe('MD5')
+    expect(wrapper.find('[data-config-key="gatewayPublicKey"]').exists()).toBe(false)
+    expect(wrapper.find('[data-config-key="gatewayKeyId"]').exists()).toBe(false)
+    expect((wrapper.find('[data-config-key="pkey"]').element as HTMLInputElement).type).toBe('password')
+    expect(wrapper.text()).not.toContain('must-not-render-or-resubmit')
+
+    await wrapper.find('form').trigger('submit.prevent')
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { config: Record<string, string> }
+    expect(payload.config.gatewaySignType).toBe('MD5')
+    expect(payload.config.legacyOption).toBe('keep-me')
+    expect(payload.config.pkey).toBeUndefined()
+    expect(payload.config.merchantPrivateKey).toBeUndefined()
+    expect(payload.config.rsa_private_key).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('saves RSA2 public key and Key ID without including private material', async () => {
+    const provider = easypayProvider({
+      gatewaySignType: 'RSA2',
+      gatewayPublicKey: rsaPublicKey,
+      gatewayKeyId: 'paypro_key_1',
+      gatewayPrivateKey: 'must-not-render-or-resubmit',
+    })
+    const wrapper = mountDialog({ editing: provider })
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+
+    expect(wrapper.find('[data-config-key="gatewayPublicKey"]').element.tagName).toBe('TEXTAREA')
+    expect((wrapper.find('[data-config-key="gatewayKeyId"]').element as HTMLInputElement).value).toBe('paypro_key_1')
+    expect(wrapper.find('[data-config-key="gatewayPrivateKey"]').exists()).toBe(false)
+    await wrapper.find('[data-config-key="gatewayKeyId"]').setValue(' paypro_key_1 ')
+
+    await wrapper.find('form').trigger('submit.prevent')
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { config: Record<string, string> }
+    expect(payload.config.gatewaySignType).toBe('RSA2')
+    expect(payload.config.gatewayPublicKey).toBe(rsaPublicKey)
+    expect(payload.config.gatewayKeyId).toBe('paypro_key_1')
+    expect(payload.config.gatewayPrivateKey).toBeUndefined()
+    expect(payload.config.privateKey).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it.each([
+    [
+      { gatewaySignType: 'RSA2', gatewayPublicKey: '-----BEGIN PRIVATE KEY-----\nAQIDBA==\n-----END PRIVATE KEY-----', gatewayKeyId: 'paypro_key_1' },
+      'admin.settings.payment.validationEasyPayRsaPublicKeyInvalid',
+    ],
+    [
+      { gatewaySignType: 'RSA2', gatewayPublicKey: rsaPublicKey, gatewayKeyId: 'invalid/key' },
+      'admin.settings.payment.validationEasyPayRsaKeyIdInvalid',
+    ],
+  ])('rejects invalid RSA2 settings with a specific validation message', async (config, messageKey) => {
+    showError.mockClear()
+    const wrapper = mountDialog({ editing: easypayProvider(config) })
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(easypayProvider(config))
+    await nextTick()
+    await wrapper.find('form').trigger('submit.prevent')
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+    await vi.waitFor(() => expect(showError).toHaveBeenCalledWith(messages[messageKey]))
     wrapper.unmount()
   })
 })

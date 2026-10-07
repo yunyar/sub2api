@@ -426,6 +426,46 @@ func (_u *PaymentOrderUpdate) ClearProviderKey() *PaymentOrderUpdate {
 	return _u
 }
 
+// SetProviderMerchantID sets the "provider_merchant_id" field.
+func (_u *PaymentOrderUpdate) SetProviderMerchantID(v string) *PaymentOrderUpdate {
+	_u.mutation.SetProviderMerchantID(v)
+	return _u
+}
+
+// SetNillableProviderMerchantID sets the "provider_merchant_id" field if the given value is not nil.
+func (_u *PaymentOrderUpdate) SetNillableProviderMerchantID(v *string) *PaymentOrderUpdate {
+	if v != nil {
+		_u.SetProviderMerchantID(*v)
+	}
+	return _u
+}
+
+// ClearProviderMerchantID clears the value of the "provider_merchant_id" field.
+func (_u *PaymentOrderUpdate) ClearProviderMerchantID() *PaymentOrderUpdate {
+	_u.mutation.ClearProviderMerchantID()
+	return _u
+}
+
+// SetProviderGatewayIdentity sets the "provider_gateway_identity" field.
+func (_u *PaymentOrderUpdate) SetProviderGatewayIdentity(v string) *PaymentOrderUpdate {
+	_u.mutation.SetProviderGatewayIdentity(v)
+	return _u
+}
+
+// SetNillableProviderGatewayIdentity sets the "provider_gateway_identity" field if the given value is not nil.
+func (_u *PaymentOrderUpdate) SetNillableProviderGatewayIdentity(v *string) *PaymentOrderUpdate {
+	if v != nil {
+		_u.SetProviderGatewayIdentity(*v)
+	}
+	return _u
+}
+
+// ClearProviderGatewayIdentity clears the value of the "provider_gateway_identity" field.
+func (_u *PaymentOrderUpdate) ClearProviderGatewayIdentity() *PaymentOrderUpdate {
+	_u.mutation.ClearProviderGatewayIdentity()
+	return _u
+}
+
 // SetProviderSnapshot sets the "provider_snapshot" field.
 func (_u *PaymentOrderUpdate) SetProviderSnapshot(v map[string]interface{}) *PaymentOrderUpdate {
 	_u.mutation.SetProviderSnapshot(v)
@@ -834,6 +874,16 @@ func (_u *PaymentOrderUpdate) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_key": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ProviderMerchantID(); ok {
+		if err := paymentorder.ProviderMerchantIDValidator(v); err != nil {
+			return &ValidationError{Name: "provider_merchant_id", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_merchant_id": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ProviderGatewayIdentity(); ok {
+		if err := paymentorder.ProviderGatewayIdentityValidator(v); err != nil {
+			return &ValidationError{Name: "provider_gateway_identity", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_gateway_identity": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := paymentorder.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.status": %w`, err)}
@@ -979,6 +1029,18 @@ func (_u *PaymentOrderUpdate) sqlSave(ctx context.Context) (_node int, err error
 	}
 	if _u.mutation.ProviderKeyCleared() {
 		_spec.ClearField(paymentorder.FieldProviderKey, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderMerchantID(); ok {
+		_spec.SetField(paymentorder.FieldProviderMerchantID, field.TypeString, value)
+	}
+	if _u.mutation.ProviderMerchantIDCleared() {
+		_spec.ClearField(paymentorder.FieldProviderMerchantID, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderGatewayIdentity(); ok {
+		_spec.SetField(paymentorder.FieldProviderGatewayIdentity, field.TypeString, value)
+	}
+	if _u.mutation.ProviderGatewayIdentityCleared() {
+		_spec.ClearField(paymentorder.FieldProviderGatewayIdentity, field.TypeString)
 	}
 	if value, ok := _u.mutation.ProviderSnapshot(); ok {
 		_spec.SetField(paymentorder.FieldProviderSnapshot, field.TypeJSON, value)
@@ -1516,6 +1578,46 @@ func (_u *PaymentOrderUpdateOne) ClearProviderKey() *PaymentOrderUpdateOne {
 	return _u
 }
 
+// SetProviderMerchantID sets the "provider_merchant_id" field.
+func (_u *PaymentOrderUpdateOne) SetProviderMerchantID(v string) *PaymentOrderUpdateOne {
+	_u.mutation.SetProviderMerchantID(v)
+	return _u
+}
+
+// SetNillableProviderMerchantID sets the "provider_merchant_id" field if the given value is not nil.
+func (_u *PaymentOrderUpdateOne) SetNillableProviderMerchantID(v *string) *PaymentOrderUpdateOne {
+	if v != nil {
+		_u.SetProviderMerchantID(*v)
+	}
+	return _u
+}
+
+// ClearProviderMerchantID clears the value of the "provider_merchant_id" field.
+func (_u *PaymentOrderUpdateOne) ClearProviderMerchantID() *PaymentOrderUpdateOne {
+	_u.mutation.ClearProviderMerchantID()
+	return _u
+}
+
+// SetProviderGatewayIdentity sets the "provider_gateway_identity" field.
+func (_u *PaymentOrderUpdateOne) SetProviderGatewayIdentity(v string) *PaymentOrderUpdateOne {
+	_u.mutation.SetProviderGatewayIdentity(v)
+	return _u
+}
+
+// SetNillableProviderGatewayIdentity sets the "provider_gateway_identity" field if the given value is not nil.
+func (_u *PaymentOrderUpdateOne) SetNillableProviderGatewayIdentity(v *string) *PaymentOrderUpdateOne {
+	if v != nil {
+		_u.SetProviderGatewayIdentity(*v)
+	}
+	return _u
+}
+
+// ClearProviderGatewayIdentity clears the value of the "provider_gateway_identity" field.
+func (_u *PaymentOrderUpdateOne) ClearProviderGatewayIdentity() *PaymentOrderUpdateOne {
+	_u.mutation.ClearProviderGatewayIdentity()
+	return _u
+}
+
 // SetProviderSnapshot sets the "provider_snapshot" field.
 func (_u *PaymentOrderUpdateOne) SetProviderSnapshot(v map[string]interface{}) *PaymentOrderUpdateOne {
 	_u.mutation.SetProviderSnapshot(v)
@@ -1937,6 +2039,16 @@ func (_u *PaymentOrderUpdateOne) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_key": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ProviderMerchantID(); ok {
+		if err := paymentorder.ProviderMerchantIDValidator(v); err != nil {
+			return &ValidationError{Name: "provider_merchant_id", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_merchant_id": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ProviderGatewayIdentity(); ok {
+		if err := paymentorder.ProviderGatewayIdentityValidator(v); err != nil {
+			return &ValidationError{Name: "provider_gateway_identity", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_gateway_identity": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Status(); ok {
 		if err := paymentorder.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.status": %w`, err)}
@@ -2099,6 +2211,18 @@ func (_u *PaymentOrderUpdateOne) sqlSave(ctx context.Context) (_node *PaymentOrd
 	}
 	if _u.mutation.ProviderKeyCleared() {
 		_spec.ClearField(paymentorder.FieldProviderKey, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderMerchantID(); ok {
+		_spec.SetField(paymentorder.FieldProviderMerchantID, field.TypeString, value)
+	}
+	if _u.mutation.ProviderMerchantIDCleared() {
+		_spec.ClearField(paymentorder.FieldProviderMerchantID, field.TypeString)
+	}
+	if value, ok := _u.mutation.ProviderGatewayIdentity(); ok {
+		_spec.SetField(paymentorder.FieldProviderGatewayIdentity, field.TypeString, value)
+	}
+	if _u.mutation.ProviderGatewayIdentityCleared() {
+		_spec.ClearField(paymentorder.FieldProviderGatewayIdentity, field.TypeString)
 	}
 	if value, ok := _u.mutation.ProviderSnapshot(); ok {
 		_spec.SetField(paymentorder.FieldProviderSnapshot, field.TypeJSON, value)

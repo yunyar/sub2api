@@ -185,7 +185,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// 验证当前启用的验证码（邮箱验证码注册场景避免重复校验一次性票据）
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
-	if err := h.authService.VerifyCaptchaForRegister(c.Request.Context(), proof, ip.GetClientIP(c), req.VerifyCode); err != nil {
+	if err := h.authService.VerifyCaptchaForRegister(c.Request.Context(), proof, ip.GetTrustedClientIP(c), req.VerifyCode); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -217,7 +217,7 @@ func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
 	}
 
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
-	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
+	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetTrustedClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
@@ -244,17 +244,16 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
-	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
+	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetTrustedClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
-	token, user, err := h.authService.Login(c.Request.Context(), req.Email, req.Password)
+	user, err := h.authService.ValidatePasswordCredentials(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	_ = token // token 由 authService.Login 返回但此处由 respondWithTokenPair 重新生成
 
 	if err := h.ensureBackendModeAllowsUser(c.Request.Context(), user); err != nil {
 		response.ErrorFrom(c, err)
@@ -278,7 +277,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
+	if err := h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	h.respondWithTokenPair(c, user)
 }
@@ -400,7 +402,10 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 		secureCookie := isRequestHTTPS(c)
 		clearOAuthPendingSessionCookie(c, secureCookie)
 		clearOAuthPendingBrowserCookie(c, secureCookie)
-		h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
+		if err := h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 
 		user, err = h.userService.GetByID(c.Request.Context(), session.UserID)
 		if err != nil {
@@ -413,7 +418,10 @@ func (h *AuthHandler) Login2FA(c *gin.Context) {
 	_ = h.totpService.DeleteLoginSession(c.Request.Context(), req.TempToken)
 
 	if session.PendingOAuthBind == nil {
-		h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
+		if err := h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 	}
 
 	h.respondWithTokenPair(c, user)
@@ -609,7 +617,7 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	}
 
 	proof := captchaProof(req.TurnstileToken, req.TencentCaptchaTicket, req.TencentCaptchaRandstr)
-	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetClientIP(c)); err != nil {
+	if err := h.authService.VerifyCaptcha(c.Request.Context(), proof, ip.GetTrustedClientIP(c)); err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}

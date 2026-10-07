@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
@@ -257,6 +258,50 @@ func TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy(t *testing.T) {
 		}
 		if got := event.Fields["client_ip"]; got != "203.0.113.42" {
 			t.Fatalf("client_ip=%q, want real forwarded ip", got)
+		}
+		if got := event.Fields["peer_ip"]; got != "104.23.251.120" {
+			t.Fatalf("peer_ip=%q, want immediate trusted proxy", got)
+		}
+		return
+	}
+	t.Fatalf("access log event not found")
+}
+
+func TestLogger_AccessLogRejectsSpoofedForwardedIPWithLegacySwitchEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sink := initMiddlewareTestLogger(t)
+	cfg := &config.Config{}
+	cfg.SetTrustForwardedIPForAPIKeyACL(true)
+
+	r := gin.New()
+	if err := r.SetTrustedProxies(nil); err != nil {
+		t.Fatalf("disable trusted proxies: %v", err)
+	}
+	r.Use(SessionBindingContext(cfg))
+	r.Use(Logger())
+	r.GET("/api/test", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	req.RemoteAddr = "9.9.9.9:12345"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+	req.Header.Set("X-Real-IP", "5.6.7.8")
+	recorder := httptest.NewRecorder()
+	r.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d", recorder.Code)
+	}
+
+	for _, event := range sink.list() {
+		if event == nil || event.Message != "http request completed" {
+			continue
+		}
+		if got := event.Fields["client_ip"]; got != "9.9.9.9" {
+			t.Fatalf("client_ip=%q, want verified peer address", got)
+		}
+		if got := event.Fields["peer_ip"]; got != "9.9.9.9" {
+			t.Fatalf("peer_ip=%q, want direct socket peer", got)
 		}
 		return
 	}

@@ -1,6 +1,34 @@
 <template>
   <AppLayout>
     <div class="space-y-6">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex rounded-lg border border-gray-200 p-1 dark:border-dark-600" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'overview'"
+            class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="activeTab === 'overview' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700'"
+            @click="activeTab = 'overview'"
+          >
+            {{ t('payment.admin.tabs.overview') }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :aria-selected="activeTab === 'risk'"
+            class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors"
+            :class="activeTab === 'risk' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700'"
+            @click="activeTab = 'risk'"
+          >
+            {{ t('payment.admin.tabs.risk') }}
+          </button>
+        </div>
+      </div>
+
+      <PaymentRechargeRiskPanel v-if="activeTab === 'risk'" />
+
+      <template v-else>
       <!-- Header with Day Switcher -->
       <div class="flex items-center justify-end">
         <div class="flex items-center gap-2">
@@ -66,6 +94,7 @@
           </div>
         </div>
       </template>
+      </template>
     </div>
   </AppLayout>
 </template>
@@ -82,11 +111,13 @@ import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
 import OrderStatsCards from '@/components/admin/payment/OrderStatsCards.vue'
 import DailyRevenueChart from '@/components/admin/payment/DailyRevenueChart.vue'
+import PaymentRechargeRiskPanel from '@/components/admin/payment/PaymentRechargeRiskPanel.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
 
 const DAYS_OPTIONS = [7, 30, 90] as const
+const activeTab = ref<'overview' | 'risk'>('overview')
 const days = ref<number>(30)
 const loading = ref(false)
 const stats = ref<DashboardStats | null>(null)

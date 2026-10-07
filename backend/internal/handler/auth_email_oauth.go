@@ -372,7 +372,7 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		affiliateCode = pendingSessionStringValue(session.UpstreamIdentityClaims, "aff_code")
 	}
 
-	tokenPair, user, err := h.authService.RegisterVerifiedOAuthEmailAccount(
+	_, user, err := h.authService.RegisterVerifiedOAuthEmailAccount(
 		c.Request.Context(),
 		strings.TrimSpace(session.ResolvedEmail),
 		req.Password,
@@ -439,7 +439,15 @@ func (h *AuthHandler) completeEmailOAuthRegistration(c *gin.Context, provider st
 		return
 	}
 	h.authService.ApplyOAuthSignupPromoCode(c.Request.Context(), user.ID, pendingOAuthPromoCode(session))
-	h.authService.RecordSuccessfulLogin(c.Request.Context(), user.ID)
+	if err := h.authService.RecordSuccessfulRegistration(c.Request.Context(), user.ID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	tokenPair, err := h.authService.GenerateTokenPair(c.Request.Context(), user, "")
+	if err != nil {
+		response.InternalError(c, "Failed to generate token pair")
+		return
+	}
 	clearCookies()
 	writeOAuthTokenPairResponse(c, tokenPair)
 }

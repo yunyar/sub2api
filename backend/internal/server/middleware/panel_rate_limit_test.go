@@ -260,7 +260,7 @@ func TestPanelRateLimiterFailOpenOnRedisError(t *testing.T) {
 
 	publicRouter := newPanelTestRouter(p.PublicIP(), nil)
 	for i := 0; i < 3; i++ {
-		require.Equal(t, http.StatusOK, performPanelRequest(publicRouter, "203.0.113.9:1000").Code)
+		require.Equal(t, http.StatusOK, performPanelRequest(publicRouter, "8.8.4.4:1000").Code)
 	}
 }
 
@@ -273,10 +273,10 @@ func TestPanelRateLimiterPublicIP(t *testing.T) {
 	router := newPanelTestRouter(p.PublicIP(), nil)
 
 	// 公网 IP：第二次被限
-	require.Equal(t, http.StatusOK, performPanelRequest(router, "203.0.113.9:1000").Code)
-	require.Equal(t, http.StatusTooManyRequests, performPanelRequest(router, "203.0.113.9:1000").Code)
+	require.Equal(t, http.StatusOK, performPanelRequest(router, "8.8.8.8:1000").Code)
+	require.Equal(t, http.StatusTooManyRequests, performPanelRequest(router, "8.8.8.8:1000").Code)
 	// 其他公网 IP 独立计数
-	require.Equal(t, http.StatusOK, performPanelRequest(router, "198.51.100.7:1000").Code)
+	require.Equal(t, http.StatusOK, performPanelRequest(router, "1.1.1.1:1000").Code)
 
 	// 回环/内网地址（反代内部转发地址）：跳过计数，绝不误拦
 	for i := 0; i < 5; i++ {
@@ -288,8 +288,8 @@ func TestPanelRateLimiterPublicIP(t *testing.T) {
 
 	allower.mu.Lock()
 	defer allower.mu.Unlock()
-	require.Contains(t, allower.counts, "panel:public:ip:203.0.113.9")
-	require.Contains(t, allower.counts, "panel:public:ip:198.51.100.7")
+	require.Contains(t, allower.counts, "panel:public:ip:8.8.8.8")
+	require.Contains(t, allower.counts, "panel:public:ip:1.1.1.1")
 	for key := range allower.counts {
 		require.NotContains(t, key, "127.0.0.1")
 		require.NotContains(t, key, "10.0.0.8")
@@ -299,8 +299,13 @@ func TestPanelRateLimiterPublicIP(t *testing.T) {
 }
 
 func TestIsPubliclyRoutableClientIP(t *testing.T) {
-	require.True(t, isPubliclyRoutableClientIP("203.0.113.9"))
-	require.True(t, isPubliclyRoutableClientIP("2001:db8::1"))
+	require.True(t, isPubliclyRoutableClientIP("8.8.8.8"))
+	require.True(t, isPubliclyRoutableClientIP("2606:4700:4700::1111"))
+	require.False(t, isPubliclyRoutableClientIP("203.0.113.9"))
+	require.False(t, isPubliclyRoutableClientIP("2001:db8::1"))
+	require.False(t, isPubliclyRoutableClientIP("100.64.1.1"))
+	require.False(t, isPubliclyRoutableClientIP("198.18.0.1"))
+	require.False(t, isPubliclyRoutableClientIP("192.0.2.1"))
 	require.False(t, isPubliclyRoutableClientIP("127.0.0.1"))
 	require.False(t, isPubliclyRoutableClientIP("::1"))
 	require.False(t, isPubliclyRoutableClientIP("10.1.2.3"))

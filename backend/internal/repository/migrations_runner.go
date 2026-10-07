@@ -53,6 +53,8 @@ const migrationsLockRetryInterval = 500 * time.Millisecond
 const nonTransactionalMigrationSuffix = "_notx.sql"
 const paymentOrdersOutTradeNoUniqueMigration = "120_enforce_payment_orders_out_trade_no_unique_notx.sql"
 const paymentOrdersOutTradeNoUniqueIndex = "paymentorder_out_trade_no_unique"
+const easyPayTradeIdentityUniqueMigration = "243_enforce_easypay_transaction_identity_unique_notx.sql"
+const easyPayTradeIdentityUniqueIndex = "paymentorder_easypay_trade_identity_unique"
 const schedulerOutboxPendingDedupKeyMigration = "153_scheduler_outbox_pending_dedup_key_index_notx.sql"
 const schedulerOutboxPendingDedupKeyIndex = "idx_scheduler_outbox_pending_dedup_key"
 const latestAPIKeyIPIndexMigration = "174_add_usage_logs_api_key_latest_ip_index_notx.sql"
@@ -294,6 +296,8 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 	switch name {
 	case paymentOrdersOutTradeNoUniqueMigration:
 		return preparePaymentOrdersOutTradeNoUniqueMigration(ctx, db)
+	case easyPayTradeIdentityUniqueMigration:
+		return prepareEasyPayTradeIdentityUniqueMigration(ctx, db)
 	case schedulerOutboxPendingDedupKeyMigration:
 		return dropInvalidIndexIfPresent(ctx, db, schedulerOutboxPendingDedupKeyIndex)
 	case latestAPIKeyIPIndexMigration:
@@ -312,6 +316,31 @@ func prepareNonTransactionalMigration(ctx context.Context, db migrationConnectio
 	default:
 		return nil
 	}
+}
+
+func prepareEasyPayTradeIdentityUniqueMigration(ctx context.Context, db migrationConnection) error {
+	var duplicates int
+	err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM (
+			SELECT provider_key, provider_gateway_identity, provider_merchant_id, payment_trade_no
+			FROM payment_orders
+			WHERE provider_key = 'easypay'
+			  AND NULLIF(BTRIM(provider_gateway_identity), '') IS NOT NULL
+			  AND provider_merchant_id IS NOT NULL
+			  AND NULLIF(BTRIM(provider_merchant_id), '') IS NOT NULL
+			  AND NULLIF(BTRIM(payment_trade_no), '') IS NOT NULL
+			GROUP BY provider_key, provider_gateway_identity, provider_merchant_id, payment_trade_no
+			HAVING COUNT(*) > 1
+		) AS duplicate_identities
+	`).Scan(&duplicates)
+	if err != nil {
+		return fmt.Errorf("precheck duplicate EasyPay transaction identities: %w", err)
+	}
+	if duplicates > 0 {
+		return fmt.Errorf("duplicate EasyPay transaction identities block %s; no orders or balances were modified; resolve duplicates manually before retrying", easyPayTradeIdentityUniqueMigration)
+	}
+	return dropInvalidIndexIfPresent(ctx, db, easyPayTradeIdentityUniqueIndex)
 }
 
 func preparePaymentOrdersOutTradeNoUniqueMigration(ctx context.Context, db migrationConnection) error {

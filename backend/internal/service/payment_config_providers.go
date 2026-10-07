@@ -123,7 +123,7 @@ var providerSensitiveConfigFields = map[string]map[string]struct{}{
 // all provider identity fields that are snapshotted into orders or used by
 // webhook/refund verification.
 var providerPendingOrderProtectedConfigFields = map[string]map[string]struct{}{
-	payment.TypeEasyPay:   {"pkey": {}, "pid": {}},
+	payment.TypeEasyPay:   {"pkey": {}, "pid": {}, "apibase": {}, "gatewaysigntype": {}, "gatewaypublickey": {}, "gatewaykeyid": {}},
 	payment.TypeAlipay:    {"privatekey": {}, "publickey": {}, "alipaypublickey": {}, "appid": {}},
 	payment.TypeWxpay:     {"privatekey": {}, "apiv3key": {}, "publickey": {}, "appid": {}, "mpappid": {}, "mchid": {}, "publickeyid": {}, "certserial": {}},
 	payment.TypeStripe:    {"secretkey": {}, "webhooksecret": {}, "currency": {}},
@@ -145,11 +145,25 @@ func hasPendingOrderProtectedConfigChange(providerKey string, currentConfig, nex
 		return false
 	}
 	for fieldName := range fields {
-		if providerConfigFieldValue(currentConfig, fieldName) != providerConfigFieldValue(nextConfig, fieldName) {
+		currentValue := providerConfigFieldValue(currentConfig, fieldName)
+		nextValue := providerConfigFieldValue(nextConfig, fieldName)
+		if providerKey == payment.TypeEasyPay && fieldName == "gatewaysigntype" {
+			currentValue = normalizeEasyPayGatewaySignType(currentValue)
+			nextValue = normalizeEasyPayGatewaySignType(nextValue)
+		}
+		if currentValue != nextValue {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeEasyPayGatewaySignType(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if value == "" {
+		return "MD5"
+	}
+	return value
 }
 
 func providerConfigFieldValue(config map[string]string, fieldName string) string {

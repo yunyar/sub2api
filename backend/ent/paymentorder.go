@@ -61,6 +61,10 @@ type PaymentOrder struct {
 	ProviderInstanceID *string `json:"provider_instance_id,omitempty"`
 	// ProviderKey holds the value of the "provider_key" field.
 	ProviderKey *string `json:"provider_key,omitempty"`
+	// ProviderMerchantID holds the value of the "provider_merchant_id" field.
+	ProviderMerchantID *string `json:"provider_merchant_id,omitempty"`
+	// ProviderGatewayIdentity holds the value of the "provider_gateway_identity" field.
+	ProviderGatewayIdentity *string `json:"provider_gateway_identity,omitempty"`
 	// ProviderSnapshot holds the value of the "provider_snapshot" field.
 	ProviderSnapshot map[string]interface{} `json:"provider_snapshot,omitempty"`
 	// Status holds the value of the "status" field.
@@ -138,7 +142,7 @@ func (*PaymentOrder) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case paymentorder.FieldID, paymentorder.FieldUserID, paymentorder.FieldPlanID, paymentorder.FieldSubscriptionGroupID, paymentorder.FieldSubscriptionDays:
 			values[i] = new(sql.NullInt64)
-		case paymentorder.FieldUserEmail, paymentorder.FieldUserName, paymentorder.FieldUserNotes, paymentorder.FieldRechargeCode, paymentorder.FieldOutTradeNo, paymentorder.FieldPaymentType, paymentorder.FieldPaymentTradeNo, paymentorder.FieldPayURL, paymentorder.FieldQrCode, paymentorder.FieldQrCodeImg, paymentorder.FieldOrderType, paymentorder.FieldProviderInstanceID, paymentorder.FieldProviderKey, paymentorder.FieldStatus, paymentorder.FieldRefundReason, paymentorder.FieldRefundRequestReason, paymentorder.FieldRefundRequestedBy, paymentorder.FieldFailedReason, paymentorder.FieldClientIP, paymentorder.FieldSrcHost, paymentorder.FieldSrcURL:
+		case paymentorder.FieldUserEmail, paymentorder.FieldUserName, paymentorder.FieldUserNotes, paymentorder.FieldRechargeCode, paymentorder.FieldOutTradeNo, paymentorder.FieldPaymentType, paymentorder.FieldPaymentTradeNo, paymentorder.FieldPayURL, paymentorder.FieldQrCode, paymentorder.FieldQrCodeImg, paymentorder.FieldOrderType, paymentorder.FieldProviderInstanceID, paymentorder.FieldProviderKey, paymentorder.FieldProviderMerchantID, paymentorder.FieldProviderGatewayIdentity, paymentorder.FieldStatus, paymentorder.FieldRefundReason, paymentorder.FieldRefundRequestReason, paymentorder.FieldRefundRequestedBy, paymentorder.FieldFailedReason, paymentorder.FieldClientIP, paymentorder.FieldSrcHost, paymentorder.FieldSrcURL:
 			values[i] = new(sql.NullString)
 		case paymentorder.FieldRefundAt, paymentorder.FieldRefundRequestedAt, paymentorder.FieldExpiresAt, paymentorder.FieldPaidAt, paymentorder.FieldCompletedAt, paymentorder.FieldFailedAt, paymentorder.FieldCreatedAt, paymentorder.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -297,6 +301,20 @@ func (_m *PaymentOrder) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ProviderKey = new(string)
 				*_m.ProviderKey = value.String
+			}
+		case paymentorder.FieldProviderMerchantID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_merchant_id", values[i])
+			} else if value.Valid {
+				_m.ProviderMerchantID = new(string)
+				*_m.ProviderMerchantID = value.String
+			}
+		case paymentorder.FieldProviderGatewayIdentity:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field provider_gateway_identity", values[i])
+			} else if value.Valid {
+				_m.ProviderGatewayIdentity = new(string)
+				*_m.ProviderGatewayIdentity = value.String
 			}
 		case paymentorder.FieldProviderSnapshot:
 			if value, ok := values[i].(*[]byte); !ok {
@@ -543,6 +561,16 @@ func (_m *PaymentOrder) String() string {
 	builder.WriteString(", ")
 	if v := _m.ProviderKey; v != nil {
 		builder.WriteString("provider_key=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ProviderMerchantID; v != nil {
+		builder.WriteString("provider_merchant_id=")
+		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.ProviderGatewayIdentity; v != nil {
+		builder.WriteString("provider_gateway_identity=")
 		builder.WriteString(*v)
 	}
 	builder.WriteString(", ")

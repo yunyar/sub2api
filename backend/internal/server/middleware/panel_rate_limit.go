@@ -3,12 +3,12 @@ package middleware
 import (
 	"context"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
+	ippkg "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -139,15 +139,7 @@ func (p *PanelRateLimiter) PublicIP() gin.HandlerFunc {
 // isPubliclyRoutableClientIP 判断地址是否为可作为限流依据的全局单播地址。
 // 回环、RFC1918/ULA 内网、链路本地与未指定地址返回 false。
 func isPubliclyRoutableClientIP(clientIP string) bool {
-	ip := net.ParseIP(clientIP)
-	if ip == nil {
-		return false
-	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return false
-	}
-	return ip.IsGlobalUnicast()
+	return ippkg.PublicClientIP(clientIP) != ""
 }
 
 func abortPanelRateLimited(c *gin.Context, retryAfter time.Duration) {

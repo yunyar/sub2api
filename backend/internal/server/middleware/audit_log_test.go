@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -128,6 +129,55 @@ func TestPromptAuditAdminOperationsUseOmittedBodiesAndAllowlistedDetails(t *test
 	require.Equal(t, "success", probe.Extra["result"])
 	require.Equal(t, "guard-1", probe.Extra["guard_endpoint_id"])
 	require.Equal(t, true, probe.Extra["token_applied"])
+}
+
+func TestAuditLogUsesTrustedClientIPWhenLegacyForwardedTrustIsEnabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repository := &auditCaptureRepository{}
+	auditService := service.NewAuditLogService(repository, nil)
+	auditService.Start()
+
+	cfg := &config.Config{}
+	cfg.SetTrustForwardedIPForAPIKeyACL(true)
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies([]string{"172.21.0.1/32"}))
+	router.Use(SessionBindingContext(cfg))
+	router.Use(gin.HandlerFunc(NewAuditLogMiddleware(auditService)))
+	router.PUT("/api/v1/admin/prompt-audit/config", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	requests := []struct {
+		remoteAddr string
+		xff        string
+		wantIP     string
+	}{
+		{remoteAddr: "9.9.9.9:12345", xff: "1.2.3.4", wantIP: "9.9.9.9"},
+		{
+			remoteAddr: "172.21.0.1:12345",
+			xff:        "198.51.100.99, 203.0.113.42",
+			wantIP:     "203.0.113.42",
+		},
+	}
+	for _, test := range requests {
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/admin/prompt-audit/config", bytes.NewBufferString(`{}`))
+		request.RemoteAddr = test.remoteAddr
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Forwarded-For", test.xff)
+		request.Header.Set("X-Real-IP", "6.6.6.6")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusOK, recorder.Code)
+	}
+	auditService.Stop()
+
+	repository.mu.Lock()
+	logs := append([]*service.AuditLog(nil), repository.logs...)
+	repository.mu.Unlock()
+	require.Len(t, logs, len(requests))
+	for index, test := range requests {
+		require.Equal(t, test.wantIP, logs[index].ClientIP)
+	}
 }
 
 func TestPromptAuditMutationAuditRoutesHaveStableActionsAndOmitBodies(t *testing.T) {

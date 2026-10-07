@@ -37,6 +37,13 @@ type paymentFulfillmentLease struct {
 // --- Payment Notification & Fulfillment ---
 
 func (s *PaymentService) HandlePaymentNotification(ctx context.Context, n *payment.PaymentNotification, pk string) error {
+	return s.handlePaymentNotification(ctx, n, pk, nil)
+}
+
+func (s *PaymentService) handlePaymentNotification(ctx context.Context, n *payment.PaymentNotification, pk string, confirmedResult *payment.QueryOrderResponse) error {
+	if n == nil {
+		return fmt.Errorf("payment notification is missing")
+	}
 	if n.Status != payment.NotificationStatusSuccess {
 		return nil
 	}
@@ -46,12 +53,21 @@ func (s *PaymentService) HandlePaymentNotification(ctx context.Context, n *payme
 		// Fallback only for true legacy "sub2_N" DB-ID payloads when the
 		// current out_trade_no lookup genuinely did not find an order.
 		if oid, ok := parseLegacyPaymentOrderID(n.OrderID, err); ok {
-			return s.confirmPayment(ctx, oid, n.TradeNo, n.Amount, pk, n.Metadata)
+			order, err = s.entClient.PaymentOrder.Get(ctx, oid)
 		}
-		if dbent.IsNotFound(err) {
+		if err != nil && dbent.IsNotFound(err) {
 			return fmt.Errorf("%w: out_trade_no=%s", ErrOrderNotFound, n.OrderID)
 		}
-		return fmt.Errorf("lookup order failed for out_trade_no %s: %w", n.OrderID, err)
+		if err != nil {
+			return fmt.Errorf("lookup order failed for out_trade_no %s: %w", n.OrderID, err)
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(pk), payment.TypeEasyPay) {
+		result, err := s.confirmEasyPayCallback(ctx, order, n, confirmedResult)
+		if err != nil {
+			return err
+		}
+		return s.confirmPayment(ctx, order.ID, result.TradeNo, result.Amount, pk, result.Metadata)
 	}
 	return s.confirmPayment(ctx, order.ID, n.TradeNo, n.Amount, pk, n.Metadata)
 }
@@ -113,7 +129,16 @@ func (s *PaymentService) confirmPayment(ctx context.Context, oid int64, tradeNo 
 		s.writeAuditLog(ctx, o.ID, "PAYMENT_AMOUNT_MISMATCH", pk, map[string]any{"expected": o.PayAmount, "paid": paid, "tradeNo": tradeNo})
 		return fmt.Errorf("amount mismatch: expected %s, got %s", strconv.FormatFloat(o.PayAmount, 'f', -1, 64), strconv.FormatFloat(paid, 'f', -1, 64))
 	}
-	return s.toPaid(ctx, o, tradeNo, paid, pk)
+	merchantID := ""
+	gatewayIdentity := ""
+	if strings.EqualFold(strings.TrimSpace(pk), payment.TypeEasyPay) {
+		merchantID = strings.TrimSpace(metadata["pid"])
+		gatewayIdentity = strings.TrimSpace(metadata["sub2api_gateway_identity"])
+		if merchantID == "" || gatewayIdentity == "" {
+			return fmt.Errorf("%w: merchant_identity_mismatch", ErrPaymentGatewayConfirmation)
+		}
+	}
+	return s.toPaid(ctx, o, tradeNo, paid, pk, merchantID, gatewayIdentity)
 }
 
 func paymentAmountToleranceForCurrency(currency string) float64 {
@@ -147,11 +172,11 @@ func expectedNotificationProviderKey(registry *payment.Registry, orderPaymentTyp
 	return strings.TrimSpace(orderPaymentType)
 }
 
-func (s *PaymentService) toPaid(ctx context.Context, o *dbent.PaymentOrder, tradeNo string, paid float64, pk string) error {
+func (s *PaymentService) toPaid(ctx context.Context, o *dbent.PaymentOrder, tradeNo string, paid float64, pk string, merchantID string, gatewayIdentity string) error {
 	previousStatus := o.Status
 	now := time.Now()
 	grace := now.Add(-paymentGraceMinutes * time.Minute)
-	c, err := s.entClient.PaymentOrder.Update().Where(
+	update := s.entClient.PaymentOrder.Update().Where(
 		paymentorder.IDEQ(o.ID),
 		paymentorder.Or(
 			paymentorder.StatusEQ(OrderStatusPending),
@@ -161,8 +186,23 @@ func (s *PaymentService) toPaid(ctx context.Context, o *dbent.PaymentOrder, trad
 				paymentorder.UpdatedAtGTE(grace),
 			),
 		),
-	).SetStatus(OrderStatusPaid).SetPayAmount(paid).SetPaymentTradeNo(tradeNo).SetPaidAt(now).ClearFailedAt().ClearFailedReason().Save(ctx)
+	).SetStatus(OrderStatusPaid).SetPayAmount(paid).SetPaymentTradeNo(tradeNo).SetPaidAt(now).ClearFailedAt().ClearFailedReason()
+	if strings.EqualFold(strings.TrimSpace(pk), payment.TypeEasyPay) {
+		if strings.TrimSpace(merchantID) == "" || strings.TrimSpace(gatewayIdentity) == "" || strings.TrimSpace(tradeNo) == "" {
+			return fmt.Errorf("%w: transaction_identity_missing", ErrPaymentGatewayConfirmation)
+		}
+		update.SetProviderKey(payment.TypeEasyPay).
+			SetProviderMerchantID(strings.TrimSpace(merchantID)).
+			SetProviderGatewayIdentity(strings.TrimSpace(gatewayIdentity))
+	}
+	c, err := update.Save(ctx)
 	if err != nil {
+		if strings.EqualFold(strings.TrimSpace(pk), payment.TypeEasyPay) && dbent.IsConstraintError(err) {
+			s.writeAuditLog(ctx, o.ID, "PAYMENT_GATEWAY_CONFIRMATION_FAILED", payment.TypeEasyPay, map[string]any{
+				"reason": "transaction_already_bound",
+			})
+			return fmt.Errorf("%w: transaction_already_bound", ErrPaymentGatewayConfirmation)
+		}
 		return fmt.Errorf("update to PAID: %w", err)
 	}
 	if c == 0 {
@@ -237,6 +277,9 @@ func (s *PaymentService) ExecuteBalanceFulfillment(ctx context.Context, oid int6
 	}
 	if o.Status != OrderStatusPaid && o.Status != OrderStatusFailed && o.Status != OrderStatusRecharging {
 		return infraerrors.BadRequest("INVALID_STATUS", "order cannot fulfill in status "+o.Status)
+	}
+	if err := s.confirmEasyPayFulfillment(ctx, o); err != nil {
+		return err
 	}
 	lease, err := s.acquirePaymentFulfillmentLease(ctx, o)
 	if err != nil {
@@ -522,6 +565,9 @@ func (s *PaymentService) ExecuteSubscriptionFulfillment(ctx context.Context, oid
 	}
 	if o.SubscriptionGroupID == nil || o.SubscriptionDays == nil {
 		return infraerrors.BadRequest("INVALID_STATUS", "missing subscription info")
+	}
+	if err := s.confirmEasyPayFulfillment(ctx, o); err != nil {
+		return err
 	}
 	lease, err := s.acquirePaymentFulfillmentLease(ctx, o)
 	if err != nil {

@@ -1,0 +1,16 @@
+{
+  "public_key": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm9jNiuZasGrUN4s1ssE0\nehRRSj9JxkVTAsRsOS55t6adjuZgfzk+DroeVa8rgzItg5rUhhvznoFILFr0xcFZ\nEZYr7lFuJGCAwLOQsgQD1T3nmPi5jdC5Xy9GSDrDLpeteRpQymqxVmueLeDulUKo\njAGWe856TCEOCBMl8Gd/SRTocLh4WZiMKWN9TPsqPqhfFjkegRLV7eRBCMfrObnz\na07WnELwCZ0q3BOWOTEXBm/Fc0Si4c1HU+e/G0XQdDn9O2aO4itRNN3RAqSoQebx\ncto3KizJzPITqcxNtYfCdTP2m48FAaPU0VXj4vdsxzMKtGZOhL2kpC9REFpnIhbl\noQIDAQAB\n-----END PUBLIC KEY-----\n",
+  "signature": "Eh0XpILo0DduobVfg81Cs3TosKyno95Vq4dzTwKSPRdignhOh/Mzmnfn8f+pbKcNi6bHcok1VF4dRdcKCSNVQERNE6Kvf6ULyfs5fDHgfE3uv2GkHK9hRwd4PyQnzYQYVRmSpaUvIqlxMeXxC6t+VxQdD5S9t8vNm6DnZ4po40DZOuyC6Px/RtcwSUqTQrMOkVJ8AFP8NxRmH3tKYZ93UvXfUund4VAwZ4R5lDhczCn0s2eY+iwXI2WrK130YFj3bFKmxnADkwJVRURfCPvXWxqjCtuKXh+1RHb2pZsJsyLwgyTLhWr8MQBNK5g36gxCx0G0CdyvK6cEVCX1ZA59fg==",
+  "fields": {
+    "key_id": "test_key-1",
+    "name": "中文 空格 &+=~",
+    "nonce_str": "00112233445566778899aabbccddeeff",
+    "out_trade_no": "订单 1",
+    "timestamp": "1791111111",
+    "trade_no": "gateway-1",
+    "money": "12.34",
+    "pid": "1001",
+    "type": "wxpay",
+    "trade_status": "TRADE_SUCCESS"
+  }
+}

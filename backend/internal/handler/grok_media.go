@@ -760,7 +760,7 @@ func recordGrokMediaUsage(
 		playgroundImageHold = playgroundHolds[0]
 	}
 	userAgent := c.GetHeader("User-Agent")
-	clientIP := ip.GetClientIP(c)
+	clientIP := ip.GetTrustedClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
 	payloadForHash := body
 	if len(payloadForHash) == 0 && strings.TrimSpace(requestID) != "" {

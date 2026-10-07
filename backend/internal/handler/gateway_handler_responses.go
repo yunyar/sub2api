@@ -174,7 +174,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		parsedReq = &service.ParsedRequest{Model: reqModel, Stream: reqStream, Body: bodyRef}
 	}
 	parsedReq.SessionContext = &service.SessionContext{
-		ClientIP:  ip.GetClientIP(c),
+		ClientIP:  ip.GetTrustedClientIP(c),
 		UserAgent: c.GetHeader("User-Agent"),
 		APIKeyID:  apiKey.ID,
 	}
@@ -335,7 +335,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 		// 6. Record usage
 		userAgent := c.GetHeader("User-Agent")
-		clientIP := ip.GetClientIP(c)
+		clientIP := ip.GetTrustedClientIP(c)
 		requestPayloadHash := service.HashUsageRequestPayload(body)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)

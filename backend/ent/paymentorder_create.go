@@ -253,6 +253,34 @@ func (_c *PaymentOrderCreate) SetNillableProviderKey(v *string) *PaymentOrderCre
 	return _c
 }
 
+// SetProviderMerchantID sets the "provider_merchant_id" field.
+func (_c *PaymentOrderCreate) SetProviderMerchantID(v string) *PaymentOrderCreate {
+	_c.mutation.SetProviderMerchantID(v)
+	return _c
+}
+
+// SetNillableProviderMerchantID sets the "provider_merchant_id" field if the given value is not nil.
+func (_c *PaymentOrderCreate) SetNillableProviderMerchantID(v *string) *PaymentOrderCreate {
+	if v != nil {
+		_c.SetProviderMerchantID(*v)
+	}
+	return _c
+}
+
+// SetProviderGatewayIdentity sets the "provider_gateway_identity" field.
+func (_c *PaymentOrderCreate) SetProviderGatewayIdentity(v string) *PaymentOrderCreate {
+	_c.mutation.SetProviderGatewayIdentity(v)
+	return _c
+}
+
+// SetNillableProviderGatewayIdentity sets the "provider_gateway_identity" field if the given value is not nil.
+func (_c *PaymentOrderCreate) SetNillableProviderGatewayIdentity(v *string) *PaymentOrderCreate {
+	if v != nil {
+		_c.SetProviderGatewayIdentity(*v)
+	}
+	return _c
+}
+
 // SetProviderSnapshot sets the "provider_snapshot" field.
 func (_c *PaymentOrderCreate) SetProviderSnapshot(v map[string]interface{}) *PaymentOrderCreate {
 	_c.mutation.SetProviderSnapshot(v)
@@ -648,6 +676,16 @@ func (_c *PaymentOrderCreate) check() error {
 			return &ValidationError{Name: "provider_key", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_key": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.ProviderMerchantID(); ok {
+		if err := paymentorder.ProviderMerchantIDValidator(v); err != nil {
+			return &ValidationError{Name: "provider_merchant_id", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_merchant_id": %w`, err)}
+		}
+	}
+	if v, ok := _c.mutation.ProviderGatewayIdentity(); ok {
+		if err := paymentorder.ProviderGatewayIdentityValidator(v); err != nil {
+			return &ValidationError{Name: "provider_gateway_identity", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_gateway_identity": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		return &ValidationError{Name: "status", err: errors.New(`ent: missing required field "PaymentOrder.status"`)}
 	}
@@ -801,6 +839,14 @@ func (_c *PaymentOrderCreate) createSpec() (*PaymentOrder, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.ProviderKey(); ok {
 		_spec.SetField(paymentorder.FieldProviderKey, field.TypeString, value)
 		_node.ProviderKey = &value
+	}
+	if value, ok := _c.mutation.ProviderMerchantID(); ok {
+		_spec.SetField(paymentorder.FieldProviderMerchantID, field.TypeString, value)
+		_node.ProviderMerchantID = &value
+	}
+	if value, ok := _c.mutation.ProviderGatewayIdentity(); ok {
+		_spec.SetField(paymentorder.FieldProviderGatewayIdentity, field.TypeString, value)
+		_node.ProviderGatewayIdentity = &value
 	}
 	if value, ok := _c.mutation.ProviderSnapshot(); ok {
 		_spec.SetField(paymentorder.FieldProviderSnapshot, field.TypeJSON, value)
@@ -1292,6 +1338,42 @@ func (u *PaymentOrderUpsert) UpdateProviderKey() *PaymentOrderUpsert {
 // ClearProviderKey clears the value of the "provider_key" field.
 func (u *PaymentOrderUpsert) ClearProviderKey() *PaymentOrderUpsert {
 	u.SetNull(paymentorder.FieldProviderKey)
+	return u
+}
+
+// SetProviderMerchantID sets the "provider_merchant_id" field.
+func (u *PaymentOrderUpsert) SetProviderMerchantID(v string) *PaymentOrderUpsert {
+	u.Set(paymentorder.FieldProviderMerchantID, v)
+	return u
+}
+
+// UpdateProviderMerchantID sets the "provider_merchant_id" field to the value that was provided on create.
+func (u *PaymentOrderUpsert) UpdateProviderMerchantID() *PaymentOrderUpsert {
+	u.SetExcluded(paymentorder.FieldProviderMerchantID)
+	return u
+}
+
+// ClearProviderMerchantID clears the value of the "provider_merchant_id" field.
+func (u *PaymentOrderUpsert) ClearProviderMerchantID() *PaymentOrderUpsert {
+	u.SetNull(paymentorder.FieldProviderMerchantID)
+	return u
+}
+
+// SetProviderGatewayIdentity sets the "provider_gateway_identity" field.
+func (u *PaymentOrderUpsert) SetProviderGatewayIdentity(v string) *PaymentOrderUpsert {
+	u.Set(paymentorder.FieldProviderGatewayIdentity, v)
+	return u
+}
+
+// UpdateProviderGatewayIdentity sets the "provider_gateway_identity" field to the value that was provided on create.
+func (u *PaymentOrderUpsert) UpdateProviderGatewayIdentity() *PaymentOrderUpsert {
+	u.SetExcluded(paymentorder.FieldProviderGatewayIdentity)
+	return u
+}
+
+// ClearProviderGatewayIdentity clears the value of the "provider_gateway_identity" field.
+func (u *PaymentOrderUpsert) ClearProviderGatewayIdentity() *PaymentOrderUpsert {
+	u.SetNull(paymentorder.FieldProviderGatewayIdentity)
 	return u
 }
 
@@ -2031,6 +2113,48 @@ func (u *PaymentOrderUpsertOne) UpdateProviderKey() *PaymentOrderUpsertOne {
 func (u *PaymentOrderUpsertOne) ClearProviderKey() *PaymentOrderUpsertOne {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.ClearProviderKey()
+	})
+}
+
+// SetProviderMerchantID sets the "provider_merchant_id" field.
+func (u *PaymentOrderUpsertOne) SetProviderMerchantID(v string) *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetProviderMerchantID(v)
+	})
+}
+
+// UpdateProviderMerchantID sets the "provider_merchant_id" field to the value that was provided on create.
+func (u *PaymentOrderUpsertOne) UpdateProviderMerchantID() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateProviderMerchantID()
+	})
+}
+
+// ClearProviderMerchantID clears the value of the "provider_merchant_id" field.
+func (u *PaymentOrderUpsertOne) ClearProviderMerchantID() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearProviderMerchantID()
+	})
+}
+
+// SetProviderGatewayIdentity sets the "provider_gateway_identity" field.
+func (u *PaymentOrderUpsertOne) SetProviderGatewayIdentity(v string) *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetProviderGatewayIdentity(v)
+	})
+}
+
+// UpdateProviderGatewayIdentity sets the "provider_gateway_identity" field to the value that was provided on create.
+func (u *PaymentOrderUpsertOne) UpdateProviderGatewayIdentity() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateProviderGatewayIdentity()
+	})
+}
+
+// ClearProviderGatewayIdentity clears the value of the "provider_gateway_identity" field.
+func (u *PaymentOrderUpsertOne) ClearProviderGatewayIdentity() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearProviderGatewayIdentity()
 	})
 }
 
@@ -2984,6 +3108,48 @@ func (u *PaymentOrderUpsertBulk) UpdateProviderKey() *PaymentOrderUpsertBulk {
 func (u *PaymentOrderUpsertBulk) ClearProviderKey() *PaymentOrderUpsertBulk {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.ClearProviderKey()
+	})
+}
+
+// SetProviderMerchantID sets the "provider_merchant_id" field.
+func (u *PaymentOrderUpsertBulk) SetProviderMerchantID(v string) *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetProviderMerchantID(v)
+	})
+}
+
+// UpdateProviderMerchantID sets the "provider_merchant_id" field to the value that was provided on create.
+func (u *PaymentOrderUpsertBulk) UpdateProviderMerchantID() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateProviderMerchantID()
+	})
+}
+
+// ClearProviderMerchantID clears the value of the "provider_merchant_id" field.
+func (u *PaymentOrderUpsertBulk) ClearProviderMerchantID() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearProviderMerchantID()
+	})
+}
+
+// SetProviderGatewayIdentity sets the "provider_gateway_identity" field.
+func (u *PaymentOrderUpsertBulk) SetProviderGatewayIdentity(v string) *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetProviderGatewayIdentity(v)
+	})
+}
+
+// UpdateProviderGatewayIdentity sets the "provider_gateway_identity" field to the value that was provided on create.
+func (u *PaymentOrderUpsertBulk) UpdateProviderGatewayIdentity() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateProviderGatewayIdentity()
+	})
+}
+
+// ClearProviderGatewayIdentity clears the value of the "provider_gateway_identity" field.
+func (u *PaymentOrderUpsertBulk) ClearProviderGatewayIdentity() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearProviderGatewayIdentity()
 	})
 }
 

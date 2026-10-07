@@ -140,6 +140,9 @@ docs/*
 !docs/BATCH_IMAGE_MVP.md
 !docs/COMPOSITE_GROUPS.md
 !docs/CUSTOM_PLAYGROUND.md
+!docs/EASYPAY_RSA2.md
+!docs/PAYMENT_CLIENT_IP_SECURITY.md
+!docs/PAYMENT_SECURITY_VERIFICATION.md
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/codex-credits.md

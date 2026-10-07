@@ -56,6 +56,10 @@ const (
 	FieldProviderInstanceID = "provider_instance_id"
 	// FieldProviderKey holds the string denoting the provider_key field in the database.
 	FieldProviderKey = "provider_key"
+	// FieldProviderMerchantID holds the string denoting the provider_merchant_id field in the database.
+	FieldProviderMerchantID = "provider_merchant_id"
+	// FieldProviderGatewayIdentity holds the string denoting the provider_gateway_identity field in the database.
+	FieldProviderGatewayIdentity = "provider_gateway_identity"
 	// FieldProviderSnapshot holds the string denoting the provider_snapshot field in the database.
 	FieldProviderSnapshot = "provider_snapshot"
 	// FieldStatus holds the string denoting the status field in the database.
@@ -131,6 +135,8 @@ var Columns = []string{
 	FieldSubscriptionDays,
 	FieldProviderInstanceID,
 	FieldProviderKey,
+	FieldProviderMerchantID,
+	FieldProviderGatewayIdentity,
 	FieldProviderSnapshot,
 	FieldStatus,
 	FieldRefundAmount,
@@ -189,6 +195,10 @@ var (
 	ProviderInstanceIDValidator func(string) error
 	// ProviderKeyValidator is a validator for the "provider_key" field. It is called by the builders before save.
 	ProviderKeyValidator func(string) error
+	// ProviderMerchantIDValidator is a validator for the "provider_merchant_id" field. It is called by the builders before save.
+	ProviderMerchantIDValidator func(string) error
+	// ProviderGatewayIdentityValidator is a validator for the "provider_gateway_identity" field. It is called by the builders before save.
+	ProviderGatewayIdentityValidator func(string) error
 	// DefaultStatus holds the default value on creation for the "status" field.
 	DefaultStatus string
 	// StatusValidator is a validator for the "status" field. It is called by the builders before save.
@@ -322,6 +332,16 @@ func ByProviderInstanceID(opts ...sql.OrderTermOption) OrderOption {
 // ByProviderKey orders the results by the provider_key field.
 func ByProviderKey(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProviderKey, opts...).ToFunc()
+}
+
+// ByProviderMerchantID orders the results by the provider_merchant_id field.
+func ByProviderMerchantID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderMerchantID, opts...).ToFunc()
+}
+
+// ByProviderGatewayIdentity orders the results by the provider_gateway_identity field.
+func ByProviderGatewayIdentity(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderGatewayIdentity, opts...).ToFunc()
 }
 
 // ByStatus orders the results by the status field.

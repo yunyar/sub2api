@@ -17,63 +17,105 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 	tests := []struct {
 		name        string
 		body        string
+		statusCode  int
+		wantError   bool
 		wantStatus  string
 		wantTradeNo string
 		wantAmount  float64
 	}{
 		{
 			name:        "top level trade success is paid",
-			body:        `{"code":1,"trade_status":"TRADE_SUCCESS","status":0,"money":"12.34","trade_no":"gateway-123"}`,
+			body:        `{"code":1,"pid":"pid-1","trade_status":"TRADE_SUCCESS","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
 			wantStatus:  payment.ProviderStatusPaid,
 			wantTradeNo: "gateway-123",
 			wantAmount:  12.34,
 		},
 		{
-			name:        "waiting trade status with paid numeric status stays pending",
-			body:        `{"code":1,"trade_status":"WAITING","status":1,"money":"12.34","trade_no":"gateway-123"}`,
-			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: "gateway-123",
-			wantAmount:  12.34,
+			name:      "waiting trade status conflicts with paid numeric status",
+			body:      `{"code":1,"trade_status":"WAITING","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			wantError: true,
 		},
 		{
-			name:        "empty trade status with paid numeric status stays pending",
-			body:        `{"code":1,"trade_status":"","status":1,"money":"12.34"}`,
-			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
-			wantAmount:  12.34,
+			name:      "empty trade status conflicts with paid numeric status",
+			body:      `{"code":1,"trade_status":"","status":1,"money":"12.34","out_trade_no":"order-123"}`,
+			wantError: true,
 		},
 		{
 			name:        "nested data trade success is paid",
-			body:        `{"code":1,"data":{"trade_status":"TRADE_SUCCESS","status":0,"money":"9.99","trade_no":"data-456"}}`,
+			body:        `{"code":1,"data":{"pid":"pid-1","trade_status":"TRADE_SUCCESS","status":1,"money":"9.99","trade_no":"data-456","out_trade_no":"order-123"}}`,
 			wantStatus:  payment.ProviderStatusPaid,
 			wantTradeNo: "data-456",
 			wantAmount:  9.99,
 		},
 		{
 			name:        "legacy numeric paid status remains compatible",
-			body:        `{"code":1,"status":1,"money":"3.21"}`,
+			body:        `{"code":1,"pid":"pid-1","status":1,"money":"3.21","trade_no":"gateway-legacy-123","out_trade_no":"order-123"}`,
 			wantStatus:  payment.ProviderStatusPaid,
-			wantTradeNo: orderID,
+			wantTradeNo: "gateway-legacy-123",
 			wantAmount:  3.21,
 		},
 		{
 			name:        "legacy numeric non paid status is pending",
 			body:        `{"code":1,"status":0,"money":"3.21"}`,
 			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
+			wantTradeNo: "",
 			wantAmount:  3.21,
 		},
 		{
-			name:        "query failure with missing status is pending",
-			body:        `{"code":0,"msg":"订单不存在"}`,
-			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
+			name:      "trade success conflicts with unpaid numeric status",
+			body:      `{"code":1,"pid":"pid-1","trade_status":"TRADE_SUCCESS","status":0,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			wantError: true,
 		},
 		{
-			name:        "missing fields are pending",
-			body:        `{}`,
-			wantStatus:  payment.ProviderStatusPending,
-			wantTradeNo: orderID,
+			name:      "cross-level payment statuses conflict",
+			body:      `{"code":1,"pid":"pid-1","trade_status":"TRADE_SUCCESS","data":{"status":0},"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			wantError: true,
+		},
+		{
+			name:      "paid response missing merchant cannot authorize credit",
+			body:      `{"code":1,"status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			wantError: true,
+		},
+		{
+			name:      "paid response missing order cannot authorize credit",
+			body:      `{"code":1,"pid":"pid-1","status":1,"money":"12.34","trade_no":"gateway-123"}`,
+			wantError: true,
+		},
+		{
+			name:      "query failure is an error",
+			body:      `{"code":0,"msg":"订单不存在"}`,
+			wantError: true,
+		},
+		{
+			name:      "missing code is an error",
+			body:      `{}`,
+			wantError: true,
+		},
+		{
+			name:      "duplicate JSON key is an error",
+			body:      `{"code":1,"code":0,"trade_status":"TRADE_SUCCESS","money":"12.34","trade_no":"gateway-123"}`,
+			wantError: true,
+		},
+		{
+			name:      "different returned order reference is an error",
+			body:      `{"code":1,"trade_status":"TRADE_SUCCESS","money":"12.34","trade_no":"gateway-123","out_trade_no":"another-order"}`,
+			wantError: true,
+		},
+		{
+			name:      "paid response without transaction id is an error",
+			body:      `{"code":1,"trade_status":"TRADE_SUCCESS","money":"12.34","out_trade_no":"order-123"}`,
+			wantError: true,
+		},
+		{
+			name:      "non-finite paid amount is an error",
+			body:      `{"code":1,"trade_status":"TRADE_SUCCESS","money":"NaN","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			wantError: true,
+		},
+		{
+			name:       "HTTP error response cannot confirm payment",
+			body:       `{"code":1,"trade_status":"TRADE_SUCCESS","money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			statusCode: http.StatusInternalServerError,
+			wantError:  true,
 		},
 	}
 
@@ -98,6 +140,9 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 					gotForm[key] = append([]string(nil), values...)
 				}
 				w.Header().Set("Content-Type", "application/json")
+				if tt.statusCode != 0 {
+					w.WriteHeader(tt.statusCode)
+				}
 				_, _ = w.Write([]byte(tt.body))
 			}))
 			defer server.Close()
@@ -105,7 +150,16 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			provider := newTestEasyPay(t, server.URL)
 			resp, err := provider.QueryOrder(context.Background(), orderID)
 			if err != nil {
-				t.Fatalf("QueryOrder returned error: %v", err)
+				if !tt.wantError {
+					t.Fatalf("QueryOrder returned unexpected error: %v", err)
+				}
+				return
+			}
+			if tt.wantError {
+				t.Fatal("QueryOrder returned no error")
+			}
+			if resp == nil {
+				t.Fatal("QueryOrder returned nil response")
 			}
 			if resp.Status != tt.wantStatus {
 				t.Fatalf("status = %q, want %q (response=%+v)", resp.Status, tt.wantStatus, resp)

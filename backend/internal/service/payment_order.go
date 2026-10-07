@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/payment/provider"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	clientip "github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 	"github.com/shopspring/decimal"
 )
@@ -49,6 +50,12 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	}
 	if user.Status != payment.EntityStatusActive {
 		return nil, infraerrors.Forbidden("USER_INACTIVE", "user account is disabled")
+	}
+	req.ClientIP = clientip.PublicClientIP(req.ClientIP)
+	if s.riskService != nil {
+		if err := s.riskService.RecordUserIP(ctx, req.UserID, req.ClientIP, "payment"); err != nil {
+			return nil, err
+		}
 	}
 	if s.notificationEmailService != nil {
 		s.notificationEmailService.RememberRecipientLocale(ctx, req.UserID, user.Email, req.Locale)
@@ -105,6 +112,21 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if oauthResp != nil {
 		return oauthResp, nil
 	}
+	var reservation string
+	checkoutCreated := false
+	if s.riskService != nil {
+		reservation, err = s.riskService.ReserveRecharge(ctx, req.UserID, req.ClientIP)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			riskCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if finishErr := s.riskService.FinishRecharge(riskCtx, reservation, checkoutCreated); finishErr != nil {
+				slog.Error("payment recharge reservation finalization failed", "user_id", req.UserID, "error", finishErr)
+			}
+		}()
+	}
 	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, orderAmount, limitAmount, feeRate, payAmount, bonusAmount, sel)
 	if err != nil {
 		return nil, err
@@ -116,6 +138,7 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 			Save(ctx)
 		return nil, err
 	}
+	checkoutCreated = true
 	return resp, nil
 }
 
@@ -160,6 +183,25 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		return nil, fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if s.riskService != nil && req.ClientIP != "" {
+		if err := paymentRiskLock(ctx, tx.Client(), req.ClientIP, time.Now().Unix()); err != nil {
+			return nil, err
+		}
+		blocked, err := paymentRiskIPBlocked(ctx, tx.Client(), req.ClientIP)
+		if err != nil {
+			return nil, err
+		}
+		if blocked {
+			return nil, ErrPaymentRiskIPBlocked
+		}
+		currentUser, err := tx.User.Get(ctx, req.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if currentUser.Status != StatusActive {
+			return nil, infraerrors.Forbidden("USER_INACTIVE", "user account is disabled")
+		}
+	}
 	if err := s.checkPendingLimit(ctx, tx, req.UserID, cfg.MaxPendingOrders); err != nil {
 		return nil, err
 	}
@@ -208,6 +250,11 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 	}
 	if selectedProviderKey != "" {
 		b.SetProviderKey(selectedProviderKey)
+	}
+	if selectedProviderKey == payment.TypeEasyPay && providerSnapshot != nil {
+		if gatewayIdentity := psSnapshotStringValue(providerSnapshot["gateway_identity"]); gatewayIdentity != "" {
+			b.SetProviderGatewayIdentity(gatewayIdentity)
+		}
 	}
 	if providerSnapshot != nil {
 		b.SetProviderSnapshot(providerSnapshot)
@@ -300,6 +347,18 @@ func buildPaymentOrderProviderSnapshot(sel *payment.InstanceSelection, req Creat
 	if providerKey == payment.TypeEasyPay {
 		if merchantID := strings.TrimSpace(sel.Config["pid"]); merchantID != "" {
 			snapshot["merchant_id"] = merchantID
+		}
+		if gatewayIdentity := provider.EasyPayGatewayIdentity(sel.Config["apiBase"]); gatewayIdentity != "" {
+			snapshot["gateway_identity"] = gatewayIdentity
+		}
+		signType := normalizeEasyPayGatewaySignType(providerConfigFieldValue(sel.Config, "gatewaySignType"))
+		snapshot["schema_version"] = 3
+		snapshot["gateway_sign_type"] = signType
+		if signType == "RSA2" {
+			snapshot["gateway_key_id"] = strings.TrimSpace(providerConfigFieldValue(sel.Config, "gatewayKeyId"))
+			if fingerprint := easyPayPublicKeyFingerprint(providerConfigFieldValue(sel.Config, "gatewayPublicKey")); fingerprint != "" {
+				snapshot["gateway_public_key_sha256"] = fingerprint
+			}
 		}
 	}
 	if providerKey == payment.TypeStripe {
@@ -404,6 +463,11 @@ func (s *PaymentService) usesOfficialWxpayVisibleMethod(ctx context.Context) boo
 }
 
 func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.PaymentOrder, req CreateOrderRequest, cfg *PaymentConfig, limitAmount float64, payAmountStr string, payAmount float64, plan *dbent.SubscriptionPlan, sel *payment.InstanceSelection) (*CreateOrderResponse, error) {
+	if s.riskService != nil {
+		if err := s.riskService.CheckIP(ctx, req.ClientIP); err != nil {
+			return nil, err
+		}
+	}
 	prov, err := provider.CreateProvider(sel.ProviderKey, sel.InstanceID, sel.Config)
 	if err != nil {
 		slog.Error("[PaymentService] CreateProvider failed", "provider", sel.ProviderKey, "instance", sel.InstanceID, "error", err)

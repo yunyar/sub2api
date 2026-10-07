@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -32,7 +31,7 @@ func Logger() gin.HandlerFunc {
 
 		method := c.Request.Method
 		statusCode := c.Writer.Status()
-		clientIP := ip.GetClientIP(c)
+		clientIP := SecurityClientIP(c)
 		protocol := c.Request.Proto
 		accountID, hasAccountID := c.Request.Context().Value(ctxkey.AccountID).(int64)
 		platform, _ := c.Request.Context().Value(ctxkey.Platform).(string)
@@ -58,6 +57,7 @@ func Logger() gin.HandlerFunc {
 			zap.Int("status_code", statusCode),
 			zap.Int64("latency_ms", latency.Milliseconds()),
 			zap.String("client_ip", clientIP),
+			zap.String("peer_ip", c.RemoteIP()),
 			zap.String("protocol", protocol),
 			zap.String("method", method),
 			zap.String("path", path),

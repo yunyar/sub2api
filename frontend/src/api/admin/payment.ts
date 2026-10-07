@@ -13,6 +13,21 @@ import type {
 } from '@/types/payment'
 import type { BasePaginationResponse } from '@/types'
 
+export interface PaymentRechargeRiskIPListFilter {
+  page?: number
+  page_size?: number
+}
+
+export interface PaymentRechargeRiskIPRecord {
+  ip: string
+  reason: string
+  evidence: string
+  actor: string
+  created_at: number
+  active: boolean
+  linked_users: number
+}
+
 /** Admin-facing payment config returned by GET /admin/payment/config */
 export interface AdminPaymentConfig {
   enabled: boolean
@@ -81,6 +96,24 @@ export const adminPaymentAPI = {
     return apiClient.get<DashboardStats>('/admin/payment/dashboard', {
       params: days ? { days } : undefined
     })
+  },
+
+  // ==================== Recharge Risk ====================
+
+  listRiskIPs(params?: PaymentRechargeRiskIPListFilter) {
+    return apiClient.get<BasePaginationResponse<PaymentRechargeRiskIPRecord>>('/admin/payment/risk-ips', { params })
+  },
+
+  blockRiskOrderIP(data: { order_id: number; reason: string; confirm: true }) {
+    return apiClient.post('/admin/payment/risk-ips/block-order', data)
+  },
+
+  unblockRiskIP(data: { ip: string; reason: string; confirm: true }) {
+    return apiClient.post('/admin/payment/risk-ips/unblock', data)
+  },
+
+  scanBlockedRiskAccounts(data: { confirm: true }) {
+    return apiClient.post<{ restricted_accounts: number }>('/admin/payment/risk-ips/scan', data)
   },
 
   // ==================== Orders ====================

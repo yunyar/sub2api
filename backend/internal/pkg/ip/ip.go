@@ -3,16 +3,22 @@ package ip
 
 import (
 	"net"
+	"net/netip"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
 const forwardedIPSettingsKey = "sub2api.forwarded_ip_settings"
+const trustedProxySnapshotKey = "sub2api.trusted_proxy_snapshot"
 
 type forwardedIPSettings struct {
 	trustForwarded bool
 	headers        []string
+}
+
+type trustedProxySnapshot struct {
+	prefixes []netip.Prefix
 }
 
 // SetForwardedIPSettings snapshots the forwarded-IP mode and custom header list
@@ -25,6 +31,35 @@ func SetForwardedIPSettings(c *gin.Context, enabled bool, headers []string) {
 		trustForwarded: enabled,
 		headers:        append([]string(nil), headers...),
 	})
+}
+
+// SetTrustedProxySnapshot snapshots the proxy ranges used by the Gin engine.
+// GetTrustedPublicClientIP uses it to avoid recording the proxy itself when a
+// trusted proxy request arrives without a client address in the forwarded chain.
+func SetTrustedProxySnapshot(c *gin.Context, proxies []string) {
+	if c == nil {
+		return
+	}
+
+	prefixes := make([]netip.Prefix, 0, len(proxies))
+	for _, proxy := range proxies {
+		proxy = strings.TrimSpace(proxy)
+		if prefix, err := netip.ParsePrefix(proxy); err == nil {
+			prefixes = append(prefixes, prefix.Masked())
+			continue
+		}
+		address, err := netip.ParseAddr(proxy)
+		if err != nil {
+			continue
+		}
+		address = address.Unmap()
+		prefixLength := 128
+		if address.Is4() {
+			prefixLength = 32
+		}
+		prefixes = append(prefixes, netip.PrefixFrom(address, prefixLength))
+	}
+	c.Set(trustedProxySnapshotKey, trustedProxySnapshot{prefixes: prefixes})
 }
 
 // SetLegacyForwardedIPTrust records whether raw forwarding headers override
@@ -157,10 +192,65 @@ func GetTrustedClientIP(c *gin.Context) string {
 	return normalizeIP(c.ClientIP())
 }
 
-// GetSecurityClientIP returns the address used by security-sensitive paths.
-// When legacy forwarded-IP trust is enabled, raw forwarding headers take over
-// client-IP resolution. When disabled, Gin's server.trusted_proxies chain is
-// authoritative.
+// GetTrustedPublicClientIP returns a canonical global client address resolved
+// through Gin's trusted-proxy chain. It returns an empty string for invalid,
+// special-purpose, private, or unresolved trusted-proxy addresses.
+func GetTrustedPublicClientIP(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	publicIP := PublicClientIP(GetTrustedClientIP(c))
+	address, err := netip.ParseAddr(publicIP)
+	if err != nil || address.Zone() != "" {
+		return ""
+	}
+	address = address.Unmap()
+	if peer, ok := requestPeerAddress(c); ok && peer == address && isTrustedProxyPeer(c, peer) {
+		return ""
+	}
+	return address.String()
+}
+
+func requestPeerAddress(c *gin.Context) (netip.Addr, bool) {
+	if c == nil || c.Request == nil {
+		return netip.Addr{}, false
+	}
+	remoteAddr := strings.TrimSpace(c.Request.RemoteAddr)
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = strings.Trim(remoteAddr, "[]")
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil || address.Zone() != "" {
+		return netip.Addr{}, false
+	}
+	return address.Unmap(), true
+}
+
+func isTrustedProxyPeer(c *gin.Context, peer netip.Addr) bool {
+	if c == nil || !peer.IsValid() {
+		return false
+	}
+	value, ok := c.Get(trustedProxySnapshotKey)
+	if !ok {
+		return false
+	}
+	snapshot, ok := value.(trustedProxySnapshot)
+	if !ok {
+		return false
+	}
+	for _, prefix := range snapshot.prefixes {
+		if prefix.Contains(peer) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetSecurityClientIP preserves the legacy forwarded-IP compatibility mode for
+// existing callers. When enabled, raw forwarding headers take over resolution
+// without validating the direct peer. Payment, session identity, and audit
+// paths must use GetTrustedClientIP instead.
 func GetSecurityClientIP(c *gin.Context, trustForwarded bool) string {
 	if requestSettings, ok := requestForwardedIPSettings(c); ok {
 		trustForwarded = requestSettings.trustForwarded
