@@ -84,15 +84,15 @@ func TestEasyPayQueryMetadataChecksRSAIdentityWhenPresent(t *testing.T) {
 			"gateway_public_key_sha256": "fingerprint-1",
 		},
 	}
-	require.NoError(t, validateEasyPayQueryMetadata(order, map[string]string{
+	require.NoError(t, validateEasyPayQueryMetadataWithExpectation(order, map[string]string{
 		"pid": "merchant-1", "out_trade_no": "order-1", "sign_type": "RSA2",
 		"key_id": "gateway-key-1", "public_key_sha256": "fingerprint-1",
-	}))
-	require.Error(t, validateEasyPayQueryMetadata(order, map[string]string{
+	}, easyPayQueryExpectation{}))
+	require.Error(t, validateEasyPayQueryMetadataWithExpectation(order, map[string]string{
 		"pid": "merchant-1", "out_trade_no": "order-1", "key_id": "gateway-key-1",
-	}))
-	require.Error(t, validateEasyPayQueryMetadata(order, map[string]string{"pid": "merchant-2"}))
-	require.Error(t, validateEasyPayQueryMetadata(order, map[string]string{"key_id": "gateway-key-2"}))
-	require.Error(t, validateEasyPayQueryMetadata(order, map[string]string{"sign_type": "MD5"}))
-	require.Error(t, validateEasyPayQueryMetadata(order, nil))
+	}, easyPayQueryExpectation{}))
+	require.Error(t, validateEasyPayQueryMetadataWithExpectation(order, map[string]string{"pid": "merchant-2"}, easyPayQueryExpectation{}))
+	require.Error(t, validateEasyPayQueryMetadataWithExpectation(order, map[string]string{"key_id": "gateway-key-2"}, easyPayQueryExpectation{}))
+	require.Error(t, validateEasyPayQueryMetadataWithExpectation(order, map[string]string{"sign_type": "MD5"}, easyPayQueryExpectation{}))
+	require.Error(t, validateEasyPayQueryMetadataWithExpectation(order, nil, easyPayQueryExpectation{}))
 }

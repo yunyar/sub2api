@@ -384,10 +384,6 @@ func (s *PaymentService) blockEasyPayRSA2AmountMismatch(
 	}
 }
 
-func validateEasyPayQueryMetadata(order *dbent.PaymentOrder, metadata map[string]string) error {
-	return validateEasyPayQueryMetadataWithExpectation(order, metadata, easyPayQueryExpectation{})
-}
-
 func validateEasyPayQueryMetadataWithExpectation(
 	order *dbent.PaymentOrder,
 	metadata map[string]string,
@@ -417,7 +413,7 @@ func validateEasyPayQueryMetadataWithExpectation(
 		return fmt.Errorf("easypay expected signing mode is unsupported")
 	}
 	if snapshotSignType != "" && signType != "" && signType != snapshotSignType &&
-		!(snapshotSignType == "MD5" && expectation.SignType == "RSA2" && signType == "RSA2") {
+		(snapshotSignType != "MD5" || expectation.SignType != "RSA2" || signType != "RSA2") {
 		return fmt.Errorf("easypay query sign type mismatch")
 	}
 	if expectation.SignType == "RSA2" && signType != "RSA2" {
@@ -501,7 +497,7 @@ func (s *PaymentService) validateEasyPayProviderSnapshot(
 		if snapshotSignType != "MD5" && snapshotSignType != "RSA2" {
 			return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot signing mode is unsupported")
 		}
-		if snapshotSignType != configSignType && !(snapshotSignType == "MD5" && configSignType == "RSA2") {
+		if snapshotSignType != configSignType && (snapshotSignType != "MD5" || configSignType != "RSA2") {
 			return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot sign type mismatch")
 		}
 	}
