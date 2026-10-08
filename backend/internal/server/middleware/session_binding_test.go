@@ -44,6 +44,13 @@ func TestSessionBindingContextUsesTrustedProxyProvenance(t *testing.T) {
 			wantIP:       "127.0.0.1",
 		},
 		{
+			name:           "unconfigured docker proxy peer is not inferred from forwarded headers",
+			trustForwarded: true,
+			remoteAddr:     "172.21.0.1:54321",
+			forwardedFor:   "8.8.8.8",
+			wantIP:         "172.21.0.1",
+		},
+		{
 			name:           "trusted proxy chain resolves client and rejects spoofed prefix",
 			trustForwarded: true,
 			trustedProxies: []string{"172.21.0.1/32"},
@@ -51,6 +58,14 @@ func TestSessionBindingContextUsesTrustedProxyProvenance(t *testing.T) {
 			forwardedFor:   "198.51.100.99, 8.8.8.8",
 			wantIP:         "8.8.8.8",
 			wantRiskIP:     "8.8.8.8",
+		},
+		{
+			name:           "trusted proxy private client is excluded from payment risk context",
+			trustForwarded: true,
+			trustedProxies: []string{"172.21.0.1/32"},
+			remoteAddr:     "172.21.0.1:54321",
+			forwardedFor:   "8.8.8.8, 10.1.2.3",
+			wantIP:         "10.1.2.3",
 		},
 		{
 			name:           "trusted public proxy without forwarded client is not risk evidence",

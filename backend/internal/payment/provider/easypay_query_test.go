@@ -24,11 +24,21 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 		wantAmount  float64
 	}{
 		{
-			name:        "top level trade success is paid",
+			name:        "PayPro legacy response accepts matching pid",
 			body:        `{"code":1,"pid":"pid-1","trade_status":"TRADE_SUCCESS","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
 			wantStatus:  payment.ProviderStatusPaid,
 			wantTradeNo: "gateway-123",
 			wantAmount:  12.34,
+		},
+		{
+			name:      "PayPro legacy response rejects mismatched pid",
+			body:      `{"code":1,"pid":"other-pid","trade_status":"TRADE_SUCCESS","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			wantError: true,
+		},
+		{
+			name:      "PayPro legacy response rejects empty pid",
+			body:      `{"code":1,"pid":"","trade_status":"TRADE_SUCCESS","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
+			wantError: true,
 		},
 		{
 			name:      "waiting trade status conflicts with paid numeric status",
@@ -41,7 +51,7 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name:        "nested data trade success is paid",
+			name:        "PayPro legacy nested response accepts matching pid",
 			body:        `{"code":1,"data":{"pid":"pid-1","trade_status":"TRADE_SUCCESS","status":1,"money":"9.99","trade_no":"data-456","out_trade_no":"order-123"}}`,
 			wantStatus:  payment.ProviderStatusPaid,
 			wantTradeNo: "data-456",
@@ -72,7 +82,7 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name:      "paid response missing merchant cannot authorize credit",
+			name:      "PayPro legacy response missing pid cannot authorize credit",
 			body:      `{"code":1,"status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}`,
 			wantError: true,
 		},

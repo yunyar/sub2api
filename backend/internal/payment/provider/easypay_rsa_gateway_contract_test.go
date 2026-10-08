@@ -2,9 +2,15 @@ package provider
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +21,160 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 )
+
+func TestEasyPayPayProRSA2CallbackFormContract(t *testing.T) {
+	privateKey := generateEasyPayRSATestKey(t)
+	provider := newEasyPayRSAProvider(t, "http://gateway.invalid", &privateKey.PublicKey)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	fields := map[string]string{
+		"pid": "pid-1", "out_trade_no": "order-42", "trade_no": "gateway-42",
+		"type": "wxpay", "name": "Recharge 中文 &+=~", "money": "12.34",
+		"trade_status": tradeStatusSuccess, "key_id": "test-key-1",
+		"timestamp": timestamp, "nonce_str": "00112233445566778899aabbccddeeff",
+		"sign_type": signTypeRSA2,
+	}
+	canonical := "sub2api-easypay-notify-v1\n" +
+		"key_id=test-key-1&money=12.34&name=Recharge%20%E4%B8%AD%E6%96%87%20%26%2B%3D~" +
+		"&nonce_str=00112233445566778899aabbccddeeff&out_trade_no=order-42&pid=pid-1" +
+		"&timestamp=" + timestamp +
+		"&trade_no=gateway-42&trade_status=TRADE_SUCCESS&type=wxpay"
+	digest := sha256.Sum256([]byte(canonical))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		t.Fatalf("sign independent PayPro contract canonical: %v", err)
+	}
+	fields["sign"] = base64.StdEncoding.EncodeToString(signature)
+
+	notification, err := provider.VerifyNotification(context.Background(), encodeEasyPayRSAForm(fields), nil)
+	if err != nil {
+		t.Fatalf("VerifyNotification rejected PayPro RSA2 form contract: %v", err)
+	}
+	if notification.Status != payment.ProviderStatusSuccess ||
+		notification.OrderID != "order-42" ||
+		notification.TradeNo != "gateway-42" ||
+		notification.Amount != 12.34 ||
+		notification.Metadata["pid"] != "pid-1" {
+		t.Fatalf("unexpected PayPro RSA2 notification: %+v", notification)
+	}
+}
+
+func TestEasyPayPayProRSA2QueryResponseContract(t *testing.T) {
+	privateKey := generateEasyPayRSATestKey(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Errorf("parse RSA2 query request: %v", err)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if request.PostForm.Get("gateway_sign_type") != signTypeRSA2 ||
+			request.PostForm.Get("gateway_key_id") != "test-key-1" ||
+			request.PostForm.Get("out_trade_no") != "order-42" {
+			t.Errorf("unexpected PayPro query request: %v", request.PostForm)
+		}
+		queryNonce := request.PostForm.Get("query_nonce")
+		if len(queryNonce) != 32 {
+			t.Errorf("query_nonce length = %d, want 32", len(queryNonce))
+		}
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		fields := map[string]string{
+			"code": "1", "msg": "ok", "pid": "pid-1", "out_trade_no": "order-42",
+			"trade_no": "gateway-42", "type": "wxpay", "money": "12.34",
+			"status": "1", "trade_status": tradeStatusSuccess, "query_nonce": queryNonce,
+			"key_id": "test-key-1", "timestamp": timestamp,
+			"nonce_str": "00112233445566778899aabbccddeeff", "sign_type": signTypeRSA2,
+		}
+		canonical := "sub2api-easypay-query-v1\ncode=1&key_id=test-key-1&money=12.34&msg=ok" +
+			"&nonce_str=00112233445566778899aabbccddeeff&out_trade_no=order-42&pid=pid-1" +
+			"&query_nonce=" + queryNonce +
+			"&status=1&timestamp=" + timestamp +
+			"&trade_no=gateway-42&trade_status=TRADE_SUCCESS&type=wxpay"
+		digest := sha256.Sum256([]byte(canonical))
+		signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
+		if err != nil {
+			t.Errorf("sign independent PayPro query canonical: %v", err)
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fields["sign"] = base64.StdEncoding.EncodeToString(signature)
+
+		response := make(map[string]any, len(fields))
+		for key, value := range fields {
+			switch key {
+			case "code", "status":
+				integer, _ := strconv.Atoi(value)
+				response[key] = integer
+			default:
+				response[key] = value
+			}
+		}
+		if err := json.NewEncoder(writer).Encode(response); err != nil {
+			t.Errorf("encode PayPro query response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	provider := newEasyPayRSAProvider(t, server.URL, &privateKey.PublicKey)
+	result, err := provider.QueryOrder(context.Background(), "order-42")
+	if err != nil {
+		t.Fatalf("QueryOrder rejected PayPro RSA2 response contract: %v", err)
+	}
+	if result.Status != payment.ProviderStatusPaid ||
+		result.TradeNo != "gateway-42" ||
+		result.Amount != 12.34 ||
+		!result.SignatureVerified ||
+		result.Metadata["pid"] != "pid-1" ||
+		result.Metadata["out_trade_no"] != "order-42" ||
+		result.Metadata["gateway_sign_type"] != signTypeRSA2 ||
+		result.Metadata["gateway_key_id"] != "test-key-1" {
+		t.Fatalf("unexpected PayPro RSA2 query result: %+v", result)
+	}
+}
+
+func TestEasyPayRSA2OrderCreationKeepsMD5Signature(t *testing.T) {
+	privateKey := generateEasyPayRSATestKey(t)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Errorf("parse order creation form: %v", err)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		fields := make(map[string]string, len(request.PostForm))
+		for key, values := range request.PostForm {
+			if len(values) != 1 {
+				t.Errorf("order creation field %q has %d values", key, len(values))
+				continue
+			}
+			fields[key] = values[0]
+		}
+		if fields["sign_type"] != signTypeMD5 {
+			t.Errorf("order creation sign_type = %q, want MD5", fields["sign_type"])
+		}
+		if !easyPayVerifySign(fields, "pkey-1", fields["sign"]) {
+			t.Error("RSA2-configured order creation did not retain a valid legacy MD5 signature")
+		}
+		notifyURL, err := url.Parse(fields["notify_url"])
+		if err != nil {
+			t.Errorf("parse RSA2 callback URL: %v", err)
+		} else if notifyURL.Query().Get("gateway_sign_type") != signTypeRSA2 ||
+			notifyURL.Query().Get("gateway_key_id") != "test-key-1" {
+			t.Errorf("RSA2 callback routing parameters missing from notify_url: %q", fields["notify_url"])
+		}
+		_, _ = writer.Write([]byte(`{"code":1,"msg":"ok","payurl":"https://gateway.example.test/pay"}`))
+	}))
+	defer server.Close()
+
+	provider := newEasyPayRSAProvider(t, server.URL, &privateKey.PublicKey)
+	_, err := provider.CreatePayment(context.Background(), payment.CreatePaymentRequest{
+		PaymentType: "wxpay",
+		OrderID:     "order-rsa2-create",
+		Subject:     "Balance recharge",
+		Amount:      "12.34",
+		ClientIP:    "192.0.2.10",
+	})
+	if err != nil {
+		t.Fatalf("CreatePayment with RSA2 gateway configuration: %v", err)
+	}
+}
 
 type easyPayRSAContractVector struct {
 	PublicKey string            `json:"public_key"`

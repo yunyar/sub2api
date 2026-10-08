@@ -39,6 +39,12 @@ func TestGetTrustedPublicClientIPUsesVerifiedPeerOrProxyChain(t *testing.T) {
 			want:       "8.8.8.8",
 		},
 		{
+			name:       "trusted proxy chain does not fall back to spoofed public prefix for private client",
+			remoteAddr: "172.21.0.1:12345",
+			xff:        "8.8.8.8, 10.1.2.3",
+			want:       "",
+		},
+		{
 			name:       "trusted proxy address is not recorded without client chain",
 			remoteAddr: "8.8.4.4:12345",
 			want:       "",

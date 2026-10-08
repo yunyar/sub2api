@@ -49,7 +49,8 @@ func (s *PaymentService) confirmEasyPayCallback(
 	if !strings.EqualFold(strings.TrimSpace(provider.ProviderKey()), payment.TypeEasyPay) {
 		return reject("provider_mismatch")
 	}
-	if err := s.validateEasyPayProviderSnapshot(ctx, order); err != nil {
+	queryExpectation, err := s.validateEasyPayProviderSnapshot(ctx, order)
+	if err != nil {
 		return reject("provider_configuration_mismatch")
 	}
 
@@ -86,7 +87,7 @@ func (s *PaymentService) confirmEasyPayCallback(
 		(callbackMerchantID != "" && callbackMerchantID != expectedMerchantID) {
 		return reject("merchant_identity_mismatch")
 	}
-	if err := validateEasyPayQueryResponse(order, result); err != nil {
+	if err := validateEasyPayQueryResponse(order, result, queryExpectation); err != nil {
 		return reject("provider_snapshot_mismatch")
 	}
 
@@ -157,7 +158,8 @@ func (s *PaymentService) confirmEasyPayFulfillment(ctx context.Context, order *d
 	if !strings.EqualFold(strings.TrimSpace(provider.ProviderKey()), payment.TypeEasyPay) {
 		return reject("provider_mismatch")
 	}
-	if err := s.validateEasyPayProviderSnapshot(ctx, order); err != nil {
+	queryExpectation, err := s.validateEasyPayProviderSnapshot(ctx, order)
+	if err != nil {
 		return reject("provider_configuration_mismatch")
 	}
 
@@ -176,7 +178,7 @@ func (s *PaymentService) confirmEasyPayFulfillment(ctx context.Context, order *d
 	if responseOrderID := strings.TrimSpace(result.Metadata["out_trade_no"]); responseOrderID == "" || responseOrderID != order.OutTradeNo {
 		return reject("gateway_order_reference_mismatch")
 	}
-	if err := validateEasyPayQueryResponse(order, result); err != nil {
+	if err := validateEasyPayQueryResponse(order, result, queryExpectation); err != nil {
 		return reject("provider_snapshot_mismatch")
 	}
 
@@ -306,19 +308,35 @@ func (s *PaymentService) easyPayOrderGatewayIdentity(ctx context.Context, order 
 	return strings.TrimSpace(providerMerchantIdentityMetadata(provider)["gateway_identity"]), nil
 }
 
-func validateEasyPayQueryResponse(order *dbent.PaymentOrder, result *payment.QueryOrderResponse) error {
+type easyPayQueryExpectation struct {
+	SignType             string
+	KeyID                string
+	PublicKeyFingerprint string
+}
+
+func validateEasyPayQueryResponse(
+	order *dbent.PaymentOrder,
+	result *payment.QueryOrderResponse,
+	expectation easyPayQueryExpectation,
+) error {
 	if result == nil {
 		return fmt.Errorf("easypay query response is missing")
 	}
-	if err := validateEasyPayQueryMetadata(order, result.Metadata); err != nil {
+	if err := validateEasyPayQueryMetadataWithExpectation(order, result.Metadata, expectation); err != nil {
 		return err
 	}
-	responseSignType := normalizeEasyPayGatewaySignType(firstEasyPayMetadataValue(result.Metadata, "gateway_sign_type", "sign_type"))
+	responseSignType := strings.TrimSpace(firstEasyPayMetadataValue(result.Metadata, "gateway_sign_type", "sign_type"))
+	if responseSignType != "" {
+		responseSignType = normalizeEasyPayGatewaySignType(responseSignType)
+	}
 	snapshotSignType := ""
 	if snapshot := psOrderProviderSnapshot(order); snapshot != nil {
-		snapshotSignType = normalizeEasyPayGatewaySignType(snapshot.GatewaySignType)
+		snapshotSignType = strings.TrimSpace(snapshot.GatewaySignType)
+		if snapshotSignType != "" {
+			snapshotSignType = normalizeEasyPayGatewaySignType(snapshotSignType)
+		}
 	}
-	if responseSignType == "RSA2" || snapshotSignType == "RSA2" {
+	if expectation.SignType == "RSA2" || responseSignType == "RSA2" || snapshotSignType == "RSA2" {
 		if responseSignType != "RSA2" || !result.SignatureVerified {
 			return fmt.Errorf("easypay RSA2 query was not cryptographically verified")
 		}
@@ -367,6 +385,14 @@ func (s *PaymentService) blockEasyPayRSA2AmountMismatch(
 }
 
 func validateEasyPayQueryMetadata(order *dbent.PaymentOrder, metadata map[string]string) error {
+	return validateEasyPayQueryMetadataWithExpectation(order, metadata, easyPayQueryExpectation{})
+}
+
+func validateEasyPayQueryMetadataWithExpectation(
+	order *dbent.PaymentOrder,
+	metadata map[string]string,
+	expectation easyPayQueryExpectation,
+) error {
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
@@ -376,15 +402,31 @@ func validateEasyPayQueryMetadata(order *dbent.PaymentOrder, metadata map[string
 		}
 	}
 	snapshot := psOrderProviderSnapshot(order)
-	signType := normalizeEasyPayGatewaySignType(firstEasyPayMetadataValue(metadata, "gateway_sign_type", "sign_type"))
+	signType := strings.TrimSpace(firstEasyPayMetadataValue(metadata, "gateway_sign_type", "sign_type"))
+	if signType != "" {
+		signType = normalizeEasyPayGatewaySignType(signType)
+	}
 	snapshotSignType := ""
-	if snapshot != nil {
+	if snapshot != nil && strings.TrimSpace(snapshot.GatewaySignType) != "" {
 		snapshotSignType = normalizeEasyPayGatewaySignType(snapshot.GatewaySignType)
 	}
-	if snapshotSignType != "" && signType != "" && signType != snapshotSignType {
+	if signType != "" && signType != "MD5" && signType != "RSA2" {
+		return fmt.Errorf("easypay query signing mode is unsupported")
+	}
+	if expectation.SignType != "" && expectation.SignType != "MD5" && expectation.SignType != "RSA2" {
+		return fmt.Errorf("easypay expected signing mode is unsupported")
+	}
+	if snapshotSignType != "" && signType != "" && signType != snapshotSignType &&
+		!(snapshotSignType == "MD5" && expectation.SignType == "RSA2" && signType == "RSA2") {
 		return fmt.Errorf("easypay query sign type mismatch")
 	}
-	if snapshotSignType != "RSA2" && signType != "RSA2" {
+	if expectation.SignType == "RSA2" && signType != "RSA2" {
+		return fmt.Errorf("easypay RSA2 query identity is missing")
+	}
+	if expectation.SignType == "MD5" && signType == "RSA2" {
+		return fmt.Errorf("easypay query sign type mismatch")
+	}
+	if snapshotSignType != "RSA2" && signType != "RSA2" && expectation.SignType != "RSA2" {
 		return nil
 	}
 	if signType != "RSA2" {
@@ -397,14 +439,20 @@ func validateEasyPayQueryMetadata(order *dbent.PaymentOrder, metadata map[string
 		return fmt.Errorf("easypay query RSA2 identity is incomplete")
 	}
 	if snapshot == nil {
-		return nil
+		snapshot = &paymentOrderProviderSnapshot{}
 	}
-	if keyID := firstEasyPayMetadataValue(metadata, "gateway_key_id", "key_id"); keyID != "" &&
-		keyID != snapshot.GatewayKeyID {
+	keyID := firstEasyPayMetadataValue(metadata, "gateway_key_id", "key_id")
+	if snapshot.GatewayKeyID != "" && keyID != snapshot.GatewayKeyID {
 		return fmt.Errorf("easypay query key id mismatch")
 	}
-	if fingerprint := firstEasyPayMetadataValue(metadata, "gateway_public_key_sha256", "public_key_sha256"); fingerprint != "" &&
-		fingerprint != snapshot.GatewayPublicKeySHA256 {
+	fingerprint := firstEasyPayMetadataValue(metadata, "gateway_public_key_sha256", "public_key_sha256")
+	if snapshot.GatewayPublicKeySHA256 != "" && fingerprint != snapshot.GatewayPublicKeySHA256 {
+		return fmt.Errorf("easypay query public key mismatch")
+	}
+	if expectation.KeyID != "" && keyID != expectation.KeyID {
+		return fmt.Errorf("easypay query key id mismatch")
+	}
+	if expectation.PublicKeyFingerprint != "" && fingerprint != expectation.PublicKeyFingerprint {
 		return fmt.Errorf("easypay query public key mismatch")
 	}
 	return nil
@@ -419,36 +467,60 @@ func firstEasyPayMetadataValue(metadata map[string]string, keys ...string) strin
 	return ""
 }
 
-func (s *PaymentService) validateEasyPayProviderSnapshot(ctx context.Context, order *dbent.PaymentOrder) error {
+func (s *PaymentService) validateEasyPayProviderSnapshot(
+	ctx context.Context,
+	order *dbent.PaymentOrder,
+) (easyPayQueryExpectation, error) {
 	snapshot := psOrderProviderSnapshot(order)
 	if snapshot == nil {
-		return nil
+		return easyPayQueryExpectation{}, nil
 	}
 	if snapshot.ProviderKey != "" && !strings.EqualFold(strings.TrimSpace(snapshot.ProviderKey), payment.TypeEasyPay) {
-		return fmt.Errorf("provider snapshot key mismatch")
+		return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot key mismatch")
 	}
 	instance, err := s.getOrderProviderInstance(ctx, order)
 	if err != nil || instance == nil || s.loadBalancer == nil {
-		return fmt.Errorf("provider snapshot instance unavailable")
+		return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot instance unavailable")
 	}
 	config, err := s.loadBalancer.GetInstanceConfig(ctx, int64(instance.ID))
 	if err != nil {
-		return fmt.Errorf("provider snapshot config unavailable")
+		return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot config unavailable")
 	}
 	configSignType := normalizeEasyPayGatewaySignType(providerConfigFieldValue(config, "gatewaySignType"))
-	snapshotSignType := normalizeEasyPayGatewaySignType(snapshot.GatewaySignType)
-	if configSignType != snapshotSignType {
-		return fmt.Errorf("provider snapshot sign type mismatch")
+	if configSignType != "MD5" && configSignType != "RSA2" {
+		return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot signing mode is unsupported")
 	}
-	if configSignType != "RSA2" {
-		return nil
+
+	snapshotSignType := strings.TrimSpace(snapshot.GatewaySignType)
+	if snapshotSignType == "" {
+		if snapshot.SchemaVersion >= 3 {
+			return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot signing mode is missing")
+		}
+	} else {
+		snapshotSignType = normalizeEasyPayGatewaySignType(snapshotSignType)
+		if snapshotSignType != "MD5" && snapshotSignType != "RSA2" {
+			return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot signing mode is unsupported")
+		}
+		if snapshotSignType != configSignType && !(snapshotSignType == "MD5" && configSignType == "RSA2") {
+			return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot sign type mismatch")
+		}
 	}
-	if snapshot.GatewayKeyID == "" || snapshot.GatewayPublicKeySHA256 == "" ||
-		snapshot.GatewayKeyID != strings.TrimSpace(providerConfigFieldValue(config, "gatewayKeyId")) ||
-		snapshot.GatewayPublicKeySHA256 != easyPayPublicKeyFingerprint(providerConfigFieldValue(config, "gatewayPublicKey")) {
-		return fmt.Errorf("provider snapshot RSA identity mismatch")
+
+	expectation := easyPayQueryExpectation{SignType: configSignType}
+	if configSignType == "RSA2" {
+		expectation.KeyID = strings.TrimSpace(providerConfigFieldValue(config, "gatewayKeyId"))
+		expectation.PublicKeyFingerprint = easyPayPublicKeyFingerprint(providerConfigFieldValue(config, "gatewayPublicKey"))
+		if expectation.KeyID == "" || expectation.PublicKeyFingerprint == "" {
+			return easyPayQueryExpectation{}, fmt.Errorf("provider RSA identity is incomplete")
+		}
+		if snapshotSignType == "RSA2" &&
+			(snapshot.GatewayKeyID == "" || snapshot.GatewayPublicKeySHA256 == "" ||
+				snapshot.GatewayKeyID != expectation.KeyID ||
+				snapshot.GatewayPublicKeySHA256 != expectation.PublicKeyFingerprint) {
+			return easyPayQueryExpectation{}, fmt.Errorf("provider snapshot RSA identity mismatch")
+		}
 	}
-	return nil
+	return expectation, nil
 }
 
 func paymentAmountToCents(amount float64) (int64, bool) {

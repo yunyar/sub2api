@@ -24,6 +24,28 @@ type paymentConfirmationProviderStub struct {
 	lastQueryOrder string
 }
 
+type paymentConfirmationLoadBalancerStub struct {
+	config map[string]string
+}
+
+func (p paymentConfirmationLoadBalancerStub) GetInstanceConfig(context.Context, int64) (map[string]string, error) {
+	config := make(map[string]string, len(p.config))
+	for key, value := range p.config {
+		config[key] = value
+	}
+	return config, nil
+}
+
+func (paymentConfirmationLoadBalancerStub) SelectInstance(
+	context.Context,
+	string,
+	payment.PaymentType,
+	payment.Strategy,
+	float64,
+) (*payment.InstanceSelection, error) {
+	panic("unexpected call")
+}
+
 func (p *paymentConfirmationProviderStub) Name() string { return "payment-confirmation-stub" }
 func (p *paymentConfirmationProviderStub) ProviderKey() string {
 	return payment.TypeEasyPay
@@ -296,6 +318,162 @@ func TestEasyPayNotificationUsesAuthoritativeQueryAndReplayIsIdempotent(t *testi
 	require.Equal(t, 3, env.provider.queryCalls)
 	require.Equal(t, 98.0, env.userRepo.getByIDUser.Balance)
 	require.Len(t, env.redeemRepo.useCalls, 1)
+}
+
+func TestEasyPayActiveVerifyRecoveryAndCallbackReplayAreIdempotent(t *testing.T) {
+	env := newPaymentConfirmationTestEnv(t)
+	env.provider.response = env.paidQuery()
+
+	recovered, err := env.service.VerifyOrderByOutTradeNo(env.ctx, env.order.OutTradeNo, env.order.UserID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, recovered.Status)
+	require.Equal(t, 2, env.provider.queryCalls)
+	require.Equal(t, 98.0, env.userRepo.getByIDUser.Balance)
+	require.Len(t, env.redeemRepo.useCalls, 1)
+
+	require.NoError(t, env.service.HandlePaymentNotification(
+		env.ctx,
+		env.notification("gateway-transaction-1"),
+		payment.TypeEasyPay,
+	))
+	replayed, err := env.client.PaymentOrder.Get(env.ctx, env.order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusCompleted, replayed.Status)
+	require.Equal(t, 3, env.provider.queryCalls)
+	require.Equal(t, 98.0, env.userRepo.getByIDUser.Balance)
+	require.Len(t, env.redeemRepo.useCalls, 1)
+}
+
+func TestEasyPayLegacyMD5SnapshotRequiresCurrentRSA2QueryEvidence(t *testing.T) {
+	env := newPaymentConfirmationTestEnv(t)
+	instance, err := env.client.PaymentProviderInstance.Create().
+		SetProviderKey(payment.TypeEasyPay).
+		SetName("payment-confirmation-easypay-rsa2").
+		SetConfig("{}").
+		SetSupportedTypes(payment.TypeAlipay).
+		SetEnabled(true).
+		Save(env.ctx)
+	require.NoError(t, err)
+
+	instanceID := strconv.FormatInt(int64(instance.ID), 10)
+	publicKey := "current-rsa2-public-key"
+	publicKeyFingerprint := easyPayPublicKeyFingerprint(publicKey)
+	env.service.loadBalancer = paymentConfirmationLoadBalancerStub{config: map[string]string{
+		"pid":              "merchant-1",
+		"apiBase":          "https://gateway.example",
+		"gatewaySignType":  "RSA2",
+		"gatewayKeyId":     "current-key",
+		"gatewayPublicKey": publicKey,
+	}}
+
+	snapshots := []struct {
+		name     string
+		snapshot map[string]any
+	}{
+		{
+			name: "legacy schema without signing mode",
+			snapshot: map[string]any{
+				"schema_version":       2,
+				"provider_instance_id": instanceID,
+				"provider_key":         payment.TypeEasyPay,
+				"merchant_id":          "merchant-1",
+				"gateway_identity":     "gateway-1",
+			},
+		},
+		{
+			name: "schema three md5 snapshot",
+			snapshot: map[string]any{
+				"schema_version":       3,
+				"provider_instance_id": instanceID,
+				"provider_key":         payment.TypeEasyPay,
+				"merchant_id":          "merchant-1",
+				"gateway_identity":     "gateway-1",
+				"gateway_sign_type":    "MD5",
+			},
+		},
+	}
+
+	for _, test := range snapshots {
+		t.Run(test.name, func(t *testing.T) {
+			order, updateErr := env.client.PaymentOrder.UpdateOneID(env.order.ID).
+				SetProviderInstanceID(instanceID).
+				SetProviderKey(payment.TypeEasyPay).
+				SetProviderSnapshot(test.snapshot).
+				Save(env.ctx)
+			require.NoError(t, updateErr)
+
+			expectation, validationErr := env.service.validateEasyPayProviderSnapshot(env.ctx, order)
+			require.NoError(t, validationErr)
+			require.Equal(t, "RSA2", expectation.SignType)
+			require.Equal(t, "current-key", expectation.KeyID)
+			require.Equal(t, publicKeyFingerprint, expectation.PublicKeyFingerprint)
+
+			query := env.paidQuery()
+			query.SignatureVerified = true
+			query.Metadata["gateway_sign_type"] = "RSA2"
+			query.Metadata["gateway_key_id"] = "current-key"
+			query.Metadata["gateway_public_key_sha256"] = publicKeyFingerprint
+			require.NoError(t, validateEasyPayQueryResponse(order, query, expectation))
+
+			unsignedQuery := *query
+			unsignedQuery.SignatureVerified = false
+			require.Error(t, validateEasyPayQueryResponse(order, &unsignedQuery, expectation))
+
+			downgradedQuery := *query
+			downgradedQuery.Metadata = make(map[string]string, len(query.Metadata))
+			for key, value := range query.Metadata {
+				downgradedQuery.Metadata[key] = value
+			}
+			downgradedQuery.Metadata["gateway_sign_type"] = "MD5"
+			require.Error(t, validateEasyPayQueryResponse(order, &downgradedQuery, expectation))
+
+			wrongKeyQuery := *query
+			wrongKeyQuery.Metadata = make(map[string]string, len(query.Metadata))
+			for key, value := range query.Metadata {
+				wrongKeyQuery.Metadata[key] = value
+			}
+			wrongKeyQuery.Metadata["gateway_key_id"] = "old-key"
+			require.Error(t, validateEasyPayQueryResponse(order, &wrongKeyQuery, expectation))
+
+			wrongFingerprintQuery := *query
+			wrongFingerprintQuery.Metadata = make(map[string]string, len(query.Metadata))
+			for key, value := range query.Metadata {
+				wrongFingerprintQuery.Metadata[key] = value
+			}
+			wrongFingerprintQuery.Metadata["gateway_public_key_sha256"] = "old-fingerprint"
+			require.Error(t, validateEasyPayQueryResponse(order, &wrongFingerprintQuery, expectation))
+		})
+	}
+
+	malformedSnapshots := []map[string]any{
+		{
+			"schema_version":       3,
+			"provider_instance_id": instanceID,
+			"provider_key":         payment.TypeEasyPay,
+			"merchant_id":          "merchant-1",
+			"gateway_identity":     "gateway-1",
+		},
+		{
+			"schema_version":            3,
+			"provider_instance_id":      instanceID,
+			"provider_key":              payment.TypeEasyPay,
+			"merchant_id":               "merchant-1",
+			"gateway_identity":          "gateway-1",
+			"gateway_sign_type":         "RSA2",
+			"gateway_key_id":            "old-key",
+			"gateway_public_key_sha256": "old-fingerprint",
+		},
+	}
+	for _, snapshot := range malformedSnapshots {
+		order, updateErr := env.client.PaymentOrder.UpdateOneID(env.order.ID).
+			SetProviderInstanceID(instanceID).
+			SetProviderKey(payment.TypeEasyPay).
+			SetProviderSnapshot(snapshot).
+			Save(env.ctx)
+		require.NoError(t, updateErr)
+		_, validationErr := env.service.validateEasyPayProviderSnapshot(env.ctx, order)
+		require.Error(t, validationErr)
+	}
 }
 
 func TestEasyPayVerifiedRSA2QueryAmountMismatchRecordsEvidenceAndBlocksTrustedIP(t *testing.T) {
