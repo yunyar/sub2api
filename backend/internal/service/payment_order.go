@@ -133,13 +133,23 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	}
 	resp, err := s.invokeProvider(ctx, order, req, cfg, limitAmount, payAmountStr, payAmount, plan, sel)
 	if err != nil {
-		_, _ = s.entClient.PaymentOrder.UpdateOneID(order.ID).
-			SetStatus(OrderStatusFailed).
-			Save(ctx)
+		if _, updateErr := s.markCreatePaymentFailed(ctx, order.ID); updateErr != nil {
+			slog.Error("mark payment order failed after provider error", "orderID", order.ID, "error", updateErr)
+		}
 		return nil, err
 	}
 	checkoutCreated = true
 	return resp, nil
+}
+
+func (s *PaymentService) markCreatePaymentFailed(ctx context.Context, orderID int64) (int, error) {
+	return s.entClient.PaymentOrder.Update().
+		Where(
+			paymentorder.IDEQ(orderID),
+			paymentorder.StatusEQ(OrderStatusPending),
+		).
+		SetStatus(OrderStatusFailed).
+		Save(ctx)
 }
 
 func (s *PaymentService) validateOrderInput(ctx context.Context, req CreateOrderRequest, cfg *PaymentConfig) (*dbent.SubscriptionPlan, error) {
