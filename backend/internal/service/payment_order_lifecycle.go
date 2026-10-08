@@ -124,12 +124,16 @@ func (s *PaymentService) AdminCancelOrder(ctx context.Context, orderID int64) (s
 }
 
 func (s *PaymentService) cancelCore(ctx context.Context, o *dbent.PaymentOrder, fs, op, ad string) (string, error) {
+	confirmationPending := false
 	if o.PaymentTradeNo != "" || o.PaymentType != "" {
 		switch s.checkPaid(ctx, o) {
 		case checkPaidResultAlreadyPaid:
 			return checkPaidResultAlreadyPaid, nil
 		case checkPaidResultConfirmationPending:
-			return "", infraerrors.Conflict("PAYMENT_CONFIRMATION_PENDING", "payment confirmation is pending; retry later")
+			if fs != OrderStatusExpired && op != "admin" {
+				return "", infraerrors.Conflict("PAYMENT_CONFIRMATION_PENDING", "payment confirmation is pending; retry later")
+			}
+			confirmationPending = true
 		}
 	}
 	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(o.ID), paymentorder.StatusEQ(OrderStatusPending)).SetStatus(fs).Save(ctx)
@@ -141,9 +145,21 @@ func (s *PaymentService) cancelCore(ctx context.Context, o *dbent.PaymentOrder, 
 		if fs == OrderStatusExpired {
 			auditAction = "ORDER_EXPIRED"
 		}
-		_ = s.writeAuditLog(ctx, o.ID, auditAction, op, map[string]any{"detail": ad})
+		detail := map[string]any{"detail": ad}
+		if confirmationPending {
+			detail["upstream_confirmation"] = "pending"
+		}
+		_ = s.writeAuditLog(ctx, o.ID, auditAction, op, detail)
+		return checkPaidResultCancelled, nil
 	}
-	return checkPaidResultCancelled, nil
+	current, err := s.entClient.PaymentOrder.Get(ctx, o.ID)
+	if err != nil {
+		return "", fmt.Errorf("reload order after state change: %w", err)
+	}
+	if current.Status == fs {
+		return "", nil
+	}
+	return "", infraerrors.Conflict("ORDER_STATE_CHANGED", "order status changed before cancellation completed")
 }
 
 func (s *PaymentService) checkPaid(ctx context.Context, o *dbent.PaymentOrder) string {
@@ -412,10 +428,17 @@ func (s *PaymentService) ExpireTimedOutOrders(ctx context.Context) (int, error) 
 		return 0, fmt.Errorf("query expired: %w", err)
 	}
 	n := 0
+	var firstErr error
 	for _, o := range orders {
 		// Check upstream payment status before expiring — the user may have
 		// paid just before timeout and the webhook hasn't arrived yet.
-		outcome, _ := s.cancelCore(ctx, o, OrderStatusExpired, "system", "order expired")
+		outcome, cancelErr := s.cancelCore(ctx, o, OrderStatusExpired, "system", "order expired")
+		if cancelErr != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("expire order %d: %w", o.ID, cancelErr)
+			}
+			continue
+		}
 		if outcome == checkPaidResultAlreadyPaid {
 			slog.Info("order was paid during expiry", "orderID", o.ID)
 			continue
@@ -424,7 +447,7 @@ func (s *PaymentService) ExpireTimedOutOrders(ctx context.Context) (int, error) 
 			n++
 		}
 	}
-	return n, nil
+	return n, firstErr
 }
 
 // getOrderProvider creates a provider using the order's original instance config.

@@ -25,6 +25,7 @@ type paymentOrderLifecycleQueryProvider struct {
 	lastCancelTradeNo string
 	queryCalls        int
 	cancelCalls       int
+	queryErr          error
 	responses         []*payment.QueryOrderResponse
 	resp              *payment.QueryOrderResponse
 }
@@ -59,6 +60,9 @@ func (p *paymentOrderLifecycleQueryProvider) CreatePayment(context.Context, paym
 func (p *paymentOrderLifecycleQueryProvider) QueryOrder(_ context.Context, tradeNo string) (*payment.QueryOrderResponse, error) {
 	p.lastQueryTradeNo = tradeNo
 	p.queryCalls++
+	if p.queryErr != nil {
+		return nil, p.queryErr
+	}
 	if len(p.responses) > 0 {
 		resp := p.responses[0]
 		if len(p.responses) > 1 {
