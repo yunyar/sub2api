@@ -223,3 +223,32 @@ func TestOpsSystemLogSinkHealthyPathNeverSuppressed(t *testing.T) {
 		t.Fatalf("healthy sink dropped_count = %d, want 0", got)
 	}
 }
+
+func TestOpsSystemLogSinkSuppressesAfterSlowSuccessfulFlush(t *testing.T) {
+	var calls int64
+	repo := &opsRepoMock{
+		BatchInsertSystemLogsFn: func(_ context.Context, inputs []*OpsInsertSystemLogInput) (int64, error) {
+			atomic.AddInt64(&calls, 1)
+			time.Sleep(25 * time.Millisecond)
+			return int64(len(inputs)), nil
+		},
+	}
+
+	sink := NewOpsSystemLogSink(repo)
+	sink.batchSize = 1
+	sink.flushInterval = 5 * time.Millisecond
+	sink.slowFlushThreshold = 10 * time.Millisecond
+	sink.slowFlushBackoff = 100 * time.Millisecond
+	sink.Start()
+	defer sink.Stop()
+	pumpOpsSystemLogEvents(t, sink)
+
+	if !waitForOpsSystemLogCondition(t, time.Second, func() bool { return atomic.LoadInt64(&calls) >= 1 }) {
+		t.Fatalf("slow flush never happened")
+	}
+	first := atomic.LoadInt64(&calls)
+	time.Sleep(40 * time.Millisecond)
+	if got := atomic.LoadInt64(&calls); got != first {
+		t.Fatalf("calls during slow-flush backoff = %d, want %d", got, first)
+	}
+}

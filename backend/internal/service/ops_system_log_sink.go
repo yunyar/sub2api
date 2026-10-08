@@ -35,8 +35,10 @@ type OpsSystemLogSink struct {
 	flushInterval time.Duration
 
 	// 连续写入失败后的退避参数。构造后只读，测试可在 Start 前覆盖。
-	flushBackoff    time.Duration
-	flushBackoffMax time.Duration
+	flushBackoff       time.Duration
+	flushBackoffMax    time.Duration
+	slowFlushThreshold time.Duration
+	slowFlushBackoff   time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -57,22 +59,26 @@ const (
 	// 首次写入失败后暂停落库的时长，之后逐次翻倍到上限。
 	defaultOpsSystemLogFlushBackoff = 2 * time.Second
 	// 退避上限。日志是尽力而为的观测数据，不值得为它无限期占用连接池。
-	defaultOpsSystemLogFlushBackoffMax = 60 * time.Second
+	defaultOpsSystemLogFlushBackoffMax    = 60 * time.Second
+	defaultOpsSystemLogSlowFlushThreshold = 750 * time.Millisecond
+	defaultOpsSystemLogSlowFlushBackoff   = 10 * time.Second
 )
 
 func NewOpsSystemLogSink(opsRepo OpsRepository) *OpsSystemLogSink {
 	ctx, cancel := context.WithCancel(context.Background())
 	rawHost, err := os.Hostname()
 	s := &OpsSystemLogSink{
-		opsRepo:         opsRepo,
-		host:            normalizeSystemLogHost(rawHost, err),
-		queue:           make(chan *logger.LogEvent, 5000),
-		batchSize:       200,
-		flushInterval:   time.Second,
-		flushBackoff:    defaultOpsSystemLogFlushBackoff,
-		flushBackoffMax: defaultOpsSystemLogFlushBackoffMax,
-		ctx:             ctx,
-		cancel:          cancel,
+		opsRepo:            opsRepo,
+		host:               normalizeSystemLogHost(rawHost, err),
+		queue:              make(chan *logger.LogEvent, 5000),
+		batchSize:          200,
+		flushInterval:      time.Second,
+		flushBackoff:       defaultOpsSystemLogFlushBackoff,
+		flushBackoffMax:    defaultOpsSystemLogFlushBackoffMax,
+		slowFlushThreshold: defaultOpsSystemLogSlowFlushThreshold,
+		slowFlushBackoff:   defaultOpsSystemLogSlowFlushBackoff,
+		ctx:                ctx,
+		cancel:             cancel,
 	}
 	s.lastError.Store("")
 	return s
@@ -222,7 +228,15 @@ func (s *OpsSystemLogSink) run() {
 			)
 		} else {
 			failures = 0
-			suppressedUntil = time.Time{}
+			if s.slowFlushThreshold > 0 && delay >= s.slowFlushThreshold {
+				backoff := s.slowFlushBackoff
+				if backoff <= 0 {
+					backoff = defaultOpsSystemLogSlowFlushBackoff
+				}
+				suppressedUntil = time.Now().Add(backoff)
+			} else {
+				suppressedUntil = time.Time{}
+			}
 			atomic.AddUint64(&s.writtenCount, uint64(inserted))
 			atomic.AddUint64(&s.totalDelayNs, uint64(delay.Nanoseconds()))
 			s.lastError.Store("")
