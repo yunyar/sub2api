@@ -23,7 +23,33 @@ The image multiplier applies even when the legacy `image_rate_independent` flag 
 
 Account cost statistics retain their separate upstream pricing rules. A selling price below cost can still produce account costs above user charges. Historical usage is not recalculated; the new behavior takes effect after activating the updated service. Local regression checks include token-channel overrides, image counts, zero/fractional multipliers, text discount and peak-rate isolation, group pricing, batch jobs, and persisted charges.
 
+## Playground attachments and downloadable files
+
+The standard conversation accepts UTF-8 text/code files as reference context
+and PNG/JPEG/WebP images as multimodal inputs. Binary office documents and PDFs
+are not parsed: export their relevant text first. Text references travel inside
+the ordinary user message, so existing group content review and usage
+attribution apply. Image understanding depends on the selected model.
+Reference image bytes are request-local, not persisted in seven-day history;
+reselect images after refreshing or switching devices.
+
+With image mode explicitly selected, reference images use the authenticated
+`/api/v1/playground/images/edits` endpoint, reusing the existing image gateway,
+content audit, balance holds, per-image pricing, and usage records. Unsupported
+platforms return an error instead of silently generating without the reference.
+
+Assistant text files use fenced blocks with `artifact:filename.ext` as the
+language label. Download buttons produce local files from the returned content;
+they do not execute code, fetch arbitrary URLs, or imply an upstream sandbox.
+These textual artifacts inherit the conversation's seven-day retention.
+
 ## Synchronizing upstream
+
+Use the `sub2api-sync-upstream` skill for publication: preserve published custom
+history with a merge, validate locally, push the custom branch, and verify CI,
+Security Scan, and Custom image for the exact commit. Production activation
+requires separate authorization. The legacy helper below rebases and must not
+be used for that merge-based publication workflow.
 
 Run from a clean `custom/community-qrcode` branch:
 

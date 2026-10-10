@@ -50,6 +50,7 @@ type playgroundWorkflowStep struct {
 }
 
 var playgroundHistoryID = regexp.MustCompile(`^[a-zA-Z0-9-]{1,64}$`)
+var playgroundHistoryImageData = regexp.MustCompile(`(?i)data:image/[a-z0-9.+-]+;base64,`)
 var playgroundHistoryScientificNumber = regexp.MustCompile(`^(-?)([0-9]+)(?:\.([0-9]+))?[eE]([+-]?[0-9]+)$`)
 
 var savePlaygroundHistory = redis.NewScript(`
@@ -280,7 +281,7 @@ func validPlaygroundConversation(item *playgroundConversation) bool {
 		return false
 	}
 	for _, message := range item.Messages {
-		if (message.Role != "user" && message.Role != "assistant") || len(message.Content) > 32768 || len(message.Model) > 256 || len(message.StepID) > 64 || (message.Kind != "" && message.Kind != "chat" && message.Kind != "image") || len(message.Content) >= 10 && message.Content[:10] == "data:image" {
+		if (message.Role != "user" && message.Role != "assistant") || len(message.Content) > 32768 || len(message.Model) > 256 || len(message.StepID) > 64 || (message.Kind != "" && message.Kind != "chat" && message.Kind != "image") || playgroundHistoryImageData.MatchString(message.Content) {
 			return false
 		}
 	}

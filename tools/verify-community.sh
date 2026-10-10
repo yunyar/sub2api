@@ -28,6 +28,7 @@ fi
   src/utils/__tests__/playgroundImageCache.spec.ts \
   src/utils/__tests__/playgroundPreferences.spec.ts \
   src/utils/__tests__/playgroundModel.spec.ts \
+  src/utils/__tests__/playgroundArtifacts.spec.ts \
   src/views/user/__tests__/PlaygroundView.spec.ts \
   src/components/admin/payment/__tests__/PaymentRechargeRiskPanel.spec.ts \
   src/components/payment/__tests__/PaymentProviderDialog.spec.ts \
@@ -45,7 +46,7 @@ fi
 
 (cd backend && "$go_bin" test ./internal/server/routes -run Playground)
 (cd backend && "$go_bin" test ./internal/repository -run TestPlaygroundImageBalanceWithPostgres)
-(cd backend && "$go_bin" test ./internal/service -run 'PlaygroundImage|PlaygroundHoldSettlesResolvedOutputPrice')
+(cd backend && "$go_bin" test ./internal/service -run 'PlaygroundImage|PlaygroundHoldSettlesResolvedOutputPrice|OpenAIImage.*(Attachment|DownloadURL|Bytes|Pointer)')
 (cd backend && "$go_bin" test -tags unit ./internal/handler -run 'GrokPlaygroundImages|ReserveImageInflightBalance')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'ImageRateAlways|ImageCountOverridesChannelTokenPricing|ImageMultiplierIgnores|ChannelImageBillingUsesImageCount|ListPlazaGroups_GroupImagePrice|BatchImagePublicService_Submit|InflightEstimate_ImageUsesDedicatedGroupMultiplier|InflightEstimate_MediaKinds')

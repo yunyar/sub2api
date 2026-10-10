@@ -24,6 +24,20 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      playground-postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: playground_test
+          POSTGRES_PASSWORD: playground_test
+          POSTGRES_DB: playground_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U playground_test -d playground_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
       - name: Check Docker Compose simple mode environment
@@ -36,10 +50,15 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.0'
+          go version | grep -q 'go1.27.2'
       - name: Unit tests
         working-directory: backend
         run: make test-unit
+      - name: Playground image balance transactions
+        working-directory: backend
+        env:
+          PLAYGROUND_BILLING_POSTGRES_DSN: postgres://playground_test:playground_test@127.0.0.1:5432/playground_test?sslmode=disable
+        run: go test -v ./internal/repository -run '^TestPlaygroundImageBalanceWithPostgres$' -count=1
       - name: Integration tests
         working-directory: backend
         run: make test-integration
@@ -76,11 +95,11 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.0'
+          go version | grep -q 'go1.27.2'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13
+          version: v2.14.0
           args: --timeout=30m
           working-directory: backend
 

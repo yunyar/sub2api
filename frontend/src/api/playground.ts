@@ -38,6 +38,7 @@ export interface PlaygroundImageGenerationRequest {
   size: string
   quality: string
   count: number
+  inputImages?: string[]
   signal?: AbortSignal
   onImage?: (image: PlaygroundImage) => void | Promise<void>
 }
@@ -187,14 +188,18 @@ export async function generatePlaygroundImages(input: PlaygroundImageGenerationR
   const images = new Array<PlaygroundImage | undefined>(count)
   const delivered = new Set<string>()
   let imageCallbackQueue = Promise.resolve()
+  const endpoint = input.inputImages?.length ? '/playground/images/edits' : '/playground/images/generations'
   const requests = Array.from({ length: count }, async (_, index) => {
-    const { data } = await apiClient.post('/playground/images/generations', {
+    const { data } = await apiClient.post(endpoint, {
       model: input.model,
       prompt: `${input.prompt}\n\nGenerate exactly one final image asset for request ${index + 1} of ${count}. This is one image in a requested batch; follow the original creative composition instructions, including a collage or panels when requested.`,
       size: input.size,
       quality: input.quality,
       n: 1,
-      response_format: 'b64_json'
+      response_format: 'b64_json',
+      ...(input.inputImages?.length
+        ? { images: input.inputImages.map(image_url => ({ image_url })) }
+        : {})
     }, { headers: groupHeaders(input.groupId), timeout: 180_000, signal: input.signal })
 
     const image = (Array.isArray(data?.data) ? data.data : [])

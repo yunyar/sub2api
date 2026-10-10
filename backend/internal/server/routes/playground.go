@@ -2,6 +2,7 @@ package routes
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -19,10 +21,21 @@ import (
 
 const playgroundGroupHeader = "X-Playground-Group-ID"
 const playgroundImageGenerationMaxCount = 10
+const playgroundImageEditMaxInputs = 4
+const playgroundImageEditMaxBytes = 5 << 20
 
 type playgroundImageGenerationRequest struct {
 	Count json.RawMessage `json:"n"`
 	Model string          `json:"model"`
+}
+
+type playgroundImageEditRequest struct {
+	Images []struct {
+		ImageURL string `json:"image_url"`
+	} `json:"images"`
+	Mask *struct {
+		ImageURL string `json:"image_url"`
+	} `json:"mask"`
 }
 
 func validatePlaygroundImageGenerationCount(c *gin.Context) {
@@ -54,6 +67,180 @@ func validatePlaygroundImageGenerationCount(c *gin.Context) {
 	}
 	if count > 1 && strings.EqualFold(strings.TrimSpace(request.Model), "dall-e-3") {
 		middleware.AbortWithError(c, http.StatusBadRequest, "UNSUPPORTED_IMAGE_COUNT", "n greater than 1 is not supported for dall-e-3")
+	}
+}
+
+func validatePlaygroundImageEditRequest(c *gin.Context) {
+	if !strings.HasPrefix(strings.ToLower(c.ContentType()), "application/json") {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_REQUEST", "Image edit requests must use JSON")
+		return
+	}
+
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_REQUEST", "Failed to read image edit request")
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	if hasDuplicatePlaygroundJSONKeys(body) {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_REQUEST", "Image edit request must not contain duplicate JSON fields")
+		return
+	}
+	var request playgroundImageEditRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_REQUEST", "Image edit request must be valid JSON")
+		return
+	}
+	if len(request.Images) == 0 || len(request.Images) > playgroundImageEditMaxInputs {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_INPUT_COUNT", "Image edits require between 1 and 4 input images")
+		return
+	}
+	for _, image := range request.Images {
+		if !validPlaygroundImageDataURL(image.ImageURL) {
+			middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_INPUT", "Each input image must be a local PNG, JPEG, or WebP data URL no larger than 5 MiB")
+			return
+		}
+	}
+	if request.Mask != nil && strings.TrimSpace(request.Mask.ImageURL) != "" && !validPlaygroundImageDataURL(request.Mask.ImageURL) {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_MASK", "The mask must be a local PNG, JPEG, or WebP data URL no larger than 5 MiB")
+	}
+}
+
+func hasDuplicatePlaygroundJSONKeys(body []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	var readValue func() (bool, error)
+	readValue = func() (bool, error) {
+		token, err := decoder.Token()
+		if err != nil {
+			return false, err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return false, nil
+		}
+		switch delim {
+		case '{':
+			keys := make(map[string]struct{})
+			for decoder.More() {
+				token, err := decoder.Token()
+				if err != nil {
+					return false, err
+				}
+				key, ok := token.(string)
+				if !ok {
+					return false, errors.New("invalid JSON object key")
+				}
+				if _, exists := keys[key]; exists {
+					return true, nil
+				}
+				keys[key] = struct{}{}
+				duplicate, err := readValue()
+				if err != nil || duplicate {
+					return duplicate, err
+				}
+			}
+			_, err := decoder.Token()
+			return false, err
+		case '[':
+			for decoder.More() {
+				duplicate, err := readValue()
+				if err != nil || duplicate {
+					return duplicate, err
+				}
+			}
+			_, err := decoder.Token()
+			return false, err
+		default:
+			return false, errors.New("invalid JSON delimiter")
+		}
+	}
+
+	duplicate, err := readValue()
+	if err != nil || duplicate {
+		return true
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return true
+	}
+	return false
+}
+
+func validPlaygroundImageDataURL(value string) bool {
+	value = strings.TrimSpace(value)
+	header, encoded, ok := strings.Cut(value, ",")
+	if !ok || !strings.HasPrefix(strings.ToLower(header), "data:") {
+		return false
+	}
+
+	parts := strings.Split(header[len("data:"):], ";")
+	if len(parts) != 2 || !strings.EqualFold(parts[1], "base64") {
+		return false
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(parts[0]))
+	var signature []byte
+	switch mimeType {
+	case "image/png":
+		signature = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	case "image/jpeg":
+		signature = []byte{0xff, 0xd8, 0xff}
+	case "image/webp":
+		signature = []byte("RIFF")
+	default:
+		return false
+	}
+	if encoded == "" || len(encoded) > base64.StdEncoding.EncodedLen(playgroundImageEditMaxBytes) {
+		return false
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(decoded) == 0 || len(decoded) > playgroundImageEditMaxBytes || len(decoded) < len(signature) {
+		return false
+	}
+	if mimeType == "image/webp" {
+		return len(decoded) >= 12 && string(decoded[:4]) == "RIFF" && string(decoded[8:12]) == "WEBP"
+	}
+	return bytes.HasPrefix(decoded, signature)
+}
+
+func playgroundImageEditHandler(openAIImagesHandler gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformGrok {
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+				"type":    "not_found_error",
+				"message": "Image edits are not supported for Grok",
+			}})
+			return
+		}
+
+		validatePlaygroundImageGenerationCount(c)
+		if c.IsAborted() {
+			return
+		}
+		validatePlaygroundImageEditRequest(c)
+		if c.IsAborted() {
+			return
+		}
+		if getGroupPlatform(c) == service.PlatformOpenAI {
+			openAIImagesHandler(c)
+			return
+		}
+
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{
+			"type":    "not_found_error",
+			"message": "Images API is not supported for this platform",
+		}})
+	}
+}
+
+func playgroundChatCompletionsHandler(openAIHandler, defaultHandler gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if domain.UsesOpenAIGateway(getGroupPlatform(c)) {
+			openAIHandler(c)
+			return
+		}
+		defaultHandler(c)
 	}
 }
 
@@ -114,25 +301,8 @@ func RegisterPlaygroundRoutes(
 	playground.Use(compositeTargetPlatformMiddleware(compositeResolver))
 	playground.Use(middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter))
 
-	isOpenAICompatible := func(c *gin.Context) bool {
-		switch getGroupPlatform(c) {
-		case service.PlatformOpenAI, service.PlatformGrok, service.PlatformKimi,
-			service.PlatformZhipu, service.PlatformDeepseek, service.PlatformMiniMax,
-			service.PlatformOpenCodeGo:
-			return true
-		default:
-			return false
-		}
-	}
-
 	playground.GET("/models", h.Gateway.Models)
-	playground.POST("/chat/completions", func(c *gin.Context) {
-		if isOpenAICompatible(c) {
-			h.OpenAIGateway.ChatCompletions(c)
-			return
-		}
-		h.Gateway.ChatCompletions(c)
-	})
+	playground.POST("/chat/completions", playgroundChatCompletionsHandler(h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions))
 	playground.POST("/images/generations", func(c *gin.Context) {
 		validatePlaygroundImageGenerationCount(c)
 		if c.IsAborted() {
@@ -151,4 +321,5 @@ func RegisterPlaygroundRoutes(
 			}})
 		}
 	})
+	playground.POST("/images/edits", playgroundImageEditHandler(h.OpenAIGateway.Images))
 }

@@ -19,7 +19,7 @@
           </div>
         </div>
         <p class="retention-note">{{ t('playground.retention') }}</p>
-        <button class="mt-3 text-left text-xs text-gray-500 hover:text-primary-500 dark:text-dark-400" :disabled="busy" @click="refreshHistory">{{ t('playground.refreshHistory') }}</button>
+        <button class="mt-3 text-left text-xs text-gray-500 hover:text-primary-500 dark:text-dark-400" :disabled="busy" @click="refreshHistory()">{{ t('playground.refreshHistory') }}</button>
       </aside>
 
       <main class="conversation-panel">
@@ -75,7 +75,13 @@
                 <div v-else>
                   <span class="mb-2 block text-xs font-semibold text-gray-400 dark:text-dark-400">{{ message.model || current.model }}</span>
                   <p v-if="message.kind === 'image'">{{ pendingImageIds.includes(message.id) ? t('playground.generating') : t('playground.imagesGenerated', { count: currentImages.filter(image => image.messageId === message.id).length }) }}</p>
-                  <template v-else><div class="playground-markdown" v-html="renderMarkdown(message.content || (streaming ? '…' : ''))"></div><button v-if="message.content" class="mt-2 text-xs text-gray-400 hover:text-primary-500 dark:text-dark-400" @click="copyMessage(message.content)">{{ t('playground.copy') }}</button></template>
+                  <template v-else>
+                    <div class="playground-markdown" v-html="renderMarkdown(message.content || (streaming ? '…' : ''))"></div>
+                    <div v-if="message.content" class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <button class="text-xs text-gray-400 hover:text-primary-500 dark:text-dark-400" @click="copyMessage(message.content)">{{ t('playground.copy') }}</button>
+                      <button v-for="artifact in artifactsForMessage(message)" :key="artifact.id" class="text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400" @click="downloadPlaygroundArtifact(artifact)">{{ t('playground.downloadArtifact', { name: artifact.name }) }}</button>
+                    </div>
+                  </template>
                 </div>
               </article>
               <div v-if="currentImages.some(image => image.messageId === message.id)" class="grid gap-4 sm:grid-cols-2">
@@ -106,9 +112,19 @@
               <label class="text-xs">{{ t('playground.count') }}<select v-model.number="imageCount" class="input mt-2 w-full" :disabled="streaming || submitting"><option v-for="count in 10" :key="count" :value="count">{{ count }}</option></select></label>
             </div>
             <form class="composer" @submit.prevent="send">
+              <div v-if="attachments.length" class="attachment-list" aria-live="polite">
+                <div v-for="attachment in attachments" :key="attachment.id" class="attachment-item">
+                  <img v-if="attachment.kind === 'image'" :src="attachment.dataUrl" :alt="attachment.name" class="attachment-thumb" />
+                  <span v-else class="attachment-file-icon" aria-hidden="true">TXT</span>
+                  <span class="min-w-0 flex-1 truncate text-xs">{{ attachment.name }}</span>
+                  <button type="button" class="attachment-remove" :aria-label="t('playground.removeAttachment', { name: attachment.name })" :disabled="submitting || streaming" @click="removeAttachment(attachment.id)">×</button>
+                </div>
+              </div>
               <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t('playground.messagePlaceholder')" :disabled="streaming || submitting" @keydown.enter.exact="onEnter" />
               <div class="flex items-center justify-between gap-3 px-3 pb-3">
                 <div class="flex items-center gap-1">
+                  <input ref="attachmentInput" class="sr-only" type="file" multiple :accept="attachmentAccept" :disabled="streaming || submitting || loadingAttachments" @change="handleAttachmentSelection" />
+                  <button type="button" class="mode-button" :disabled="streaming || submitting || loadingAttachments" @click="attachmentInput?.click()">{{ t('playground.attachFiles') }}</button>
                   <label class="mode-control"><span class="sr-only">{{ t('playground.modeLabel') }}</span><select v-model="imageMode" class="mode-select" :disabled="streaming || submitting"><option value="auto">{{ t('playground.modeAuto') }}</option><option value="chat">{{ t('playground.modeChat') }}</option><option value="image">{{ t('playground.modeImage') }}</option></select></label>
                   <span v-if="imageMode === 'image'" class="mode-indicator">{{ t('playground.imagesToGenerate', { count: imageCountResolution.count }) }}</span>
                   <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="streaming || submitting" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
@@ -117,7 +133,7 @@
                 <button v-if="!streaming" class="btn btn-primary" type="submit" :disabled="!canSend">{{ t('playground.send') }} ↑</button>
               </div>
             </form>
-            <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t('playground.retention') }} {{ t('playground.imageRetention') }}</p>
+            <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t('playground.retention') }} {{ t('playground.imageRetention') }} {{ t('playground.attachmentNote') }} {{ t('playground.artifactNote') }}</p>
           </div>
         </div>
         </div>
@@ -138,7 +154,7 @@ import DOMPurify from 'dompurify'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { userGroupsAPI } from '@/api/groups'
-import { PlaygroundImageGenerationError, playgroundAPI, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage } from '@/api/playground'
+import { PlaygroundImageGenerationError, playgroundAPI, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage, type PlaygroundMultimodalMessage } from '@/api/playground'
 import { playgroundHistory, type Conversation, type ConversationMessage } from '@/api/playgroundHistory'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
@@ -148,12 +164,35 @@ import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
 import { playgroundImageBlob, playgroundImageCache } from '@/utils/playgroundImageCache'
 import { loadPlaygroundPreferences, savePlaygroundPreferences } from '@/utils/playgroundPreferences'
+import { artifactGenerationInstruction, downloadPlaygroundArtifact, extractPlaygroundArtifacts, type PlaygroundArtifact } from '@/utils/playgroundArtifacts'
 import WorkflowPlayground from '@/components/playground/WorkflowPlayground.vue'
 
 type PlaygroundKind = 'chat' | 'image'
 type StoredMessage = ConversationMessage & { model?: string; kind?: PlaygroundKind }
 type PlaygroundConversation = Omit<Conversation, 'messages'> & { messages: StoredMessage[] }
 type ImageEntry = { id: string; conversationId: string; messageId: number; url: string; prompt: string; expiresAt: number; objectUrl?: boolean }
+type TextAttachment = { id: string; name: string; kind: 'text'; text: string; size: number }
+type ImageAttachment = { id: string; name: string; kind: 'image'; dataUrl: string; size: number }
+type PlaygroundAttachment = TextAttachment | ImageAttachment
+type RequestContext = { accountId: number | null; epoch: number; conversationId: string }
+const maxTextAttachmentBytes = 24 * 1024
+const maxMessageBytes = 32 * 1024
+const maxConversationBytes = 256 * 1024
+const maxImageAttachmentBytes = 5 * 1024 * 1024
+const maxImageAttachments = 4
+const textAttachmentExtensions = new Set([
+  'txt', 'md', 'markdown', 'csv', 'json', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'vue',
+  'html', 'htm', 'css', 'scss', 'sass', 'less', 'py', 'go', 'rs', 'java', 'kt', 'swift',
+  'c', 'h', 'cc', 'cpp', 'cxx', 'hpp', 'cs', 'php', 'rb', 'sh', 'bash', 'zsh', 'yml',
+  'yaml', 'toml', 'xml', 'sql', 'svelte', 'r', 'R', 'lua', 'pl', 'ex', 'exs', 'erl',
+  'hrl', 'clj', 'cljs', 'edn', 'scala', 'sc', 'dart', 'proto', 'graphql', 'gql', 'ini',
+  'conf', 'env', 'makefile', 'dockerfile'
+])
+const imageAttachmentExtensions = new Set(['png', 'jpg', 'jpeg', 'webp'])
+const attachmentAccept = [
+  ...[...textAttachmentExtensions].map(extension => `.${extension}`),
+  'image/png', 'image/jpeg', 'image/webp'
+].join(',')
 const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
@@ -162,6 +201,9 @@ const models = ref<PlaygroundModel[]>([])
 const conversations = ref<PlaygroundConversation[]>([])
 const current = ref<PlaygroundConversation>(emptyConversation())
 const draft = ref('')
+const attachments = ref<PlaygroundAttachment[]>([])
+const attachmentInput = ref<HTMLInputElement | null>(null)
+const loadingAttachments = ref(false)
 const error = ref('')
 const saveError = ref('')
 const cacheError = ref('')
@@ -189,14 +231,17 @@ let controller: AbortController | null = null
 const imageControllers = new Set<AbortController>()
 let timer: ReturnType<typeof setInterval> | undefined
 let modelRequest = 0
+let accountEpoch = 0
+let attachmentQueue: Promise<void> = Promise.resolve()
 let disposed = false
 let saveQueue: Promise<boolean> = Promise.resolve(true)
 let lastMessageId = Date.now()
 const acceptedRevisions = new Map<string, number>()
+const artifactCache = new Map<number, { content: string; artifacts: PlaygroundArtifact[] }>()
 const generating = computed(() => generatingCount.value > 0)
 const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
-const canSend = computed(() => hasBalance.value && !streaming.value && !submitting.value && !loadingModels.value && Boolean(draft.value.trim() && current.value.groupId))
+const canSend = computed(() => hasBalance.value && !streaming.value && !submitting.value && !loadingAttachments.value && !loadingModels.value && Boolean((draft.value.trim() || attachments.value.length) && current.value.groupId))
 const accountId = computed(() => authStore.user?.id ?? null)
 const imageCountResolution = computed(() => resolvePlaygroundImageCount('', imageCount.value))
 const chatModels = computed(() => models.value.filter((model) => !isPlaygroundImageModel(model.id) && !isPlaygroundVideoModel(model.id)))
@@ -248,10 +293,138 @@ function reseedMessageId(messages: StoredMessage[]) {
 function renderMarkdown(content: string) {
   return DOMPurify.sanitize(marked.parse(content, { async: false, gfm: true, breaks: true }) as string)
 }
+function artifactsForMessage(message: StoredMessage) {
+  const cached = artifactCache.get(message.id)
+  if (cached?.content === message.content) return cached.artifacts
+  const artifacts = extractPlaygroundArtifacts(message.content)
+  artifactCache.set(message.id, { content: message.content, artifacts })
+  return artifacts
+}
 function formatExpiry(expiry: number) { return t('playground.expires', { time: new Date(expiry).toLocaleString() }) }
 function remaining(expiry: number) {
   const seconds = Math.max(0, Math.ceil((expiry - now.value) / 1000))
   return t('playground.remaining', { time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` })
+}
+function requestContext(): RequestContext {
+  return { accountId: accountId.value, epoch: accountEpoch, conversationId: current.value.id }
+}
+function isCurrentAccount(context: RequestContext) {
+  return !disposed && context.epoch === accountEpoch && context.accountId === accountId.value
+}
+function isCurrentRequest(context: RequestContext) {
+  return isCurrentAccount(context) && context.conversationId === current.value.id
+}
+function fileExtension(name: string) {
+  const filename = name.toLowerCase()
+  const dot = filename.lastIndexOf('.')
+  return dot < 0 ? filename : filename.slice(dot + 1)
+}
+function displayAttachmentName(name: string) {
+  const characters = Array.from(name)
+  if (characters.length <= 120) return name
+  const extensionStart = name.lastIndexOf('.')
+  const extension = extensionStart > 0 ? Array.from(name.slice(extensionStart)).slice(-24).join('') : ''
+  const prefix = characters.slice(0, 117 - Array.from(extension).length).join('')
+  return `${prefix}...${extension}`
+}
+function imageMime(bytes: Uint8Array): string | null {
+  if (bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value)) return 'image/png'
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.subarray(8, 12)) === 'WEBP') return 'image/webp'
+  return null
+}
+function bytesToDataUrl(bytes: Uint8Array, mime: string) {
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000))
+  }
+  return `data:${mime};base64,${btoa(binary)}`
+}
+async function readAttachment(file: File): Promise<PlaygroundAttachment> {
+  const extension = fileExtension(file.name)
+  if (imageAttachmentExtensions.has(extension)) {
+    const expectedMime = extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg'
+    if (file.size > maxImageAttachmentBytes) throw new Error(t('playground.attachmentImageTooLarge', { name: file.name }))
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    const detectedImageMime = imageMime(bytes)
+    if (detectedImageMime !== expectedMime || (file.type && file.type !== expectedMime)) {
+      throw new Error(t('playground.attachmentImageInvalid', { name: file.name }))
+    }
+    return { id: createPlaygroundId(), name: displayAttachmentName(file.name), kind: 'image', dataUrl: bytesToDataUrl(bytes, expectedMime), size: bytes.byteLength }
+  }
+  if (!textAttachmentExtensions.has(extension)) {
+    throw new Error(t('playground.attachmentUnsupported', { name: file.name }))
+  }
+  if (file.size > maxTextAttachmentBytes) throw new Error(t('playground.attachmentTooMuchText'))
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let text: string
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+  catch { throw new Error(t('playground.attachmentInvalidText', { name: file.name })) }
+  if (Array.from(text).some(character => {
+    const code = character.charCodeAt(0)
+    return (code < 32 && ![9, 10, 13].includes(code)) || (code >= 127 && code <= 159)
+  })) {
+    throw new Error(t('playground.attachmentInvalidText', { name: file.name }))
+  }
+  return { id: createPlaygroundId(), name: displayAttachmentName(file.name), kind: 'text', text, size: bytes.byteLength }
+}
+function handleAttachmentSelection(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (!files.length) return
+  const context = requestContext()
+  loadingAttachments.value = true
+  attachmentQueue = attachmentQueue.then(async () => {
+    for (const file of files) {
+      if (!isCurrentRequest(context)) return
+      try {
+        const attachment = await readAttachment(file)
+        if (!isCurrentRequest(context)) return
+        if (attachment.kind === 'image') {
+          const imageCount = attachments.value.filter(item => item.kind === 'image').length
+          if (imageCount >= maxImageAttachments) {
+            error.value = t('playground.attachmentTooManyImages')
+            continue
+          }
+        } else {
+          const textBytes = attachments.value.reduce((total, item) => total + (item.kind === 'text' ? item.size : 0), 0)
+          if (textBytes + attachment.size > maxTextAttachmentBytes) {
+            error.value = t('playground.attachmentTooMuchText')
+            continue
+          }
+        }
+        attachments.value.push(attachment)
+        error.value = ''
+      } catch (caught) {
+        if (isCurrentRequest(context)) error.value = caught instanceof Error ? caught.message : t('playground.requestFailed')
+      }
+    }
+  }).finally(() => {
+    if (isCurrentRequest(context)) loadingAttachments.value = false
+  })
+}
+function removeAttachment(id: string) {
+  attachments.value = attachments.value.filter(attachment => attachment.id !== id)
+}
+function expandedUserContent(prompt: string, snapshot: PlaygroundAttachment[], kind: PlaygroundKind) {
+  const text = prompt || t(kind === 'image' ? 'playground.editAttachedImage' : 'playground.attachmentOnlyPrompt')
+  const textSections = snapshot
+    .filter((attachment): attachment is TextAttachment => attachment.kind === 'text')
+    .map(attachment => `\n\n--- ${attachment.name} ---\n${attachment.text}`)
+  const imageReferences = snapshot
+    .filter((attachment): attachment is ImageAttachment => attachment.kind === 'image')
+    .map(attachment => `\n\n[Image: ${attachment.name}]`)
+  return `${text}${textSections.join('')}${imageReferences.join('')}`
+}
+function historyLimitError(conversation: PlaygroundConversation) {
+  if (conversation.messages.some(message => new TextEncoder().encode(message.content).byteLength > maxMessageBytes)) {
+    return t('playground.historyMessageTooLarge')
+  }
+  if (new TextEncoder().encode(JSON.stringify(conversation)).byteLength > maxConversationBytes) {
+    return t('playground.historyConversationTooLarge')
+  }
+  return ''
 }
 async function scrollBottom() { await nextTick(); if (viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight }
 function newConversation() {
@@ -260,7 +433,7 @@ function newConversation() {
   current.value = { ...emptyConversation(), groupId, model, imageModel }
   acceptedRevisions.clear()
   acceptedRevisions.set(current.value.id, current.value.revision)
-  draft.value = ''; error.value = ''; saveError.value = ''; historyOpen.value = false
+  draft.value = ''; attachments.value = []; loadingAttachments.value = false; error.value = ''; saveError.value = ''; historyOpen.value = false
 }
 function releaseImages(entries: ImageEntry[]) {
   entries.filter(image => image.objectUrl).forEach(image => URL.revokeObjectURL(image.url))
@@ -270,12 +443,16 @@ function abortActiveRequests() {
   for (const imageController of imageControllers) imageController.abort()
 }
 async function restoreImages(conversationId: string) {
-  const restoredAccountId = accountId.value
+  const context = requestContext()
+  const restoredAccountId = context.accountId
   if (restoredAccountId === null) return
   let cached
   try { cached = await playgroundImageCache.listConversation(restoredAccountId, conversationId) }
-  catch { cacheError.value = t('playground.imageCacheRestoreFailed'); return }
-  if (disposed || accountId.value !== restoredAccountId) return
+  catch {
+    if (isCurrentRequest(context)) cacheError.value = t('playground.imageCacheRestoreFailed')
+    return
+  }
+  if (!isCurrentRequest(context)) return
   const existing = images.value.filter(image => image.conversationId === conversationId)
   releaseImages(existing)
   images.value = images.value.filter(image => image.conversationId !== conversationId)
@@ -289,13 +466,13 @@ async function restoreImages(conversationId: string) {
     expiresAt: image.expiresAt ?? 0
   })))
 }
-async function cacheGeneratedImage(image: Omit<ImageEntry, 'objectUrl'>): Promise<ImageEntry> {
-  const imageAccountId = accountId.value
+async function cacheGeneratedImage(image: Omit<ImageEntry, 'objectUrl'>, context = requestContext()): Promise<ImageEntry> {
+  const imageAccountId = context.accountId
   if (imageAccountId === null) return image
   const blob = await playgroundImageBlob(image.url)
-  if (accountId.value !== imageAccountId) return image
+  if (!isCurrentRequest(context)) return image
   await playgroundImageCache.put({ ...image, accountId: String(imageAccountId), blob })
-  if (disposed || accountId.value !== imageAccountId) return image
+  if (!isCurrentRequest(context)) return image
   return { ...image, url: URL.createObjectURL(blob), objectUrl: true }
 }
 function openWorkflowTab() {
@@ -343,22 +520,31 @@ function openConversation(item: PlaygroundConversation) {
   acceptedRevisions.clear()
   acceptedRevisions.set(current.value.id, current.value.revision)
   reseedMessageId(current.value.messages)
-  draft.value = ''; error.value = ''; saveError.value = ''; historyOpen.value = false
+  draft.value = ''; attachments.value = []; loadingAttachments.value = false; error.value = ''; saveError.value = ''; historyOpen.value = false
   if (accountId.value !== null) saveLastConversation(accountId.value, item.id)
   void restoreImages(item.id)
   scrollBottom()
 }
-async function refreshHistory() {
-  try { conversations.value = (await playgroundHistory.list()).sort((first, second) => second.expiresAt - first.expiresAt) }
-  catch { appStore.showError(t('playground.historyFailed')) }
+async function refreshHistory(context = requestContext()) {
+  try {
+    const history = await playgroundHistory.list()
+    if (isCurrentAccount(context)) conversations.value = history.sort((first, second) => second.expiresAt - first.expiresAt)
+  } catch {
+    if (isCurrentAccount(context)) appStore.showError(t('playground.historyFailed'))
+  }
 }
-async function saveConversation(snapshot = JSON.parse(JSON.stringify(current.value)) as PlaygroundConversation) {
+async function saveConversation(snapshot = JSON.parse(JSON.stringify(current.value)) as PlaygroundConversation, context?: RequestContext) {
   if (!snapshot.messages.length) return true
+  const sizeError = historyLimitError(snapshot)
+  if (sizeError) { error.value = sizeError; return false }
   const task = saveQueue.then(async () => {
+    if (context && !isCurrentRequest(context)) return false
     saving.value = true
     try {
       snapshot.revision = acceptedRevisions.get(snapshot.id) ?? snapshot.revision
       const saved = await playgroundHistory.save(snapshot)
+      if (context && !isCurrentRequest(context)) return false
+      if (disposed) return false
       acceptedRevisions.set(saved.id, saved.revision)
       if (current.value.id === saved.id) {
         current.value.revision = saved.revision; current.value.expiresAt = saved.expiresAt
@@ -366,7 +552,10 @@ async function saveConversation(snapshot = JSON.parse(JSON.stringify(current.val
       conversations.value = [saved, ...conversations.value.filter(item => item.id !== saved.id)]
       saveError.value = ''
       return true
-    } catch { saveError.value = t('playground.saveFailed'); return false }
+    } catch {
+      if (!context || isCurrentRequest(context)) saveError.value = t('playground.saveFailed')
+      return false
+    }
     finally { saving.value = false }
   })
   saveQueue = task.catch(() => false)
@@ -426,70 +615,106 @@ async function send() {
   if (!canSend.value || submitting.value) return
   if (current.value.expiresAt && current.value.expiresAt <= Date.now()) { newConversation(); error.value = t('playground.expired'); return }
   const prompt = draft.value.trim()
+  const attachmentSnapshot = attachments.value.map(attachment => ({ ...attachment }))
+  const imageSnapshot = attachmentSnapshot.filter((attachment): attachment is ImageAttachment => attachment.kind === 'image')
+  const textSnapshot = attachmentSnapshot.filter((attachment): attachment is TextAttachment => attachment.kind === 'text')
+  const context = requestContext()
   const requestedImageCount = resolvePlaygroundImageCount('', imageCount.value)
-  const requestAccountId = accountId.value
   const conversation = current.value
   const previousIntent = [...conversation.messages].reverse().find(message => message.role === 'assistant')?.kind
   const kind = resolvePlaygroundIntent(prompt, previousIntent, imageMode.value)
+  if ((imageMode.value === 'image' || kind === 'image') && textSnapshot.length) {
+    error.value = t('playground.attachmentImageOnly')
+    return
+  }
   const model = kind === 'image' ? conversation.imageModel : conversation.model
   const groupId = conversation.groupId
   const systemPrompt = conversation.systemPrompt
   const temperature = conversation.temperature
   const priorImagePrompt = previousIntent === 'image' && isImageRevisionPrompt(prompt)
-    ? conversation.messages.filter(message => message.role === 'user' && message.kind === 'image').map(message => message.content).join('\n\n')
+    ? conversation.messages
+      .filter(message => message.role === 'user' && message.kind === 'image')
+      .map(message => message.content.replace(/\n\n\[Image: [^\]]+\]/g, ''))
+      .join('\n\n')
     : ''
   if (!model) { error.value = t(kind === 'image' ? 'playground.noImageModel' : 'playground.noChatModel'); return }
   if (kind === 'image' && requestedImageCount.error) {
     error.value = t(requestedImageCount.error === 'too_many' ? 'playground.imageCountTooMany' : 'playground.imageCountInvalid')
     return
   }
+  const userContent = expandedUserContent(prompt, attachmentSnapshot, kind)
+  const userBytes = new TextEncoder().encode(userContent).byteLength
+  if (userBytes > maxMessageBytes) { error.value = t('playground.historyMessageTooLarge'); return }
+  const title = conversation.title || userContent.slice(0, 60)
   const userId = createMessageId()
   const conversationId = conversation.id
-  conversation.messages.push({ id: userId, role: 'user', content: prompt, model, kind })
-  if (!conversation.title) conversation.title = prompt.slice(0, 60)
+  const userMessage: StoredMessage = { id: userId, role: 'user', content: userContent, model, kind }
+  const initialSnapshot = JSON.parse(JSON.stringify({
+    ...conversation,
+    title,
+    messages: [...conversation.messages, userMessage]
+  })) as PlaygroundConversation
+  const sizeError = historyLimitError(initialSnapshot)
+  if (sizeError) { error.value = sizeError; return }
+  conversation.messages.push(userMessage)
+  conversation.title = title
   submitting.value = true
   let initialSaveSucceeded = false
   try {
-    initialSaveSucceeded = await saveConversation(JSON.parse(JSON.stringify(conversation)) as PlaygroundConversation)
+    initialSaveSucceeded = await saveConversation(initialSnapshot, context)
   } finally {
-    submitting.value = false
+    if (isCurrentRequest(context)) submitting.value = false
   }
-  if (!initialSaveSucceeded) {
-    conversation.messages = conversation.messages.filter(message => message.id !== userId)
+  if (!initialSaveSucceeded || !isCurrentRequest(context)) {
+    if (isCurrentRequest(context)) conversation.messages = conversation.messages.filter(message => message.id !== userId)
     return
   }
-  draft.value = ''; error.value = ''
+  draft.value = ''
+  attachments.value = []
+  error.value = ''
   if (kind === 'image') {
     generatingCount.value += 1
-    const assistantId = createMessageId()
-    const generationPrompt = priorImagePrompt ? `${priorImagePrompt}\n\n${prompt}` : prompt
-    conversation.messages.push({ id: assistantId, role: 'assistant', content: '', model, kind })
+    const generationPromptText = prompt || t('playground.editAttachedImage')
+    const generationPrompt = priorImagePrompt ? `${priorImagePrompt}\n\n${generationPromptText}` : generationPromptText
+    conversation.messages.push({ id: createMessageId(), role: 'assistant', content: '', model, kind })
+    const assistantId = conversation.messages[conversation.messages.length - 1].id
     pendingImageIds.value.push(assistantId)
     const imageController = new AbortController()
     imageControllers.add(imageController)
     try {
       const deliveredImageURLs = new Set<string>()
       const saveImage = async (image: PlaygroundImage) => {
+        if (!isCurrentRequest(context)) return
         const generatedImage: ImageEntry = { id: createPlaygroundId(), conversationId, messageId: assistantId, url: image.url, prompt: generationPrompt, expiresAt: Date.now() + 600000 }
-        if (disposed || accountId.value !== requestAccountId) return
         if (deliveredImageURLs.has(generatedImage.url)) return
         deliveredImageURLs.add(generatedImage.url)
         images.value.push(generatedImage)
-        const cached = await cacheGeneratedImage(generatedImage).catch(() => null)
-        if (disposed || accountId.value !== requestAccountId) return
+        const cached = await cacheGeneratedImage(generatedImage, context).catch(() => null)
+        if (!isCurrentRequest(context)) return
         if (!cached) { cacheError.value = t('playground.imageCacheFailed'); return }
         images.value = [...images.value.filter(image => image.id !== generatedImage.id), cached]
       }
       let generated: PlaygroundImage[]
       let generationError: unknown
       try {
-        generated = await playgroundAPI.generateImages({ groupId, model, prompt: generationPrompt, size: imageSize.value, quality: imageQuality.value, count: requestedImageCount.count, signal: imageController.signal, onImage: saveImage })
+        generated = await playgroundAPI.generateImages({
+          groupId,
+          model,
+          prompt: generationPrompt,
+          size: imageSize.value,
+          quality: imageQuality.value,
+          count: requestedImageCount.count,
+          ...(imageSnapshot.length ? { inputImages: imageSnapshot.map(image => image.dataUrl) } : {}),
+          signal: imageController.signal,
+          onImage: saveImage
+        })
       } catch (caught) {
         if (caught instanceof PlaygroundImageGenerationError && caught.images.length) {
           generated = caught.images
           generationError = caught
         } else throw caught
       }
+      if (!isCurrentRequest(context)) return
       if (!generated.length) throw new Error(t('playground.imageFailed'))
       for (const image of generated) await saveImage(image)
       const assistant = conversation.messages.find(message => message.id === assistantId)
@@ -498,6 +723,7 @@ async function send() {
         ? t('playground.insufficientBalance')
         : (generationError as Error).message
     } catch (caught) {
+      if (!isCurrentRequest(context)) return
       if (!images.value.some(image => image.messageId === assistantId)) {
         conversation.messages = conversation.messages.filter(message => message.id !== assistantId)
       }
@@ -505,25 +731,66 @@ async function send() {
         ? t('playground.insufficientBalance')
         : caught instanceof Error ? caught.message : t('playground.imageFailed')
     }
-    finally { imageControllers.delete(imageController); pendingImageIds.value = pendingImageIds.value.filter(id => id !== assistantId); generatingCount.value -= 1 }
+    finally {
+      imageControllers.delete(imageController)
+      if (isCurrentRequest(context)) {
+        pendingImageIds.value = pendingImageIds.value.filter(id => id !== assistantId)
+        generatingCount.value -= 1
+      }
+    }
   } else {
-    const history: PlaygroundMessage[] = conversation.messages.map(message => ({ role: message.role, content: message.content }))
-    if (systemPrompt) history.unshift({ role: 'system', content: systemPrompt })
+    const history: Array<PlaygroundMessage | PlaygroundMultimodalMessage> = conversation.messages.map(message => ({ role: message.role, content: message.content }))
+    if (imageSnapshot.length) {
+      history[history.length - 1] = {
+        role: 'user',
+        content: [
+          { type: 'text', text: userContent },
+          ...imageSnapshot.map(image => ({ type: 'image_url' as const, image_url: { url: image.dataUrl } }))
+        ]
+      }
+    }
+    const outgoingSystemPrompt = [
+      systemPrompt,
+      artifactGenerationInstruction,
+      `Keep the complete assistant message, including downloadable text artifacts, within ${maxMessageBytes} UTF-8 bytes.`
+    ].filter(Boolean).join('\n\n')
+    if (outgoingSystemPrompt) history.unshift({ role: 'system', content: outgoingSystemPrompt })
     const assistantId = createMessageId()
     conversation.messages.push({ id: assistantId, role: 'assistant', content: '', model, kind })
-    streaming.value = true; controller = new AbortController()
+    streaming.value = true
+    const chatController = new AbortController()
+    controller = chatController
     try {
-      await playgroundAPI.streamChat({ groupId, model, messages: history, temperature, signal: controller.signal, onDelta(delta) {
-        const assistant = conversation.messages.find(message => message.id === assistantId)
-        if (assistant) assistant.content += delta
-        if (current.value.id === conversationId) scrollBottom()
-      } })
-    } catch (caught) { if ((caught as Error).name !== 'AbortError') error.value = caught instanceof Error ? caught.message : t('playground.requestFailed') }
-    finally { streaming.value = false; controller = null; conversation.messages = conversation.messages.filter(message => message.content) }
+      await playgroundAPI.streamChat({
+        groupId,
+        model,
+        messages: history,
+        temperature,
+        signal: chatController.signal,
+        onDelta(delta) {
+          if (!isCurrentRequest(context)) return
+          const assistant = conversation.messages.find(message => message.id === assistantId)
+          if (assistant) assistant.content += delta
+          if (current.value.id === conversationId) scrollBottom()
+        }
+      })
+    } catch (caught) {
+      if (isCurrentRequest(context) && (caught as Error).name !== 'AbortError') {
+        error.value = caught instanceof Error ? caught.message : t('playground.requestFailed')
+      }
+    } finally {
+      conversation.messages = conversation.messages.filter(message => message.content)
+      if (isCurrentRequest(context) && controller === chatController) {
+        streaming.value = false
+        controller = null
+      }
+    }
   }
-  await saveConversation(JSON.parse(JSON.stringify(conversation)) as PlaygroundConversation)
+  if (!isCurrentRequest(context)) return
+  await saveConversation(JSON.parse(JSON.stringify(conversation)) as PlaygroundConversation, context)
+  if (!isCurrentRequest(context)) return
   await authStore.refreshUser().catch(() => {})
-  scrollBottom()
+  if (isCurrentRequest(context)) scrollBottom()
 }
 async function copyMessage(content: string) {
   try { await navigator.clipboard.writeText(content); appStore.showSuccess(t('playground.copied')) }
@@ -554,9 +821,47 @@ watch(imageMode, (value) => {
 })
 watch(accountId, (account, previousAccount) => {
   if (account === previousAccount) return
+  accountEpoch += 1
+  abortActiveRequests()
+  controller = null
+  modelRequest += 1
   releaseImages(images.value)
   images.value = []
   preview.value = null
+  artifactCache.clear()
+  current.value = emptyConversation()
+  conversations.value = []
+  acceptedRevisions.clear()
+  draft.value = ''
+  attachments.value = []
+  loadingAttachments.value = false
+  streaming.value = false
+  generatingCount.value = 0
+  pendingImageIds.value = []
+  submitting.value = false
+  saving.value = false
+  models.value = []
+  loadingModels.value = false
+  error.value = ''
+  saveError.value = ''
+  cacheError.value = ''
+  workflowPresets.value = { groupId: 0, chatModel: '', imageModel: '' }
+  imageMode.value = loadPlaygroundPreferences(account).imageMode
+  if (account === null) return
+  const preferences = loadPlaygroundPreferences(account)
+  current.value.groupId = groups.value.some(group => group.id === preferences.groupId)
+    ? preferences.groupId
+    : (groups.value[0]?.id ?? 0)
+  current.value.model = preferences.chatModel
+  current.value.imageModel = preferences.imageModel
+  const context = requestContext()
+  void loadModels(current.value.groupId, 'standard')
+  void (async () => {
+    await refreshHistory(context)
+    if (!isCurrentRequest(context)) return
+    const lastConversation = conversations.value.find(item => item.id === loadLastConversation(account))
+    if (lastConversation) openConversation(lastConversation)
+  })()
 })
 onMounted(async () => {
   timer = setInterval(() => {
@@ -615,6 +920,12 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 .composer { border:1px solid #dfe3ea; border-radius:18px; box-shadow:0 4px 20px #00000005; }
 .composer:focus-within { border-color:#a5b4fc; }
 .composer-input { display:block; width:100%; resize:none; padding:16px 18px 8px; background:transparent; outline:none; font-size:14px; }
+.attachment-list { display:flex; flex-wrap:wrap; gap:8px; padding:12px 12px 0; }
+.attachment-item { display:flex; align-items:center; gap:8px; width:min(100%,240px); min-width:0; border:1px solid #e5e7eb; border-radius:6px; padding:6px; }
+.attachment-thumb { flex:0 0 40px; width:40px; height:40px; border-radius:4px; object-fit:cover; }
+.attachment-file-icon { display:grid; flex:0 0 40px; width:40px; height:40px; place-items:center; border-radius:4px; background:#eef2ff; color:#4f46e5; font-size:10px; font-weight:700; }
+.attachment-remove { display:grid; flex:0 0 28px; width:28px; height:28px; place-items:center; border-radius:4px; color:#9ca3af; font-size:18px; }
+.attachment-remove:hover { background:#f3f4f6; color:#dc2626; }
 .mode-button { border-radius:8px; padding:7px 10px; color:#9ca3af; font-size:12px; }
 .mode-select { border-radius:8px; padding:7px 10px; background:#eef2ff; color:#4f46e5; font-size:12px; }
 .mode-indicator { border-radius:8px; padding:7px 10px; background:#eef2ff; color:#6366f1; font-size:12px; }
@@ -631,6 +942,9 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 :global(html.dark .history-item.selected),:global(html.dark .history-item:hover),:global(html.dark .user-bubble),:global(html.dark .suggestion:hover) { background:#252e3f; }
 :global(html.dark .retention-note),:global(html.dark .toolbar-label) { color:#94a3b8; }
 :global(html.dark .composer),:global(html.dark .settings-panel),:global(html.dark .image-card),:global(html.dark .suggestion),:global(html.dark .playground-tabs) { border-color:#303747; background:#1b2432; }
+:global(html.dark .attachment-item) { border-color:#303747; }
+:global(html.dark .attachment-file-icon) { background:#252e3f; color:#a5b4fc; }
+:global(html.dark .attachment-remove:hover) { background:#303747; }
 :global(html.dark .composer-input),:global(html.dark .toolbar-select),:global(html.dark .toolbar-warning) { color:#e5e7eb; }
 :global(html.dark .mode-button) { color:#94a3b8; }
 :global(html.dark .mode-select) { background:#252e3f; color:#a5b4fc; }

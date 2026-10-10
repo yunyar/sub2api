@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlaygroundView from '../PlaygroundView.vue'
 
 const state = vi.hoisted(() => ({
@@ -34,10 +34,19 @@ vi.mock('@/components/playground/WorkflowPlayground.vue', () => ({
     template: '<button data-testid="workflow-presets" @click="$emit(\'presets\', { groupId: 7, chatModel: \'workflow-chat\', imageModel: \'workflow-image\' })" />'
   }
 }))
-vi.mock('@/stores', () => ({
-  useAuthStore: () => ({ user: { get id() { return state.accountId }, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
-  useAppStore: () => ({ showError: state.showError, showSuccess: state.showSuccess })
-}))
+vi.mock('@/stores', async () => {
+  const { ref } = await import('vue')
+  const accountId = ref<number | undefined>(state.accountId)
+  Object.defineProperty(state, 'accountId', {
+    configurable: true,
+    get: () => accountId.value,
+    set: (value: number | undefined) => { accountId.value = value }
+  })
+  return {
+    useAuthStore: () => ({ user: { get id() { return accountId.value }, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
+    useAppStore: () => ({ showError: state.showError, showSuccess: state.showSuccess })
+  }
+})
 vi.mock('@/api/groups', () => ({ userGroupsAPI: { getAvailable: state.getAvailable } }))
 vi.mock('@/api/playground', () => ({
   PlaygroundImageGenerationError: state.PartialImageError,
@@ -75,8 +84,36 @@ vi.mock('@/utils/playgroundImageCache', () => ({
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
 function mountView() {
-  return mount(PlaygroundView)
+  const wrapper = mount(PlaygroundView)
+  mountedWrappers.push(wrapper)
+  return wrapper
 }
+
+const mountedWrappers: Array<ReturnType<typeof mount>> = []
+
+function createFile(name: string, bytes: number[] | string, type = '') {
+  const content = typeof bytes === 'string' ? new TextEncoder().encode(bytes) : Uint8Array.from(bytes)
+  const file = new File([content], name, { type })
+  Object.defineProperty(file, 'arrayBuffer', {
+    configurable: true,
+    value: async () => Uint8Array.from(content).buffer
+  })
+  return file
+}
+
+async function selectFiles(wrapper: ReturnType<typeof mountView>, files: File[]) {
+  const input = wrapper.get('.composer input[type="file"]')
+  Object.defineProperty(input.element, 'files', { configurable: true, value: files })
+  await input.trigger('change')
+  await flushPromises()
+}
+
+afterEach(() => {
+  mountedWrappers.splice(0).forEach(wrapper => wrapper.unmount())
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  localStorage.clear()
+})
 
 describe('PlaygroundView model and intent routing', () => {
   beforeEach(() => {
@@ -102,6 +139,7 @@ describe('PlaygroundView model and intent routing', () => {
     state.cacheDeleteConversation.mockResolvedValue(undefined)
     state.cacheDeleteExpired.mockResolvedValue(undefined)
     state.refreshUser.mockResolvedValue(undefined)
+    localStorage.clear()
   })
 
   it('keeps video models out of chat and image presets', async () => {
@@ -130,6 +168,149 @@ describe('PlaygroundView model and intent routing', () => {
       prompt: 'draw a lighthouse'
     }))
     expect(state.streamChat).not.toHaveBeenCalled()
+  })
+
+  it('persists text attachment labels and content while keeping artifact instructions request-only', async () => {
+    state.streamChat.mockImplementation(async (input: any) => {
+      expect(input.messages.at(-1)).toEqual(expect.objectContaining({
+        role: 'user',
+        content: expect.stringContaining('--- notes.md ---\nHello from the file')
+      }))
+      expect(input.messages[0].content).toContain('```artifact:filename.ext')
+      input.onDelta('```artifact:hello.txt\nHello download\n```')
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await selectFiles(wrapper, [createFile('notes.md', 'Hello from the file', 'text/markdown')])
+    await wrapper.get('textarea.composer-input').setValue('Summarize this.')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.save.mock.calls[0][0].messages[0].content).toBe('Summarize this.\n\n--- notes.md ---\nHello from the file')
+    expect(state.save.mock.calls[0][0].systemPrompt).toBe('')
+    expect(wrapper.find('.attachment-item').exists()).toBe(false)
+    const artifactButton = wrapper.findAll('button').find(button => button.text() === 'playground.downloadArtifact')
+    expect(artifactButton).toBeTruthy()
+
+    const createObjectURL = vi.fn(() => 'blob:playground-artifact')
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await artifactButton!.trigger('click')
+    expect(createObjectURL).toHaveBeenCalledOnce()
+    expect(click).toHaveBeenCalledOnce()
+  })
+
+  it('sends image attachments to image edits and stores only their filenames', async () => {
+    state.generateImages.mockResolvedValue([{ url: 'data:image/png;base64,generated' }])
+    const wrapper = mountView()
+    await flushPromises()
+    const pngHeader = [137, 80, 78, 71, 13, 10, 26, 10]
+    await selectFiles(wrapper, [createFile('source.png', pngHeader, 'image/png')])
+    await wrapper.get('.mode-select').setValue('image')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({
+      inputImages: [expect.stringMatching(/^data:image\/png;base64,/)]
+    }))
+    const storedContent = state.save.mock.calls[0][0].messages[0].content
+    expect(storedContent).toContain('[Image: source.png]')
+    expect(storedContent).not.toContain('data:image/png;base64')
+    expect(state.streamChat).not.toHaveBeenCalled()
+  })
+
+  it('sends chat image attachments as multimodal image_url parts', async () => {
+    state.streamChat.mockImplementation(async (input: any) => input.onDelta('I see a landscape.'))
+    const wrapper = mountView()
+    await flushPromises()
+    const webpHeader = [82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80]
+    await selectFiles(wrapper, [createFile('scene.webp', webpHeader, 'image/webp')])
+    await wrapper.get('textarea.composer-input').setValue('Describe this image.')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    const userMessage = state.streamChat.mock.calls[0][0].messages.find((message: any) => message.role === 'user')
+    expect(userMessage.content).toEqual([
+      { type: 'text', text: expect.stringContaining('[Image: scene.webp]') },
+      { type: 'image_url', image_url: { url: expect.stringMatching(/^data:image\/webp;base64,/) } }
+    ])
+    expect(state.save.mock.calls[0][0].messages[0].content).not.toContain('data:image/webp;base64')
+  })
+
+  it('keeps attachments when the initial conversation save fails', async () => {
+    state.save.mockRejectedValueOnce(new Error('save failed'))
+    const wrapper = mountView()
+    await flushPromises()
+    await selectFiles(wrapper, [createFile('notes.txt', 'keep me')])
+    await wrapper.get('textarea.composer-input').setValue('Read the file.')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('.attachment-item').exists()).toBe(true)
+    expect(wrapper.get('textarea.composer-input').element.value).toBe('Read the file.')
+    expect(state.streamChat).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid UTF-8 and oversized image attachments', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await selectFiles(wrapper, [createFile('invalid.txt', [0xff], 'text/plain')])
+    expect(wrapper.text()).toContain('playground.attachmentInvalidText')
+    expect(wrapper.find('.attachment-item').exists()).toBe(false)
+
+    await selectFiles(wrapper, [new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })])
+    expect(wrapper.text()).toContain('playground.attachmentImageTooLarge')
+    expect(wrapper.find('.attachment-item').exists()).toBe(false)
+  })
+
+  it('rejects expanded messages over the UTF-8 history limit before saving', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await selectFiles(wrapper, [createFile('large.txt', 'x'.repeat(24 * 1024), 'text/plain')])
+    await wrapper.get('textarea.composer-input').setValue('p'.repeat(10 * 1024))
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('playground.historyMessageTooLarge')
+    expect(state.save).not.toHaveBeenCalled()
+    expect(wrapper.find('.attachment-item').exists()).toBe(true)
+  })
+
+  it('clears attachments when opening history or starting a new conversation', async () => {
+    state.list.mockResolvedValue([{
+      id: 'history-clear',
+      title: 'Saved conversation',
+      groupId: 7,
+      model: 'chat-model',
+      imageModel: 'image-model',
+      systemPrompt: '',
+      temperature: 0.7,
+      messages: [{ id: 1, role: 'user', content: 'Saved prompt' }],
+      revision: 1,
+      expiresAt: Date.now() + 604800000
+    }])
+    const wrapper = mountView()
+    await flushPromises()
+    await selectFiles(wrapper, [createFile('first.txt', 'first')])
+    await wrapper.get('.history-item > button').trigger('click')
+    expect(wrapper.find('.attachment-item').exists()).toBe(false)
+
+    await selectFiles(wrapper, [createFile('second.txt', 'second')])
+    await wrapper.get('.history-panel > .btn-primary').trigger('click')
+    expect(wrapper.find('.attachment-item').exists()).toBe(false)
+  })
+
+  it('clears conversation and attachment state when the account changes', async () => {
+    state.accountId = 1
+    const wrapper = mountView()
+    await flushPromises()
+    await selectFiles(wrapper, [createFile('private.txt', 'private attachment')])
+    expect(wrapper.find('.attachment-item').exists()).toBe(true)
+
+    state.accountId = 2
+    await flushPromises()
+    expect(wrapper.find('.attachment-item').exists()).toBe(false)
+    expect(wrapper.get('textarea.composer-input').element.value).toBe('')
   })
 
   it('never generates when chat-only mode is selected, even for an image prompt', async () => {

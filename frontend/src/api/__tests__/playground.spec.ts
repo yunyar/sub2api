@@ -72,6 +72,35 @@ describe('streamPlaygroundChat', () => {
 })
 
 describe('generatePlaygroundImages', () => {
+  it('routes reference images to edits with group attribution and one output per request', async () => {
+    post.mockResolvedValue({ data: { data: [{ b64_json: 'generated' }] } })
+    const references = ['data:image/png;base64,reference']
+
+    await generatePlaygroundImages({
+      groupId: 7, model: 'gpt-image-1', prompt: 'change the background',
+      size: '1024x1024', quality: 'auto', count: 2, inputImages: references
+    })
+
+    expect(post).toHaveBeenCalledTimes(2)
+    for (const [endpoint, body, config] of post.mock.calls) {
+      expect(endpoint).toBe('/playground/images/edits')
+      expect(body).toMatchObject({ n: 1, images: [{ image_url: references[0] }] })
+      expect(config.headers).toEqual({ 'X-Playground-Group-ID': '7' })
+    }
+  })
+
+  it('does not silently retry unsupported image edits as text-to-image', async () => {
+    post.mockRejectedValue({ response: { status: 404 }, message: 'Image edits are not supported' })
+
+    await expect(generatePlaygroundImages({
+      groupId: 7, model: 'image-model', prompt: 'edit this',
+      size: '1024x1024', quality: 'auto', count: 1,
+      inputImages: ['data:image/png;base64,reference']
+    })).rejects.toMatchObject({ status: 404, images: [] })
+    expect(post).toHaveBeenCalledOnce()
+    expect(post.mock.calls[0][0]).toBe('/playground/images/edits')
+  })
+
   function deferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (reason?: unknown) => void

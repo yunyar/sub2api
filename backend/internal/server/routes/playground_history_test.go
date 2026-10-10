@@ -72,6 +72,21 @@ func TestPlaygroundHistoryIsolationExpiryAndConflicts(t *testing.T) {
 	require.NotEqual(t, http.StatusOK, request("PUT", "/oversized", "1", conversation).Code)
 }
 
+func TestPlaygroundAttachmentHistoryValidation(t *testing.T) {
+	conversation := playgroundConversation{Temperature: 0.7, Messages: []playgroundHistoryMessage{{ID: 1, Role: "user", Content: "Reference\n\n--- data.txt ---\n" + strings.Repeat("x", 24*1024)}}}
+	require.True(t, validPlaygroundConversation(&conversation))
+	for _, content := range []string{
+		"prefix data:image/png;base64,abc",
+		"prefix DATA:IMAGE/JPEG;BASE64,abc",
+		strings.Repeat("界", 32768/3+1),
+	} {
+		conversation.Messages[0].Content = content
+		require.False(t, validPlaygroundConversation(&conversation))
+	}
+	conversation.Messages[0].Content = "[Image: reference.png]"
+	require.True(t, validPlaygroundConversation(&conversation))
+}
+
 func TestPlaygroundWorkflowHistoryValidation(t *testing.T) {
 	valid := playgroundConversation{Kind: "workflow", Model: "chat", ImageModel: "image", Temperature: 0.7, Messages: []playgroundHistoryMessage{{ID: 1, Role: "assistant", Content: "result", Kind: "chat", StepID: "step-1"}}, Workflow: &playgroundWorkflow{Steps: []playgroundWorkflowStep{{ID: "step-1", Prompt: "first"}}, CurrentStep: 0}}
 	require.True(t, validPlaygroundConversation(&valid))
