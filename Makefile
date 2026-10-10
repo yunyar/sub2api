@@ -10,6 +10,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/utils/__tests__/playgroundImageCount.spec.ts \
 	src/utils/__tests__/playgroundPreferences.spec.ts \
 	src/utils/__tests__/playgroundId.spec.ts \
+	src/utils/__tests__/playgroundArtifacts.spec.ts \
 	src/api/__tests__/url.spec.ts \
 	src/views/user/__tests__/PlaygroundView.spec.ts \
 	src/components/playground/__tests__/WorkflowPlayground.spec.ts \
