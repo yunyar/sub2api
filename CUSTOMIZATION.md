@@ -33,6 +33,14 @@ attribution apply. Image understanding depends on the selected model.
 Reference image bytes are request-local, not persisted in seven-day history;
 reselect images after refreshing or switching devices.
 
+Files can be selected together or dragged into the Playground from either the
+standard conversation or workflow view. Attachments are snapshotted per
+submission, so files added while another response is streaming remain queued
+for the next request. Standard chat and workflow steps can continue while a
+previous response is generating; each request uses the context available when
+it starts, including partial completed text and image results from workflow
+steps. Concurrent workflow runs are isolated per step.
+
 With image mode explicitly selected, reference images use the authenticated
 `/api/v1/playground/images/edits` endpoint, reusing the existing image gateway,
 content audit, balance holds, per-image pricing, and usage records. Unsupported

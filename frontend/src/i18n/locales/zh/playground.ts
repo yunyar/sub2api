@@ -62,6 +62,8 @@ export default {
     attachmentOnlyPrompt: '请帮我处理这些附件。',
     editAttachedImage: '请编辑这张附件图片。',
     attachmentNote: '图片引用不会保存到云端历史。文本/代码文件：.txt、.md、.csv、.json 和常见代码文件，总计最多 24 KiB。图片：PNG、JPEG、WebP，每张最多 5 MiB，最多 4 张。图片理解和编辑能力取决于所选模型。',
+    dropFiles: '松开鼠标即可添加多个参考文件',
+    activeRequests: '进行中请求：{count}',
     historyMessageTooLarge: '此消息超过云端历史记录的 32 KiB UTF-8 限制。请缩短提示词或减少文本附件。',
     historyConversationTooLarge: '此对话超过 256 KiB 历史记录限制。请新建对话后继续发送。',
     downloadArtifact: '下载 {name}',

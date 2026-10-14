@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Conversation } from '@/api/playgroundHistory'
 import WorkflowPlayground from '../WorkflowPlayground.vue'
@@ -15,6 +16,7 @@ const state = vi.hoisted(() => ({
   cacheDeleteExpired: vi.fn(),
   refreshUser: vi.fn(),
   balance: 10,
+  account: null as ReturnType<typeof ref<number>> | null,
   PartialImageError: class PartialImageError extends Error {
     constructor(message: string, readonly images: unknown[], readonly status?: number) { super(message) }
   },
@@ -22,7 +24,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 vi.mock('@/stores', () => ({
-  useAuthStore: () => ({ user: { id: 1, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
+  useAuthStore: () => ({ user: { get id() { return state.account?.value ?? 1 }, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
 }))
 vi.mock('@/api/playground', () => ({
   PlaygroundImageGenerationError: state.PartialImageError,
@@ -92,6 +94,7 @@ beforeEach(() => {
   state.cacheDeleteExpired.mockResolvedValue(undefined)
   state.refreshUser.mockResolvedValue(undefined)
   state.balance = 10
+  state.account = ref(1)
 })
 
 afterEach(() => {
@@ -126,6 +129,117 @@ describe('WorkflowPlayground', () => {
     await button(wrapper, 'workflow.run')!.trigger('click')
     await flushPromises()
     expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 1, model: 'image-1' }))
+  })
+
+  it('passes multiple text and image references from the shared attachment tray', async () => {
+    const attachments = [
+      { id: 'text-1', name: 'notes.txt', kind: 'text' as const, text: 'Reference text', size: 14 },
+      { id: 'image-1', name: 'scene.png', kind: 'image' as const, dataUrl: 'data:image/png;base64,scene', size: 10 }
+    ]
+    const wrapper = mountWorkflow({
+      ...props,
+      attachments
+    } as any)
+    await flushPromises()
+    await button(wrapper, 'playground.attachFiles')!.trigger('click')
+    await wrapper.findAll('.workflow-attachment-remove')[0].trigger('click')
+    expect(wrapper.emitted('requestAttachments')).toHaveLength(1)
+    expect(wrapper.emitted('removeAttachment')?.[0]).toEqual(['text-1'])
+    await wrapper.setProps({ ...props, attachments } as any)
+    await enterFirstPrompt(wrapper, 'Describe the references')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    const request = state.streamChat.mock.calls[0][0]
+    expect(request.messages.at(-1)).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: expect.stringContaining('Reference text') },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,scene' } }
+      ]
+    })
+    expect(wrapper.emitted('consumeAttachments')).toHaveLength(1)
+  })
+
+  it('passes multiple image references to image generation and consumes their ids', async () => {
+    const attachments = [
+      { id: 'reference-1', name: 'one.png', kind: 'image' as const, dataUrl: 'data:image/png;base64,one', size: 10 },
+      { id: 'reference-2', name: 'two.png', kind: 'image' as const, dataUrl: 'data:image/png;base64,two', size: 10 },
+    ]
+    const wrapper = mountWorkflow({ ...props, attachments } as any)
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'draw a new scene from these references')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ inputImages: attachments.map(item => item.dataUrl) }))
+    expect(wrapper.emitted('consumeAttachments')).toEqual([[['reference-1', 'reference-2']]])
+  })
+
+  it('runs separate steps concurrently with partial context and keeps both results', async () => {
+    const requests: Array<{ input: any; finish: () => void }> = []
+    state.streamChat.mockImplementation((input: any) => new Promise<void>((resolve) => {
+      const isFirst = input.messages.at(-1).content === 'first prompt'
+      if (isFirst) input.onDelta('partial first result')
+      requests.push({
+        input,
+        finish: () => {
+          input.onDelta(isFirst ? ' final first result' : 'second result')
+          resolve()
+        },
+      })
+    }))
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper)
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    await button(wrapper, 'workflow.addStep')!.trigger('click')
+    await button(wrapper, 'workflow.goTo')!.trigger('click')
+    await wrapper.findAll('.workflow-step')[1].find('textarea').setValue('second prompt')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    expect(requests).toHaveLength(2)
+    expect(requests[1].input.messages).toEqual([
+      { role: 'user', content: 'first prompt' },
+      { role: 'assistant', content: 'partial first result' },
+      { role: 'user', content: 'second prompt' }
+    ])
+    requests[1].finish()
+    await flushPromises()
+    requests[0].finish()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('partial first result final first result')
+    expect(wrapper.text()).toContain('second result')
+    expect(requests[0].input.signal.aborted).toBe(false)
+  })
+
+  it('aborts pending work and ignores its output after an account change', async () => {
+    let finish: (() => void) | undefined
+    state.streamChat.mockImplementation((input: any) => new Promise<void>((resolve) => {
+      finish = () => {
+        input.onDelta('private account result')
+        resolve()
+      }
+    }))
+    const wrapper = mountWorkflow()
+    await flushPromises()
+    await enterFirstPrompt(wrapper)
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+    const signal = state.streamChat.mock.calls[0][0].signal as AbortSignal
+
+    state.account!.value = 2
+    await nextTick()
+    finish!()
+    await flushPromises()
+
+    expect(signal.aborted).toBe(true)
+    expect(wrapper.text()).not.toContain('private account result')
+    expect(wrapper.findAll('.workflow-step')).toHaveLength(1)
   })
 
   it('saves a draft retaining an empty second step', async () => {
@@ -351,7 +465,7 @@ describe('WorkflowPlayground', () => {
     }))
   })
 
-  it('blocks expired images from later context without submitting base64 data', async () => {
+  it('keeps available text context when prior image references expire', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     state.cachePut.mockRejectedValueOnce(new Error('storage unavailable'))
     const wrapper = mountWorkflow()
@@ -365,7 +479,13 @@ describe('WorkflowPlayground', () => {
     await button(wrapper, 'workflow.next')!.trigger('click')
     await flushPromises()
 
-    expect(state.streamChat).not.toHaveBeenCalled()
+    expect(state.streamChat).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: 'user', content: expect.stringContaining('generate an image of a mountain') }),
+        expect.objectContaining({ role: 'user', content: 'describe it' })
+      ])
+    }))
+    expect(JSON.stringify(state.streamChat.mock.calls[0][0].messages)).not.toContain('base64')
     expect(wrapper.text()).toContain('workflow.imageExpired')
     vi.useRealTimers()
   })
@@ -381,17 +501,27 @@ describe('WorkflowPlayground', () => {
     expect(state.streamChat).not.toHaveBeenCalled()
   })
 
-  it('locks controls while a save is pending', async () => {
-    let resolveSave: ((value: Conversation) => void) | undefined
-    state.save.mockImplementationOnce(() => new Promise<Conversation>((resolve) => { resolveSave = resolve }))
+  it('keeps step navigation available while a save is pending', async () => {
+    let resolveSave: (() => void) | undefined
+    state.save.mockImplementationOnce((value: Conversation) => new Promise<Conversation>((resolve) => {
+      resolveSave = () => resolve({ ...value, revision: value.revision + 1, expiresAt: Date.now() + 60_000 })
+    }))
     const wrapper = mountWorkflow()
     await flushPromises()
-    await enterFirstPrompt(wrapper)
     await button(wrapper, 'workflow.save')!.trigger('click')
     await wrapper.vm.$nextTick()
 
-    expect(button(wrapper, 'workflow.addStep')!.attributes('disabled')).toBeDefined()
-    resolveSave!({ ...conversation(), revision: 1, expiresAt: Date.now() + 60_000 })
+    await button(wrapper, 'workflow.new')!.trigger('click')
+    await enterFirstPrompt(wrapper, 'new workflow prompt')
+    await button(wrapper, 'workflow.save')!.trigger('click')
+    resolveSave!()
     await flushPromises()
+
+    expect(state.save).toHaveBeenCalledTimes(2)
+    expect(state.save.mock.calls[1][0]).toEqual(expect.objectContaining({
+      title: 'new workflow prompt',
+      revision: 0,
+      workflow: expect.objectContaining({ steps: [{ id: expect.any(String), prompt: 'new workflow prompt' }] }),
+    }))
   })
 })

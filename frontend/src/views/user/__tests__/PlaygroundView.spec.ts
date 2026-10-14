@@ -237,6 +237,28 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.save.mock.calls[0][0].messages[0].content).not.toContain('data:image/webp;base64')
   })
 
+  it('accepts multiple files dropped on the conversation panel', async () => {
+    state.streamChat.mockImplementation(async (input: any) => input.onDelta('done'))
+    const wrapper = mountView()
+    await flushPromises()
+    const panel = wrapper.get('.conversation-panel')
+    const dataTransfer = {
+      types: ['Files'],
+      files: [createFile('notes.txt', 'first'), createFile('config.json', '{"ok":true}', 'application/json')]
+    }
+    await panel.trigger('dragenter', { dataTransfer })
+    expect(wrapper.find('.drag-overlay').exists()).toBe(true)
+    await panel.trigger('drop', { dataTransfer })
+    await flushPromises()
+
+    expect(wrapper.findAll('.attachment-item')).toHaveLength(2)
+    await wrapper.get('textarea.composer-input').setValue('Use both references.')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(state.streamChat.mock.calls[0][0].messages.at(-1).content).toContain('--- notes.txt ---')
+    expect(state.streamChat.mock.calls[0][0].messages.at(-1).content).toContain('--- config.json ---')
+  })
+
   it('keeps attachments when the initial conversation save fails', async () => {
     state.save.mockRejectedValueOnce(new Error('save failed'))
     const wrapper = mountView()
@@ -533,6 +555,76 @@ describe('PlaygroundView model and intent routing', () => {
     await wrapper.get('textarea.composer-input').setValue('draw another lighthouse')
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
     resolveGeneration([{ url: 'data:image/png;base64,image' }])
+  })
+
+  it('keeps sending available while a chat stream is pending', async () => {
+    const resolvers: Array<(value?: unknown) => void> = []
+    state.streamChat.mockImplementation((input: any) => new Promise(resolve => {
+      input.onDelta('partial')
+      resolvers.push(resolve)
+    }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('textarea.composer-input').setValue('first')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('textarea.composer-input').setValue('second')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.streamChat).toHaveBeenCalledTimes(2)
+    expect(state.streamChat.mock.calls[1][0].messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'assistant', content: 'partial' }),
+      expect.objectContaining({ role: 'user', content: 'second' })
+    ]))
+    resolvers.forEach(resolve => resolve())
+    await flushPromises()
+  })
+
+  it('does not remove another pending response when an empty stream ends', async () => {
+    const requests: any[] = []
+    const resolvers: Array<() => void> = []
+    state.streamChat.mockImplementation((input: any) => new Promise<void>(resolve => {
+      requests.push(input)
+      resolvers.push(resolve)
+    }))
+    const wrapper = mountView()
+    await flushPromises()
+    for (const prompt of ['first', 'second']) {
+      await wrapper.get('textarea.composer-input').setValue(prompt)
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+    }
+    expect(requests[1].messages.filter((message: any) => message.role === 'assistant')).toHaveLength(0)
+    resolvers[0]()
+    await flushPromises()
+    requests[1].onDelta('second response survives')
+    resolvers[1]()
+    await flushPromises()
+    expect(wrapper.text()).toContain('second response survives')
+  })
+
+  it('keeps a new file dropped during the previous initial history save', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    let finishSave!: (value: any) => void
+    state.save.mockImplementationOnce((conversation: any) => new Promise(resolve => {
+      finishSave = () => resolve({ ...conversation, revision: 1, expiresAt: Date.now() + 604800000 })
+    }))
+    await selectFiles(wrapper, [createFile('first.txt', 'first reference')])
+    await wrapper.get('textarea.composer-input').setValue('first request')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('.conversation-panel').trigger('drop', {
+      dataTransfer: { types: ['Files'], files: [createFile('next.txt', 'next reference')] }
+    })
+    await flushPromises()
+    finishSave({})
+    await flushPromises()
+    expect(wrapper.findAll('.attachment-item')).toHaveLength(1)
+    expect(wrapper.get('.attachment-item').text()).toContain('next.txt')
   })
 
   it('combines the prior image prompt with a follow-up generation request', async () => {

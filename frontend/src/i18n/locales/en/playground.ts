@@ -62,6 +62,8 @@ export default {
     attachmentOnlyPrompt: 'Please help me with the attached files.',
     editAttachedImage: 'Please edit the attached image.',
     attachmentNote: 'Image references are not saved to cloud history. Text/code files: .txt, .md, .csv, .json and common code files, up to 24 KiB total. Images: PNG, JPEG, or WebP, up to 5 MiB each and 4 total. Image understanding and editing depend on the selected model.',
+    dropFiles: 'Drop to add multiple reference files',
+    activeRequests: 'Active requests: {count}',
     historyMessageTooLarge: 'This message exceeds the 32 KiB UTF-8 history limit. Shorten the prompt or remove some attachment text.',
     historyConversationTooLarge: 'This conversation exceeds the 256 KiB history limit. Start a new conversation before sending more.',
     downloadArtifact: 'Download {name}',

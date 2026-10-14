@@ -22,7 +22,7 @@
         <button class="mt-3 text-left text-xs text-gray-500 hover:text-primary-500 dark:text-dark-400" :disabled="busy" @click="refreshHistory()">{{ t('playground.refreshHistory') }}</button>
       </aside>
 
-      <main class="conversation-panel">
+      <main class="conversation-panel" :class="{ 'is-dragging-files': draggingFiles }" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles">
         <header class="studio-toolbar">
           <button v-if="activeTab === 'standard'" class="btn btn-secondary lg:hidden" @click="historyOpen = !historyOpen">☰</button>
           <div class="playground-tabs" role="tablist">
@@ -56,7 +56,7 @@
           <div class="ml-auto hidden text-right sm:block"><span class="toolbar-label">{{ t('playground.balance') }}</span><span class="text-sm font-medium tabular-nums">${{ (authStore.user?.balance ?? 0).toFixed(4) }}</span></div>
         </header>
 
-        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
+        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" :attachments="attachments" :attachments-loading="loadingAttachments" @request-attachments="attachmentInput?.click()" @remove-attachment="removeAttachment" @consume-attachments="removeAttachments" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
         <div v-show="activeTab === 'standard'" class="standard-playground">
         <div ref="viewport" class="conversation-scroll">
           <div v-if="!current.messages.length && !currentImages.length" class="welcome">
@@ -70,7 +70,7 @@
           </div>
           <div v-else class="mx-auto w-full max-w-3xl space-y-7">
             <template v-for="message in current.messages" :key="message.id">
-              <article :class="message.role === 'user' ? 'flex justify-end' : 'assistant-message'">
+              <article class="message-entry" :class="message.role === 'user' ? 'flex justify-end' : 'assistant-message'">
                 <div v-if="message.role === 'user'" class="user-bubble">{{ message.content }}</div>
                 <div v-else>
                   <span class="mb-2 block text-xs font-semibold text-gray-400 dark:text-dark-400">{{ message.model || current.model }}</span>
@@ -117,26 +117,28 @@
                   <img v-if="attachment.kind === 'image'" :src="attachment.dataUrl" :alt="attachment.name" class="attachment-thumb" />
                   <span v-else class="attachment-file-icon" aria-hidden="true">TXT</span>
                   <span class="min-w-0 flex-1 truncate text-xs">{{ attachment.name }}</span>
-                  <button type="button" class="attachment-remove" :aria-label="t('playground.removeAttachment', { name: attachment.name })" :disabled="submitting || streaming" @click="removeAttachment(attachment.id)">×</button>
+                  <button type="button" class="attachment-remove" :aria-label="t('playground.removeAttachment', { name: attachment.name })" :disabled="submitting" @click="removeAttachment(attachment.id)">×</button>
                 </div>
               </div>
-              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t('playground.messagePlaceholder')" :disabled="streaming || submitting" @keydown.enter.exact="onEnter" />
-              <div class="flex items-center justify-between gap-3 px-3 pb-3">
-                <div class="flex items-center gap-1">
-                  <input ref="attachmentInput" class="sr-only" type="file" multiple :accept="attachmentAccept" :disabled="streaming || submitting || loadingAttachments" @change="handleAttachmentSelection" />
-                  <button type="button" class="mode-button" :disabled="streaming || submitting || loadingAttachments" @click="attachmentInput?.click()">{{ t('playground.attachFiles') }}</button>
-                  <label class="mode-control"><span class="sr-only">{{ t('playground.modeLabel') }}</span><select v-model="imageMode" class="mode-select" :disabled="streaming || submitting"><option value="auto">{{ t('playground.modeAuto') }}</option><option value="chat">{{ t('playground.modeChat') }}</option><option value="image">{{ t('playground.modeImage') }}</option></select></label>
+              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t('playground.messagePlaceholder')" :disabled="submitting" @keydown.enter.exact="onEnter" />
+              <div class="composer-actions">
+                <div class="composer-tools">
+                  <input ref="attachmentInput" class="sr-only" type="file" multiple :accept="attachmentAccept" :disabled="submitting || loadingAttachments" @change="handleAttachmentSelection" />
+                  <button type="button" class="mode-button" :disabled="submitting || loadingAttachments" @click="attachmentInput?.click()">{{ t('playground.attachFiles') }}</button>
+                  <label class="mode-control"><span class="sr-only">{{ t('playground.modeLabel') }}</span><select v-model="imageMode" class="mode-select" :disabled="submitting"><option value="auto">{{ t('playground.modeAuto') }}</option><option value="chat">{{ t('playground.modeChat') }}</option><option value="image">{{ t('playground.modeImage') }}</option></select></label>
                   <span v-if="imageMode === 'image'" class="mode-indicator">{{ t('playground.imagesToGenerate', { count: imageCountResolution.count }) }}</span>
-                  <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="streaming || submitting" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
+                  <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="submitting" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
                 </div>
-                <button v-if="streaming || generating" type="button" class="btn btn-secondary" @click="abortActiveRequests">{{ t('playground.stop') }}</button>
-                <button v-if="!streaming" class="btn btn-primary" type="submit" :disabled="!canSend">{{ t('playground.send') }} ↑</button>
+                <span v-if="activeRequestCount" class="request-status" aria-live="polite">{{ t('playground.activeRequests', { count: activeRequestCount }) }}</span>
+                <button v-if="activeRequestCount" type="button" class="btn btn-secondary" @click="abortActiveRequests">{{ t('playground.stop') }}</button>
+                <button class="btn btn-primary" type="submit" :disabled="!canSend">{{ t('playground.send') }} ↑</button>
               </div>
             </form>
             <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t('playground.retention') }} {{ t('playground.imageRetention') }} {{ t('playground.attachmentNote') }} {{ t('playground.artifactNote') }}</p>
           </div>
         </div>
         </div>
+        <div v-if="draggingFiles" class="drag-overlay" aria-live="polite">{{ t('playground.dropFiles') }}</div>
       </main>
     </div>
     <BaseDialog :show="Boolean(preview)" :title="t('playground.preview')" width="wide" :close-on-click-outside="true" @close="preview = null">
@@ -209,7 +211,7 @@ const saveError = ref('')
 const cacheError = ref('')
 const loadingGroups = ref(false)
 const loadingModels = ref(false)
-const streaming = ref(false)
+const streamingCount = ref(0)
 const generatingCount = ref(0)
 const pendingImageIds = ref<number[]>([])
 const saving = ref(false)
@@ -226,22 +228,27 @@ const imageMode = ref<PlaygroundMode>('chat')
 const images = ref<ImageEntry[]>([])
 const preview = ref<ImageEntry | null>(null)
 const viewport = ref<HTMLElement | null>(null)
+const draggingFiles = ref(false)
 const now = ref(Date.now())
-let controller: AbortController | null = null
+const chatControllers = new Set<AbortController>()
 const imageControllers = new Set<AbortController>()
+let dragDepth = 0
 let timer: ReturnType<typeof setInterval> | undefined
 let modelRequest = 0
 let accountEpoch = 0
 let attachmentQueue: Promise<void> = Promise.resolve()
+let attachmentBatchCount = 0
 let disposed = false
 let saveQueue: Promise<boolean> = Promise.resolve(true)
 let lastMessageId = Date.now()
 const acceptedRevisions = new Map<string, number>()
 const artifactCache = new Map<number, { content: string; artifacts: PlaygroundArtifact[] }>()
 const generating = computed(() => generatingCount.value > 0)
+const streaming = computed(() => streamingCount.value > 0)
+const activeRequestCount = computed(() => streamingCount.value + generatingCount.value)
 const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
-const canSend = computed(() => hasBalance.value && !streaming.value && !submitting.value && !loadingAttachments.value && !loadingModels.value && Boolean((draft.value.trim() || attachments.value.length) && current.value.groupId))
+const canSend = computed(() => hasBalance.value && !submitting.value && !loadingAttachments.value && !loadingModels.value && Boolean((draft.value.trim() || attachments.value.length) && current.value.groupId))
 const accountId = computed(() => authStore.user?.id ?? null)
 const imageCountResolution = computed(() => resolvePlaygroundImageCount('', imageCount.value))
 const chatModels = computed(() => models.value.filter((model) => !isPlaygroundImageModel(model.id) && !isPlaygroundVideoModel(model.id)))
@@ -372,8 +379,12 @@ function handleAttachmentSelection(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
   input.value = ''
+  addAttachments(files)
+}
+function addAttachments(files: File[]) {
   if (!files.length) return
   const context = requestContext()
+  attachmentBatchCount += 1
   loadingAttachments.value = true
   attachmentQueue = attachmentQueue.then(async () => {
     for (const file of files) {
@@ -401,11 +412,31 @@ function handleAttachmentSelection(event: Event) {
       }
     }
   }).finally(() => {
-    if (isCurrentRequest(context)) loadingAttachments.value = false
+    attachmentBatchCount = Math.max(0, attachmentBatchCount - 1)
+    if (isCurrentRequest(context)) loadingAttachments.value = attachmentBatchCount > 0
   })
+}
+function onDragEnter(event: DragEvent) {
+  if (!event.dataTransfer?.types.includes('Files')) return
+  dragDepth += 1
+  draggingFiles.value = true
+}
+function onDragLeave() {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) draggingFiles.value = false
+}
+function onDropFiles(event: DragEvent) {
+  dragDepth = 0
+  draggingFiles.value = false
+  addAttachments(Array.from(event.dataTransfer?.files ?? []))
 }
 function removeAttachment(id: string) {
   attachments.value = attachments.value.filter(attachment => attachment.id !== id)
+}
+function removeAttachments(ids: string[]) {
+  if (!ids.length) return
+  const consumed = new Set(ids)
+  attachments.value = attachments.value.filter(attachment => !consumed.has(attachment.id))
 }
 function expandedUserContent(prompt: string, snapshot: PlaygroundAttachment[], kind: PlaygroundKind) {
   const text = prompt || t(kind === 'image' ? 'playground.editAttachedImage' : 'playground.attachmentOnlyPrompt')
@@ -439,7 +470,7 @@ function releaseImages(entries: ImageEntry[]) {
   entries.filter(image => image.objectUrl).forEach(image => URL.revokeObjectURL(image.url))
 }
 function abortActiveRequests() {
-  controller?.abort()
+  for (const chatController of chatControllers) chatController.abort()
   for (const imageController of imageControllers) imageController.abort()
 }
 async function restoreImages(conversationId: string) {
@@ -656,6 +687,18 @@ async function send() {
   })) as PlaygroundConversation
   const sizeError = historyLimitError(initialSnapshot)
   if (sizeError) { error.value = sizeError; return }
+  const history: Array<PlaygroundMessage | PlaygroundMultimodalMessage> = initialSnapshot.messages
+    .filter(message => message.role !== 'assistant' || message.content.trim())
+    .map(message => ({ role: message.role, content: message.content }))
+  if (imageSnapshot.length && kind === 'chat') {
+    history[history.length - 1] = {
+      role: 'user',
+      content: [
+        { type: 'text', text: userContent },
+        ...imageSnapshot.map(image => ({ type: 'image_url' as const, image_url: { url: image.dataUrl } }))
+      ]
+    }
+  }
   conversation.messages.push(userMessage)
   conversation.title = title
   submitting.value = true
@@ -670,7 +713,7 @@ async function send() {
     return
   }
   draft.value = ''
-  attachments.value = []
+  removeAttachments(attachmentSnapshot.map(attachment => attachment.id))
   error.value = ''
   if (kind === 'image') {
     generatingCount.value += 1
@@ -739,16 +782,6 @@ async function send() {
       }
     }
   } else {
-    const history: Array<PlaygroundMessage | PlaygroundMultimodalMessage> = conversation.messages.map(message => ({ role: message.role, content: message.content }))
-    if (imageSnapshot.length) {
-      history[history.length - 1] = {
-        role: 'user',
-        content: [
-          { type: 'text', text: userContent },
-          ...imageSnapshot.map(image => ({ type: 'image_url' as const, image_url: { url: image.dataUrl } }))
-        ]
-      }
-    }
     const outgoingSystemPrompt = [
       systemPrompt,
       artifactGenerationInstruction,
@@ -757,9 +790,9 @@ async function send() {
     if (outgoingSystemPrompt) history.unshift({ role: 'system', content: outgoingSystemPrompt })
     const assistantId = createMessageId()
     conversation.messages.push({ id: assistantId, role: 'assistant', content: '', model, kind })
-    streaming.value = true
     const chatController = new AbortController()
-    controller = chatController
+    chatControllers.add(chatController)
+    streamingCount.value += 1
     try {
       await playgroundAPI.streamChat({
         groupId,
@@ -779,10 +812,12 @@ async function send() {
         error.value = caught instanceof Error ? caught.message : t('playground.requestFailed')
       }
     } finally {
-      conversation.messages = conversation.messages.filter(message => message.content)
-      if (isCurrentRequest(context) && controller === chatController) {
-        streaming.value = false
-        controller = null
+      if (!conversation.messages.find(message => message.id === assistantId)?.content) {
+        conversation.messages = conversation.messages.filter(message => message.id !== assistantId)
+      }
+      chatControllers.delete(chatController)
+      if (isCurrentAccount(context)) {
+        streamingCount.value = Math.max(0, streamingCount.value - 1)
       }
     }
   }
@@ -823,7 +858,6 @@ watch(accountId, (account, previousAccount) => {
   if (account === previousAccount) return
   accountEpoch += 1
   abortActiveRequests()
-  controller = null
   modelRequest += 1
   releaseImages(images.value)
   images.value = []
@@ -835,7 +869,7 @@ watch(accountId, (account, previousAccount) => {
   draft.value = ''
   attachments.value = []
   loadingAttachments.value = false
-  streaming.value = false
+  streamingCount.value = 0
   generatingCount.value = 0
   pendingImageIds.value = []
   submitting.value = false
@@ -900,7 +934,10 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 .history-item { display:flex; align-items:center; gap:4px; padding:12px 8px; border-radius:10px; }
 .history-item:hover,.history-item.selected { background:#eaeef5; }
 .retention-note { margin-top:20px; font-size:11px; line-height:1.8; color:#9ca3af; }
-.conversation-panel { display:flex; flex:1; min-width:0; flex-direction:column; }
+.conversation-panel { position:relative; display:flex; flex:1; min-width:0; flex-direction:column; }
+.conversation-panel.is-dragging-files { background:#eef2ff; }
+.drag-overlay { position:absolute; z-index:30; inset:12px; display:grid; place-items:center; pointer-events:none; border:2px dashed #6366f1; border-radius:18px; background:#6366f11a; color:#4f46e5; font-size:18px; font-weight:700; animation:playground-drop-in .16s ease-out; }
+.request-status { color:#6366f1; font-size:12px; white-space:nowrap; }
 .standard-playground { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
 .studio-toolbar { display:flex; align-items:center; gap:20px; padding:18px 24px; border-bottom:1px solid #f0f1f3; }
 .toolbar-label { display:block; margin-bottom:4px; color:#9ca3af; font-size:10px; }
@@ -919,7 +956,12 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 .composer-area { flex-shrink:0; padding:12px 32px 20px; }
 .composer { border:1px solid #dfe3ea; border-radius:18px; box-shadow:0 4px 20px #00000005; }
 .composer:focus-within { border-color:#a5b4fc; }
+.composer { transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.composer:focus-within { transform:translateY(-1px); box-shadow:0 8px 28px #6366f126; }
 .composer-input { display:block; width:100%; resize:none; padding:16px 18px 8px; background:transparent; outline:none; font-size:14px; }
+.composer-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding:4px 12px 12px; }
+.composer-tools { display:flex; flex:1 1 auto; align-items:center; flex-wrap:wrap; gap:4px; }
+.message-entry { animation:playground-message-in .2s ease-out; }
 .attachment-list { display:flex; flex-wrap:wrap; gap:8px; padding:12px 12px 0; }
 .attachment-item { display:flex; align-items:center; gap:8px; width:min(100%,240px); min-width:0; border:1px solid #e5e7eb; border-radius:6px; padding:6px; }
 .attachment-thumb { flex:0 0 40px; width:40px; height:40px; border-radius:4px; object-fit:cover; }
@@ -953,6 +995,11 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 :global(html.dark .playground-markdown td),:global(html.dark .playground-markdown th) { border-color:#475569; }
 :global(html.dark .toolbar-select option) { background:#151b26; color:#e5e7eb; }
 :global(html.dark .composer-input::placeholder) { color:#64748b; }
+:global(html.dark .drag-overlay) { color:#c7d2fe; background:#1e293bd9; border-color:#818cf8; }
+:global(html.dark .request-status) { color:#a5b4fc; }
+@keyframes playground-drop-in { from { opacity:0; transform:scale(.98); } to { opacity:1; transform:scale(1); } }
+@keyframes playground-message-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+@media(prefers-reduced-motion:reduce) { .drag-overlay,.request-status,.message-entry { animation:none; } .composer { transition:none; } .composer:focus-within { transform:none; } }
 @media(max-width:1023px) { .history-panel { display:none; } .history-panel.mobile-open { display:flex; position:absolute; inset:0; width:min(300px,85%); z-index:20; box-shadow:12px 0 30px #0002; } .studio { position:relative; } }
 @media(max-width:640px) { .studio { height:calc(100dvh - 7rem); min-height:440px; border-radius:12px; } .studio-toolbar { flex-wrap:wrap; padding:12px; gap:10px; } .studio-toolbar > .btn { flex:0 0 auto; } .playground-tabs { flex:0 0 auto; flex-wrap:nowrap; white-space:nowrap; } .playground-tab { flex-shrink:0; white-space:nowrap; } .studio-toolbar > label { flex:1 1 30%; min-width:100px; } .toolbar-select { width:100%; max-width:100%; } .toolbar-warning { flex-basis:100%; max-width:none; } .conversation-scroll { padding:20px 14px; } .composer-area { padding:8px 12px 14px; } .mode-button { padding:6px; } }
 </style>
