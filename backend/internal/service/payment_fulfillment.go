@@ -288,7 +288,7 @@ func (s *PaymentService) rejectUnsupportedOrderType(ctx context.Context, o *dben
 	}
 	if c > 0 {
 		slog.Warn("payment order with unsupported order type not fulfilled", "orderID", o.ID, "orderType", o.OrderType)
-		s.writeAuditLog(ctx, o.ID, "FULFILLMENT_FAILED", "system", map[string]any{"reason": reason})
+		_ = s.writeAuditLog(ctx, o.ID, "FULFILLMENT_FAILED", "system", map[string]any{"reason": reason})
 	}
 }
 

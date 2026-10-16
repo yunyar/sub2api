@@ -410,19 +410,19 @@ func (r *autoRoutingRepository) ReplaceAPIKeyAutoRouting(
 		return tx.Commit()
 	}
 	if config.APIKeyID != 0 && config.APIKeyID != apiKeyID {
-		return errors.New("Auto API key routing identity mismatch")
+		return errors.New("auto API key routing identity mismatch")
 	}
 	if config.Mode != "" && config.Mode != service.AutoRoutingModeAuto {
 		return errors.New("unsupported API key routing mode")
 	}
 	if config.ProfileID <= 0 {
-		return errors.New("Auto API key routing requires a profile")
+		return errors.New("auto API key routing requires a profile")
 	}
 	if config.SelectionMode != service.AutoRoutingSelectionInherit && config.SelectionMode != service.AutoRoutingSelectionCustom {
 		return errors.New("unsupported Auto API key selection mode")
 	}
 	if fixedGroupID != nil {
-		return errors.New("Auto API key routing cannot have a fixed group")
+		return errors.New("auto API key routing cannot have a fixed group")
 	}
 	if config.SelectionMode == service.AutoRoutingSelectionInherit && len(config.GroupIDs) != 0 {
 		return errors.New("inherited Auto API key routing cannot persist custom groups")
@@ -805,9 +805,9 @@ func (r *autoRoutingRepository) MarkAutoRoutingAttemptUnknown(ctx context.Contex
 		return false, errors.New("invalid Auto routing unknown evidence code")
 	}
 	for _, char := range evidenceCode {
-		if !(char >= 'A' && char <= 'Z') && !(char >= 'a' && char <= 'z') &&
-			char != '_' && char != '-' && !(char >= '0' && char <= '9') {
-			return false, errors.New("Auto routing evidence code must be ASCII identifier text")
+		if !((char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-') {
+			return false, errors.New("auto routing evidence code must be ASCII identifier text")
 		}
 	}
 	return r.finishAttempt(ctx, executionID, attemptNo, service.AutoRouteAttemptUnknown, service.AutoRouteExecutionUnknown, "", evidenceCode)

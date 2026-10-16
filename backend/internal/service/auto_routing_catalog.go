@@ -139,7 +139,7 @@ func (c *AutoModelCatalog) listEligibleAccounts(ctx context.Context, group *Grou
 			continue
 		}
 		if account.Platform != group.Platform &&
-			!(group.Platform == PlatformGemini && account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
+			(group.Platform != PlatformGemini || account.Platform != PlatformAntigravity || !account.IsMixedSchedulingEnabled()) {
 			continue
 		}
 		eligible = append(eligible, *account)

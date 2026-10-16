@@ -244,7 +244,8 @@ func (h *AutoRoutingHandler) UpdateKeyRouting(c *gin.Context) {
 	}
 	var config *service.APIKeyAutoRoutingConfig
 	fixedGroupID := request.GroupID
-	if mode == "auto" {
+	switch mode {
+	case "auto":
 		config = &service.APIKeyAutoRoutingConfig{Mode: "auto", SelectionMode: "inherit"}
 		if state.Auto != nil {
 			*config = *state.Auto
@@ -264,7 +265,7 @@ func (h *AutoRoutingHandler) UpdateKeyRouting(c *gin.Context) {
 		if config.SelectionMode == "inherit" {
 			config.GroupIDs = nil
 		}
-	} else if mode == "fixed" {
+	case "fixed":
 		if request.AutoProfileID != nil || (request.GroupIDs != nil && len(*request.GroupIDs) > 0) || (request.CrossGroupRetry != nil && *request.CrossGroupRetry) {
 			response.BadRequest(c, "Fixed routing cannot contain Auto candidates")
 			return
@@ -272,7 +273,7 @@ func (h *AutoRoutingHandler) UpdateKeyRouting(c *gin.Context) {
 		if fixedGroupID == nil {
 			fixedGroupID = state.FixedGroupID
 		}
-	} else {
+	default:
 		response.BadRequest(c, "Invalid routing mode")
 		return
 	}

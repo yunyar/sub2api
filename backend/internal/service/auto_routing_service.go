@@ -843,9 +843,7 @@ func (s *AutoRoutingService) resolveCandidates(
 	}
 	groupIDs := make([]int64, 0, len(profile.Members))
 	if config.SelectionMode == AutoRoutingSelectionCustom {
-		for _, groupID := range config.GroupIDs {
-			groupIDs = append(groupIDs, groupID)
-		}
+		groupIDs = append(groupIDs, config.GroupIDs...)
 	} else {
 		for _, member := range profile.Members {
 			groupIDs = append(groupIDs, member.GroupID)

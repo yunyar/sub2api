@@ -28,7 +28,7 @@ func TestAutoRoutingSettlementValidatesImmutableRouteIdentity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			database, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer database.Close()
+			defer func() { _ = database.Close() }()
 			mock.ExpectBegin()
 			tx, err := database.BeginTx(context.Background(), nil)
 			require.NoError(t, err)
