@@ -26,7 +26,9 @@ export function playgroundImageDataURL(encoded: string, ...formats: unknown[]): 
     else if (header.startsWith('RIFF') && header.slice(8, 12) === 'WEBP') detected = 'image/webp'
     else if (/^GIF8[79]a/.test(header)) detected = 'image/gif'
     else if (header.slice(4, 8) === 'ftyp' && ['avif', 'avis'].includes(header.slice(8, 12))) detected = 'image/avif'
-  } catch {}
+  } catch {
+    detected = undefined
+  }
   const mime = detected ?? [dataURL?.[1], ...formats].map(imageMimeType).find(Boolean) ?? 'image/png'
   return `data:${mime};base64,${padded}`
 }
