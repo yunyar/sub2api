@@ -434,7 +434,7 @@ func (r *autoRoutingRepository) ReplaceAPIKeyAutoRouting(
 		return fmt.Errorf("validate Auto routing profile: %w", err)
 	}
 	if !profileActive {
-		return errors.New("Auto routing profile is disabled")
+		return errors.New("auto routing profile is disabled")
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -517,11 +517,11 @@ func (r *autoRoutingRepository) CreateOrGetAutoRoutingExecution(
 	}
 	decodedPayloadHash, err := hex.DecodeString(input.PayloadHash)
 	if err != nil || len(decodedPayloadHash) != 32 {
-		return nil, false, errors.New("Auto routing execution payload hash must be SHA-256 hex")
+		return nil, false, errors.New("auto routing execution payload hash must be SHA-256 hex")
 	}
 	input.PayloadHash = hex.EncodeToString(decodedPayloadHash)
 	if len(input.CandidateGroupIDs) == 0 || input.SelectedGroupID <= 0 {
-		return nil, false, errors.New("Auto routing execution candidate selection is empty")
+		return nil, false, errors.New("auto routing execution candidate selection is empty")
 	}
 	seen := make(map[int64]struct{}, len(input.CandidateGroupIDs))
 	for _, groupID := range input.CandidateGroupIDs {
@@ -805,8 +805,8 @@ func (r *autoRoutingRepository) MarkAutoRoutingAttemptUnknown(ctx context.Contex
 		return false, errors.New("invalid Auto routing unknown evidence code")
 	}
 	for _, char := range evidenceCode {
-		if !((char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') ||
-			(char >= '0' && char <= '9') || char == '_' || char == '-') {
+		if (char < 'A' || char > 'Z') && (char < 'a' || char > 'z') &&
+			(char < '0' || char > '9') && char != '_' && char != '-' {
 			return false, errors.New("auto routing evidence code must be ASCII identifier text")
 		}
 	}
