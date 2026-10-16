@@ -526,10 +526,10 @@ func (r *autoRoutingRepository) CreateOrGetAutoRoutingExecution(
 	seen := make(map[int64]struct{}, len(input.CandidateGroupIDs))
 	for _, groupID := range input.CandidateGroupIDs {
 		if groupID <= 0 {
-			return nil, false, errors.New("Auto routing execution has invalid candidate group")
+			return nil, false, errors.New("auto routing execution has invalid candidate group")
 		}
 		if _, exists := seen[groupID]; exists {
-			return nil, false, errors.New("Auto routing execution has duplicate candidate group")
+			return nil, false, errors.New("auto routing execution has duplicate candidate group")
 		}
 		seen[groupID] = struct{}{}
 	}
@@ -757,7 +757,7 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 	`, attempt.ExecutionID).Scan(&existingGroupID)
 	if err == nil {
 		if existingGroupID != attempt.GroupID {
-			return false, errors.New("Auto routing attempt group conflicts with existing attempt")
+			return false, errors.New("auto routing attempt group conflicts with existing attempt")
 		}
 		return false, errors.New("prepared Auto routing execution already has an attempt")
 	}
