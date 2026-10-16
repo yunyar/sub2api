@@ -143,6 +143,15 @@ func OpenAIErrorWriter(c *gin.Context, status int, message string) {
 func RequireGroupAssignment(settingService *service.SettingService, writeError GatewayErrorWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey, ok := GetAPIKeyFromContext(c)
+		if ok && apiKey.RoutingMode == service.AutoRoutingModeAuto && (apiKey.AutoRouting == nil || apiKey.GroupID == nil || apiKey.Group == nil) {
+			if c.Request.Method == http.MethodGet && c.Request.URL.Path == "/v1/usage" {
+				c.Next()
+				return
+			}
+			writeError(c, http.StatusForbidden, "Auto routing has not selected an authorized group")
+			c.Abort()
+			return
+		}
 		if !ok || apiKey.GroupID != nil {
 			c.Next()
 			return

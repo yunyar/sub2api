@@ -20,6 +20,7 @@ import (
 )
 
 const playgroundGroupHeader = "X-Playground-Group-ID"
+const playgroundAutoProfileHeader = "X-Playground-Auto-Profile-ID"
 const playgroundImageGenerationMaxCount = 10
 const playgroundImageEditMaxInputs = 4
 const playgroundImageEditMaxBytes = 5 << 20
@@ -252,16 +253,33 @@ func playgroundAPIKeyBridge(apiKeyService *service.APIKeyService) gin.HandlerFun
 			return
 		}
 
-		groupID, err := strconv.ParseInt(strings.TrimSpace(c.GetHeader(playgroundGroupHeader)), 10, 64)
-		if err != nil || groupID <= 0 {
-			middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_GROUP_ID", "A valid playground group is required")
+		selection, err := parsePlaygroundRoutingSelection(c.Request.Header)
+		if err != nil {
+			middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_PLAYGROUND_SELECTION", err.Error())
 			return
 		}
 
-		apiKey, err := apiKeyService.ResolvePlaygroundKey(c.Request.Context(), subject.UserID, groupID)
+		var apiKey *service.APIKey
+		if selection.Auto {
+			if apiKeyService == nil || apiKeyService.AutoRoutingService() == nil {
+				middleware.AbortWithError(c, http.StatusServiceUnavailable, "PLAYGROUND_KEY_ERROR", "Playground Auto routing is unavailable")
+				return
+			}
+			apiKey, err = apiKeyService.AutoRoutingService().ResolvePlaygroundAutoKey(c.Request.Context(), subject.UserID, selection.ProfileID)
+		} else {
+			if apiKeyService == nil {
+				middleware.AbortWithError(c, http.StatusServiceUnavailable, "PLAYGROUND_KEY_ERROR", "Playground access is unavailable")
+				return
+			}
+			apiKey, err = apiKeyService.ResolvePlaygroundKey(c.Request.Context(), subject.UserID, selection.GroupID)
+		}
 		if err != nil {
 			if errors.Is(err, service.ErrGroupNotAllowed) {
 				middleware.AbortWithError(c, http.StatusForbidden, "GROUP_NOT_ALLOWED", "The selected group is not available")
+				return
+			}
+			if errors.Is(err, service.ErrAutoRoutingProfileNotFound) {
+				middleware.AbortWithError(c, http.StatusNotFound, "AUTO_ROUTING_PROFILE_NOT_FOUND", "The selected Auto profile is not available")
 				return
 			}
 			middleware.AbortWithError(c, http.StatusInternalServerError, "PLAYGROUND_KEY_ERROR", "Failed to prepare playground access")
@@ -269,11 +287,46 @@ func playgroundAPIKeyBridge(apiKeyService *service.APIKeyService) gin.HandlerFun
 		}
 
 		c.Request.Header.Del(playgroundGroupHeader)
+		c.Request.Header.Del(playgroundAutoProfileHeader)
 		c.Request.Header.Del("x-api-key")
 		c.Request.Header.Del("x-goog-api-key")
 		c.Request.Header.Set("Authorization", "Bearer "+apiKey.Key)
 		c.Next()
 	}
+}
+
+type playgroundRoutingSelection struct {
+	Auto      bool
+	GroupID   int64
+	ProfileID int64
+}
+
+func parsePlaygroundRoutingSelection(headers http.Header) (playgroundRoutingSelection, error) {
+	groupValues := headers.Values(playgroundGroupHeader)
+	profileValues := headers.Values(playgroundAutoProfileHeader)
+	if (len(groupValues) == 0) == (len(profileValues) == 0) {
+		return playgroundRoutingSelection{}, errors.New("exactly one playground group or Auto profile is required")
+	}
+
+	if len(groupValues) != 0 {
+		if len(groupValues) != 1 {
+			return playgroundRoutingSelection{}, errors.New("exactly one playground group is required")
+		}
+		groupID, err := strconv.ParseInt(strings.TrimSpace(groupValues[0]), 10, 64)
+		if err != nil || groupID <= 0 {
+			return playgroundRoutingSelection{}, errors.New("a valid playground group is required")
+		}
+		return playgroundRoutingSelection{GroupID: groupID}, nil
+	}
+
+	if len(profileValues) != 1 {
+		return playgroundRoutingSelection{}, errors.New("exactly one Auto profile is required")
+	}
+	profileID, err := strconv.ParseInt(strings.TrimSpace(profileValues[0]), 10, 64)
+	if err != nil || profileID <= 0 {
+		return playgroundRoutingSelection{}, errors.New("a valid Auto profile is required")
+	}
+	return playgroundRoutingSelection{Auto: true, ProfileID: profileID}, nil
 }
 
 // RegisterPlaygroundRoutes exposes selected gateway operations to authenticated

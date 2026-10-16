@@ -4,9 +4,12 @@ import PlaygroundView from '../PlaygroundView.vue'
 
 const state = vi.hoisted(() => ({
   getAvailable: vi.fn(),
+  getAvailableProfiles: vi.fn(),
   listModels: vi.fn(),
   generateImages: vi.fn(),
   streamChat: vi.fn(),
+  getAutoRouting: vi.fn(),
+  updateAutoRouting: vi.fn(),
   list: vi.fn(),
   save: vi.fn(),
   remove: vi.fn(),
@@ -48,13 +51,23 @@ vi.mock('@/stores', async () => {
   }
 })
 vi.mock('@/api/groups', () => ({ userGroupsAPI: { getAvailable: state.getAvailable } }))
+vi.mock('@/api/autoRouting', () => ({
+  autoRoutingAPI: { getAvailableProfiles: state.getAvailableProfiles }
+}))
 vi.mock('@/api/playground', () => ({
   PlaygroundImageGenerationError: state.PartialImageError,
   playgroundAPI: {
     listModels: state.listModels,
     generateImages: state.generateImages,
-    streamChat: state.streamChat
-  }
+    streamChat: state.streamChat,
+    getAutoRouting: state.getAutoRouting,
+    updateAutoRouting: state.updateAutoRouting
+  },
+  playgroundModelSupportsEndpoint: (model: any, endpoint: string, fallback: boolean) =>
+    model.account_schedulable !== false &&
+    (Array.isArray(model.supported_endpoints)
+      ? model.supported_endpoints.includes(endpoint)
+      : fallback)
 }))
 vi.mock('@/api/playgroundHistory', () => ({
   playgroundHistory: { list: state.list, save: state.save, delete: state.remove }
@@ -119,9 +132,10 @@ describe('PlaygroundView model and intent routing', () => {
   beforeEach(() => {
     state.nextId = 0
     state.balance = 10
-    state.accountId = undefined
+    state.accountId = 1
     state.preferenceMode = 'auto'
-    state.getAvailable.mockResolvedValue([{ id: 7, name: 'Default' }])
+    state.getAvailable.mockResolvedValue([{ id: 7, name: 'Default', status: 'active', platform: 'openai' }])
+    state.getAvailableProfiles.mockResolvedValue([])
     state.listModels.mockResolvedValue([
       { id: 'chat-model' },
       { id: 'image-model' },
@@ -134,6 +148,8 @@ describe('PlaygroundView model and intent routing', () => {
     state.save.mockImplementation(async (conversation: any) => ({ ...conversation, revision: 1, expiresAt: Date.now() + 604800000 }))
     state.generateImages.mockReset()
     state.streamChat.mockReset()
+    state.getAutoRouting.mockReset()
+    state.updateAutoRouting.mockReset()
     state.cachePut.mockResolvedValue('image')
     state.cacheList.mockResolvedValue([])
     state.cacheDeleteConversation.mockResolvedValue(undefined)
@@ -163,11 +179,54 @@ describe('PlaygroundView model and intent routing', () => {
     await flushPromises()
 
     expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({
-      groupId: 7,
+      route: { mode: 'fixed', groupId: 7 },
       model: 'image-model',
       prompt: 'draw a lighthouse'
     }))
     expect(state.streamChat).not.toHaveBeenCalled()
+  })
+
+  it('loads capability rows for Auto and persists the selected profile with each request', async () => {
+    state.getAvailableProfiles.mockResolvedValue([{
+      id: 12,
+      name: 'Auto',
+      status: 'active',
+      revision: 1,
+      max_candidates: 3,
+      allow_custom_order: true,
+      cross_group_retry_allowed: false,
+      group_ids: [7]
+    }])
+    state.listModels.mockResolvedValue([
+      { id: 'auto-chat', object: 'model', owned_by: 'openai', supported_endpoints: ['chat'] },
+      { id: 'auto-image', object: 'model', owned_by: 'openai', supported_endpoints: ['images_generation', 'images_edit'] },
+      { id: 'auto-responses', object: 'model', owned_by: 'openai', supported_endpoints: ['responses'] }
+    ])
+    state.streamChat.mockImplementation(async (input: any) => input.onDelta('Auto response'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('.studio-toolbar select').setValue('auto:12')
+    await flushPromises()
+
+    expect(state.listModels).toHaveBeenLastCalledWith({ mode: 'auto', autoProfileId: 12 })
+    const selectors = wrapper.findAll('.studio-toolbar select')
+    expect(selectors[1].text()).toContain('auto-chat')
+    expect(selectors[1].text()).not.toContain('auto-responses')
+    expect(selectors[2].text()).toContain('auto-image')
+
+    await wrapper.get('textarea.composer-input').setValue('Hello')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.streamChat).toHaveBeenCalledWith(expect.objectContaining({
+      route: { mode: 'auto', autoProfileId: 12 },
+      model: 'auto-chat'
+    }))
+    expect(state.save.mock.calls[0][0]).toEqual(expect.objectContaining({
+      groupId: 7,
+      routing: { mode: 'auto', autoProfileId: 12 }
+    }))
   })
 
   it('persists text attachment labels and content while keeping artifact instructions request-only', async () => {

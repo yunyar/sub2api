@@ -108,51 +108,54 @@ const (
 // APIKeyMutation represents an operation that mutates the APIKey nodes in the graph.
 type APIKeyMutation struct {
 	config
-	op                 Op
-	typ                string
-	id                 *int64
-	created_at         *time.Time
-	updated_at         *time.Time
-	deleted_at         *time.Time
-	key                *string
-	name               *string
-	status             *string
-	last_used_at       *time.Time
-	ip_whitelist       *[]string
-	appendip_whitelist []string
-	ip_blacklist       *[]string
-	appendip_blacklist []string
-	quota              *float64
-	addquota           *float64
-	quota_used         *float64
-	addquota_used      *float64
-	expires_at         *time.Time
-	rate_limit_5h      *float64
-	addrate_limit_5h   *float64
-	rate_limit_1d      *float64
-	addrate_limit_1d   *float64
-	rate_limit_7d      *float64
-	addrate_limit_7d   *float64
-	usage_5h           *float64
-	addusage_5h        *float64
-	usage_1d           *float64
-	addusage_1d        *float64
-	usage_7d           *float64
-	addusage_7d        *float64
-	window_5h_start    *time.Time
-	window_1d_start    *time.Time
-	window_7d_start    *time.Time
-	clearedFields      map[string]struct{}
-	user               *int64
-	cleareduser        bool
-	group              *int64
-	clearedgroup       bool
-	usage_logs         map[int64]struct{}
-	removedusage_logs  map[int64]struct{}
-	clearedusage_logs  bool
-	done               bool
-	oldValue           func(context.Context) (*APIKey, error)
-	predicates         []predicate.APIKey
+	op                  Op
+	typ                 string
+	id                  *int64
+	created_at          *time.Time
+	updated_at          *time.Time
+	deleted_at          *time.Time
+	routing_mode        *string
+	routing_revision    *int64
+	addrouting_revision *int64
+	key                 *string
+	name                *string
+	status              *string
+	last_used_at        *time.Time
+	ip_whitelist        *[]string
+	appendip_whitelist  []string
+	ip_blacklist        *[]string
+	appendip_blacklist  []string
+	quota               *float64
+	addquota            *float64
+	quota_used          *float64
+	addquota_used       *float64
+	expires_at          *time.Time
+	rate_limit_5h       *float64
+	addrate_limit_5h    *float64
+	rate_limit_1d       *float64
+	addrate_limit_1d    *float64
+	rate_limit_7d       *float64
+	addrate_limit_7d    *float64
+	usage_5h            *float64
+	addusage_5h         *float64
+	usage_1d            *float64
+	addusage_1d         *float64
+	usage_7d            *float64
+	addusage_7d         *float64
+	window_5h_start     *time.Time
+	window_1d_start     *time.Time
+	window_7d_start     *time.Time
+	clearedFields       map[string]struct{}
+	user                *int64
+	cleareduser         bool
+	group               *int64
+	clearedgroup        bool
+	usage_logs          map[int64]struct{}
+	removedusage_logs   map[int64]struct{}
+	clearedusage_logs   bool
+	done                bool
+	oldValue            func(context.Context) (*APIKey, error)
+	predicates          []predicate.APIKey
 }
 
 var _ ent.Mutation = (*APIKeyMutation)(nil)
@@ -372,6 +375,98 @@ func (m *APIKeyMutation) DeletedAtCleared() bool {
 func (m *APIKeyMutation) ResetDeletedAt() {
 	m.deleted_at = nil
 	delete(m.clearedFields, apikey.FieldDeletedAt)
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (m *APIKeyMutation) SetRoutingMode(s string) {
+	m.routing_mode = &s
+}
+
+// RoutingMode returns the value of the "routing_mode" field in the mutation.
+func (m *APIKeyMutation) RoutingMode() (r string, exists bool) {
+	v := m.routing_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRoutingMode returns the old "routing_mode" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldRoutingMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRoutingMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRoutingMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRoutingMode: %w", err)
+	}
+	return oldValue.RoutingMode, nil
+}
+
+// ResetRoutingMode resets all changes to the "routing_mode" field.
+func (m *APIKeyMutation) ResetRoutingMode() {
+	m.routing_mode = nil
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (m *APIKeyMutation) SetRoutingRevision(i int64) {
+	m.routing_revision = &i
+	m.addrouting_revision = nil
+}
+
+// RoutingRevision returns the value of the "routing_revision" field in the mutation.
+func (m *APIKeyMutation) RoutingRevision() (r int64, exists bool) {
+	v := m.routing_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRoutingRevision returns the old "routing_revision" field's value of the APIKey entity.
+// If the APIKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *APIKeyMutation) OldRoutingRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRoutingRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRoutingRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRoutingRevision: %w", err)
+	}
+	return oldValue.RoutingRevision, nil
+}
+
+// AddRoutingRevision adds i to the "routing_revision" field.
+func (m *APIKeyMutation) AddRoutingRevision(i int64) {
+	if m.addrouting_revision != nil {
+		*m.addrouting_revision += i
+	} else {
+		m.addrouting_revision = &i
+	}
+}
+
+// AddedRoutingRevision returns the value that was added to the "routing_revision" field in this mutation.
+func (m *APIKeyMutation) AddedRoutingRevision() (r int64, exists bool) {
+	v := m.addrouting_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRoutingRevision resets all changes to the "routing_revision" field.
+func (m *APIKeyMutation) ResetRoutingRevision() {
+	m.routing_revision = nil
+	m.addrouting_revision = nil
 }
 
 // SetUserID sets the "user_id" field.
@@ -1532,7 +1627,7 @@ func (m *APIKeyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *APIKeyMutation) Fields() []string {
-	fields := make([]string, 0, 23)
+	fields := make([]string, 0, 25)
 	if m.created_at != nil {
 		fields = append(fields, apikey.FieldCreatedAt)
 	}
@@ -1541,6 +1636,12 @@ func (m *APIKeyMutation) Fields() []string {
 	}
 	if m.deleted_at != nil {
 		fields = append(fields, apikey.FieldDeletedAt)
+	}
+	if m.routing_mode != nil {
+		fields = append(fields, apikey.FieldRoutingMode)
+	}
+	if m.routing_revision != nil {
+		fields = append(fields, apikey.FieldRoutingRevision)
 	}
 	if m.user != nil {
 		fields = append(fields, apikey.FieldUserID)
@@ -1616,6 +1717,10 @@ func (m *APIKeyMutation) Field(name string) (ent.Value, bool) {
 		return m.UpdatedAt()
 	case apikey.FieldDeletedAt:
 		return m.DeletedAt()
+	case apikey.FieldRoutingMode:
+		return m.RoutingMode()
+	case apikey.FieldRoutingRevision:
+		return m.RoutingRevision()
 	case apikey.FieldUserID:
 		return m.UserID()
 	case apikey.FieldKey:
@@ -1671,6 +1776,10 @@ func (m *APIKeyMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldUpdatedAt(ctx)
 	case apikey.FieldDeletedAt:
 		return m.OldDeletedAt(ctx)
+	case apikey.FieldRoutingMode:
+		return m.OldRoutingMode(ctx)
+	case apikey.FieldRoutingRevision:
+		return m.OldRoutingRevision(ctx)
 	case apikey.FieldUserID:
 		return m.OldUserID(ctx)
 	case apikey.FieldKey:
@@ -1740,6 +1849,20 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetDeletedAt(v)
+		return nil
+	case apikey.FieldRoutingMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRoutingMode(v)
+		return nil
+	case apikey.FieldRoutingRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRoutingRevision(v)
 		return nil
 	case apikey.FieldUserID:
 		v, ok := value.(int64)
@@ -1889,6 +2012,9 @@ func (m *APIKeyMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *APIKeyMutation) AddedFields() []string {
 	var fields []string
+	if m.addrouting_revision != nil {
+		fields = append(fields, apikey.FieldRoutingRevision)
+	}
 	if m.addquota != nil {
 		fields = append(fields, apikey.FieldQuota)
 	}
@@ -1921,6 +2047,8 @@ func (m *APIKeyMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *APIKeyMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case apikey.FieldRoutingRevision:
+		return m.AddedRoutingRevision()
 	case apikey.FieldQuota:
 		return m.AddedQuota()
 	case apikey.FieldQuotaUsed:
@@ -1946,6 +2074,13 @@ func (m *APIKeyMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *APIKeyMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case apikey.FieldRoutingRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRoutingRevision(v)
+		return nil
 	case apikey.FieldQuota:
 		v, ok := value.(float64)
 		if !ok {
@@ -2094,6 +2229,12 @@ func (m *APIKeyMutation) ResetField(name string) error {
 		return nil
 	case apikey.FieldDeletedAt:
 		m.ResetDeletedAt()
+		return nil
+	case apikey.FieldRoutingMode:
+		m.ResetRoutingMode()
+		return nil
+	case apikey.FieldRoutingRevision:
+		m.ResetRoutingRevision()
 		return nil
 	case apikey.FieldUserID:
 		m.ResetUserID()
@@ -44817,6 +44958,13 @@ type UsageLogMutation struct {
 	op                           Op
 	typ                          string
 	id                           *int64
+	routing_mode                 *string
+	auto_profile_id              *int64
+	addauto_profile_id           *int64
+	routing_revision             *int64
+	addrouting_revision          *int64
+	route_attempt_count          *int
+	addroute_attempt_count       *int
 	request_id                   *string
 	model                        *string
 	requested_model              *string
@@ -44992,6 +45140,224 @@ func (m *UsageLogMutation) IDs(ctx context.Context) ([]int64, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (m *UsageLogMutation) SetRoutingMode(s string) {
+	m.routing_mode = &s
+}
+
+// RoutingMode returns the value of the "routing_mode" field in the mutation.
+func (m *UsageLogMutation) RoutingMode() (r string, exists bool) {
+	v := m.routing_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRoutingMode returns the old "routing_mode" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRoutingMode(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRoutingMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRoutingMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRoutingMode: %w", err)
+	}
+	return oldValue.RoutingMode, nil
+}
+
+// ResetRoutingMode resets all changes to the "routing_mode" field.
+func (m *UsageLogMutation) ResetRoutingMode() {
+	m.routing_mode = nil
+}
+
+// SetAutoProfileID sets the "auto_profile_id" field.
+func (m *UsageLogMutation) SetAutoProfileID(i int64) {
+	m.auto_profile_id = &i
+	m.addauto_profile_id = nil
+}
+
+// AutoProfileID returns the value of the "auto_profile_id" field in the mutation.
+func (m *UsageLogMutation) AutoProfileID() (r int64, exists bool) {
+	v := m.auto_profile_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutoProfileID returns the old "auto_profile_id" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAutoProfileID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutoProfileID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutoProfileID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutoProfileID: %w", err)
+	}
+	return oldValue.AutoProfileID, nil
+}
+
+// AddAutoProfileID adds i to the "auto_profile_id" field.
+func (m *UsageLogMutation) AddAutoProfileID(i int64) {
+	if m.addauto_profile_id != nil {
+		*m.addauto_profile_id += i
+	} else {
+		m.addauto_profile_id = &i
+	}
+}
+
+// AddedAutoProfileID returns the value that was added to the "auto_profile_id" field in this mutation.
+func (m *UsageLogMutation) AddedAutoProfileID() (r int64, exists bool) {
+	v := m.addauto_profile_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAutoProfileID clears the value of the "auto_profile_id" field.
+func (m *UsageLogMutation) ClearAutoProfileID() {
+	m.auto_profile_id = nil
+	m.addauto_profile_id = nil
+	m.clearedFields[usagelog.FieldAutoProfileID] = struct{}{}
+}
+
+// AutoProfileIDCleared returns if the "auto_profile_id" field was cleared in this mutation.
+func (m *UsageLogMutation) AutoProfileIDCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldAutoProfileID]
+	return ok
+}
+
+// ResetAutoProfileID resets all changes to the "auto_profile_id" field.
+func (m *UsageLogMutation) ResetAutoProfileID() {
+	m.auto_profile_id = nil
+	m.addauto_profile_id = nil
+	delete(m.clearedFields, usagelog.FieldAutoProfileID)
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (m *UsageLogMutation) SetRoutingRevision(i int64) {
+	m.routing_revision = &i
+	m.addrouting_revision = nil
+}
+
+// RoutingRevision returns the value of the "routing_revision" field in the mutation.
+func (m *UsageLogMutation) RoutingRevision() (r int64, exists bool) {
+	v := m.routing_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRoutingRevision returns the old "routing_revision" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRoutingRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRoutingRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRoutingRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRoutingRevision: %w", err)
+	}
+	return oldValue.RoutingRevision, nil
+}
+
+// AddRoutingRevision adds i to the "routing_revision" field.
+func (m *UsageLogMutation) AddRoutingRevision(i int64) {
+	if m.addrouting_revision != nil {
+		*m.addrouting_revision += i
+	} else {
+		m.addrouting_revision = &i
+	}
+}
+
+// AddedRoutingRevision returns the value that was added to the "routing_revision" field in this mutation.
+func (m *UsageLogMutation) AddedRoutingRevision() (r int64, exists bool) {
+	v := m.addrouting_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRoutingRevision resets all changes to the "routing_revision" field.
+func (m *UsageLogMutation) ResetRoutingRevision() {
+	m.routing_revision = nil
+	m.addrouting_revision = nil
+}
+
+// SetRouteAttemptCount sets the "route_attempt_count" field.
+func (m *UsageLogMutation) SetRouteAttemptCount(i int) {
+	m.route_attempt_count = &i
+	m.addroute_attempt_count = nil
+}
+
+// RouteAttemptCount returns the value of the "route_attempt_count" field in the mutation.
+func (m *UsageLogMutation) RouteAttemptCount() (r int, exists bool) {
+	v := m.route_attempt_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRouteAttemptCount returns the old "route_attempt_count" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRouteAttemptCount(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRouteAttemptCount is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRouteAttemptCount requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRouteAttemptCount: %w", err)
+	}
+	return oldValue.RouteAttemptCount, nil
+}
+
+// AddRouteAttemptCount adds i to the "route_attempt_count" field.
+func (m *UsageLogMutation) AddRouteAttemptCount(i int) {
+	if m.addroute_attempt_count != nil {
+		*m.addroute_attempt_count += i
+	} else {
+		m.addroute_attempt_count = &i
+	}
+}
+
+// AddedRouteAttemptCount returns the value that was added to the "route_attempt_count" field in this mutation.
+func (m *UsageLogMutation) AddedRouteAttemptCount() (r int, exists bool) {
+	v := m.addroute_attempt_count
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetRouteAttemptCount resets all changes to the "route_attempt_count" field.
+func (m *UsageLogMutation) ResetRouteAttemptCount() {
+	m.route_attempt_count = nil
+	m.addroute_attempt_count = nil
 }
 
 // SetUserID sets the "user_id" field.
@@ -47566,7 +47932,19 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 51)
+	if m.routing_mode != nil {
+		fields = append(fields, usagelog.FieldRoutingMode)
+	}
+	if m.auto_profile_id != nil {
+		fields = append(fields, usagelog.FieldAutoProfileID)
+	}
+	if m.routing_revision != nil {
+		fields = append(fields, usagelog.FieldRoutingRevision)
+	}
+	if m.route_attempt_count != nil {
+		fields = append(fields, usagelog.FieldRouteAttemptCount)
+	}
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47716,6 +48094,14 @@ func (m *UsageLogMutation) Fields() []string {
 // schema.
 func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case usagelog.FieldRoutingMode:
+		return m.RoutingMode()
+	case usagelog.FieldAutoProfileID:
+		return m.AutoProfileID()
+	case usagelog.FieldRoutingRevision:
+		return m.RoutingRevision()
+	case usagelog.FieldRouteAttemptCount:
+		return m.RouteAttemptCount()
 	case usagelog.FieldUserID:
 		return m.UserID()
 	case usagelog.FieldAPIKeyID:
@@ -47819,6 +48205,14 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case usagelog.FieldRoutingMode:
+		return m.OldRoutingMode(ctx)
+	case usagelog.FieldAutoProfileID:
+		return m.OldAutoProfileID(ctx)
+	case usagelog.FieldRoutingRevision:
+		return m.OldRoutingRevision(ctx)
+	case usagelog.FieldRouteAttemptCount:
+		return m.OldRouteAttemptCount(ctx)
 	case usagelog.FieldUserID:
 		return m.OldUserID(ctx)
 	case usagelog.FieldAPIKeyID:
@@ -47922,6 +48316,34 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 // type.
 func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case usagelog.FieldRoutingMode:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRoutingMode(v)
+		return nil
+	case usagelog.FieldAutoProfileID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutoProfileID(v)
+		return nil
+	case usagelog.FieldRoutingRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRoutingRevision(v)
+		return nil
+	case usagelog.FieldRouteAttemptCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRouteAttemptCount(v)
+		return nil
 	case usagelog.FieldUserID:
 		v, ok := value.(int64)
 		if !ok {
@@ -48259,6 +48681,15 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *UsageLogMutation) AddedFields() []string {
 	var fields []string
+	if m.addauto_profile_id != nil {
+		fields = append(fields, usagelog.FieldAutoProfileID)
+	}
+	if m.addrouting_revision != nil {
+		fields = append(fields, usagelog.FieldRoutingRevision)
+	}
+	if m.addroute_attempt_count != nil {
+		fields = append(fields, usagelog.FieldRouteAttemptCount)
+	}
 	if m.addchannel_id != nil {
 		fields = append(fields, usagelog.FieldChannelID)
 	}
@@ -48330,6 +48761,12 @@ func (m *UsageLogMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case usagelog.FieldAutoProfileID:
+		return m.AddedAutoProfileID()
+	case usagelog.FieldRoutingRevision:
+		return m.AddedRoutingRevision()
+	case usagelog.FieldRouteAttemptCount:
+		return m.AddedRouteAttemptCount()
 	case usagelog.FieldChannelID:
 		return m.AddedChannelID()
 	case usagelog.FieldInputTokens:
@@ -48381,6 +48818,27 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case usagelog.FieldAutoProfileID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAutoProfileID(v)
+		return nil
+	case usagelog.FieldRoutingRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRoutingRevision(v)
+		return nil
+	case usagelog.FieldRouteAttemptCount:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRouteAttemptCount(v)
+		return nil
 	case usagelog.FieldChannelID:
 		v, ok := value.(int64)
 		if !ok {
@@ -48536,6 +48994,9 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *UsageLogMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(usagelog.FieldAutoProfileID) {
+		fields = append(fields, usagelog.FieldAutoProfileID)
+	}
 	if m.FieldCleared(usagelog.FieldRequestedModel) {
 		fields = append(fields, usagelog.FieldRequestedModel)
 	}
@@ -48616,6 +49077,9 @@ func (m *UsageLogMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *UsageLogMutation) ClearField(name string) error {
 	switch name {
+	case usagelog.FieldAutoProfileID:
+		m.ClearAutoProfileID()
+		return nil
 	case usagelog.FieldRequestedModel:
 		m.ClearRequestedModel()
 		return nil
@@ -48690,6 +49154,18 @@ func (m *UsageLogMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *UsageLogMutation) ResetField(name string) error {
 	switch name {
+	case usagelog.FieldRoutingMode:
+		m.ResetRoutingMode()
+		return nil
+	case usagelog.FieldAutoProfileID:
+		m.ResetAutoProfileID()
+		return nil
+	case usagelog.FieldRoutingRevision:
+		m.ResetRoutingRevision()
+		return nil
+	case usagelog.FieldRouteAttemptCount:
+		m.ResetRouteAttemptCount()
+		return nil
 	case usagelog.FieldUserID:
 		m.ResetUserID()
 		return nil

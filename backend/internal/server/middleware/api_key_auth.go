@@ -157,6 +157,11 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
 			return
 		}
+		var autoHandled bool
+		apiKey, autoHandled = PrepareAutoRouting(c, apiKey, apiKeyService.AutoRoutingService(), cfg)
+		if autoHandled {
+			return
+		}
 		if abortIfAPIKeyGroupUnavailable(c, apiKey) {
 			return
 		}
@@ -184,6 +189,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			if !billingInfoRequest {
 				_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 			}
+			defer FinishAutoRouting(c, apiKey, apiKeyService.AutoRoutingService())
 			c.Next()
 			return
 		}
@@ -283,6 +289,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			_ = apiKeyService.TouchLastUsed(c.Request.Context(), apiKey.ID)
 		}
 
+		defer FinishAutoRouting(c, apiKey, apiKeyService.AutoRoutingService())
 		c.Next()
 	}
 }

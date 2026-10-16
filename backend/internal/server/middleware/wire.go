@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/wire"
 )
@@ -22,7 +24,13 @@ var ProviderSet = wire.NewSet(
 	NewJWTAuthMiddleware,
 	NewOptionalJWTAuthMiddleware,
 	NewAdminAuthMiddleware,
-	NewAPIKeyAuthMiddleware,
+	ProvideAutoAwareAPIKeyAuthMiddleware,
 	NewAuditLogMiddleware,
 	NewStepUpAuthMiddleware,
 )
+
+func ProvideAutoAwareAPIKeyAuthMiddleware(apiKeys *service.APIKeyService, subscriptions *service.SubscriptionService, cfg *config.Config, routing *service.AutoRoutingService, billing *service.BillingCacheService) APIKeyAuthMiddleware {
+	apiKeys.SetAutoRoutingService(routing)
+	routing.SetDispatchBilling(billing)
+	return NewAPIKeyAuthMiddleware(apiKeys, subscriptions, cfg)
+}

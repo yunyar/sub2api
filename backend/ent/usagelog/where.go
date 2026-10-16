@@ -55,6 +55,26 @@ func IDLTE(id int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldLTE(FieldID, id))
 }
 
+// RoutingMode applies equality check predicate on the "routing_mode" field. It's identical to RoutingModeEQ.
+func RoutingMode(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRoutingMode, v))
+}
+
+// AutoProfileID applies equality check predicate on the "auto_profile_id" field. It's identical to AutoProfileIDEQ.
+func AutoProfileID(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAutoProfileID, v))
+}
+
+// RoutingRevision applies equality check predicate on the "routing_revision" field. It's identical to RoutingRevisionEQ.
+func RoutingRevision(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRoutingRevision, v))
+}
+
+// RouteAttemptCount applies equality check predicate on the "route_attempt_count" field. It's identical to RouteAttemptCountEQ.
+func RouteAttemptCount(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRouteAttemptCount, v))
+}
+
 // UserID applies equality check predicate on the "user_id" field. It's identical to UserIDEQ.
 func UserID(v int64) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldUserID, v))
@@ -283,6 +303,201 @@ func CacheTTLOverridden(v bool) predicate.UsageLog {
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCreatedAt, v))
+}
+
+// RoutingModeEQ applies the EQ predicate on the "routing_mode" field.
+func RoutingModeEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRoutingMode, v))
+}
+
+// RoutingModeNEQ applies the NEQ predicate on the "routing_mode" field.
+func RoutingModeNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldRoutingMode, v))
+}
+
+// RoutingModeIn applies the In predicate on the "routing_mode" field.
+func RoutingModeIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldRoutingMode, vs...))
+}
+
+// RoutingModeNotIn applies the NotIn predicate on the "routing_mode" field.
+func RoutingModeNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldRoutingMode, vs...))
+}
+
+// RoutingModeGT applies the GT predicate on the "routing_mode" field.
+func RoutingModeGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldRoutingMode, v))
+}
+
+// RoutingModeGTE applies the GTE predicate on the "routing_mode" field.
+func RoutingModeGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldRoutingMode, v))
+}
+
+// RoutingModeLT applies the LT predicate on the "routing_mode" field.
+func RoutingModeLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldRoutingMode, v))
+}
+
+// RoutingModeLTE applies the LTE predicate on the "routing_mode" field.
+func RoutingModeLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldRoutingMode, v))
+}
+
+// RoutingModeContains applies the Contains predicate on the "routing_mode" field.
+func RoutingModeContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldRoutingMode, v))
+}
+
+// RoutingModeHasPrefix applies the HasPrefix predicate on the "routing_mode" field.
+func RoutingModeHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldRoutingMode, v))
+}
+
+// RoutingModeHasSuffix applies the HasSuffix predicate on the "routing_mode" field.
+func RoutingModeHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldRoutingMode, v))
+}
+
+// RoutingModeEqualFold applies the EqualFold predicate on the "routing_mode" field.
+func RoutingModeEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldRoutingMode, v))
+}
+
+// RoutingModeContainsFold applies the ContainsFold predicate on the "routing_mode" field.
+func RoutingModeContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldRoutingMode, v))
+}
+
+// AutoProfileIDEQ applies the EQ predicate on the "auto_profile_id" field.
+func AutoProfileIDEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldAutoProfileID, v))
+}
+
+// AutoProfileIDNEQ applies the NEQ predicate on the "auto_profile_id" field.
+func AutoProfileIDNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldAutoProfileID, v))
+}
+
+// AutoProfileIDIn applies the In predicate on the "auto_profile_id" field.
+func AutoProfileIDIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldAutoProfileID, vs...))
+}
+
+// AutoProfileIDNotIn applies the NotIn predicate on the "auto_profile_id" field.
+func AutoProfileIDNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldAutoProfileID, vs...))
+}
+
+// AutoProfileIDGT applies the GT predicate on the "auto_profile_id" field.
+func AutoProfileIDGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldAutoProfileID, v))
+}
+
+// AutoProfileIDGTE applies the GTE predicate on the "auto_profile_id" field.
+func AutoProfileIDGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldAutoProfileID, v))
+}
+
+// AutoProfileIDLT applies the LT predicate on the "auto_profile_id" field.
+func AutoProfileIDLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldAutoProfileID, v))
+}
+
+// AutoProfileIDLTE applies the LTE predicate on the "auto_profile_id" field.
+func AutoProfileIDLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldAutoProfileID, v))
+}
+
+// AutoProfileIDIsNil applies the IsNil predicate on the "auto_profile_id" field.
+func AutoProfileIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldAutoProfileID))
+}
+
+// AutoProfileIDNotNil applies the NotNil predicate on the "auto_profile_id" field.
+func AutoProfileIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldAutoProfileID))
+}
+
+// RoutingRevisionEQ applies the EQ predicate on the "routing_revision" field.
+func RoutingRevisionEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionNEQ applies the NEQ predicate on the "routing_revision" field.
+func RoutingRevisionNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionIn applies the In predicate on the "routing_revision" field.
+func RoutingRevisionIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldRoutingRevision, vs...))
+}
+
+// RoutingRevisionNotIn applies the NotIn predicate on the "routing_revision" field.
+func RoutingRevisionNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldRoutingRevision, vs...))
+}
+
+// RoutingRevisionGT applies the GT predicate on the "routing_revision" field.
+func RoutingRevisionGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionGTE applies the GTE predicate on the "routing_revision" field.
+func RoutingRevisionGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionLT applies the LT predicate on the "routing_revision" field.
+func RoutingRevisionLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionLTE applies the LTE predicate on the "routing_revision" field.
+func RoutingRevisionLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldRoutingRevision, v))
+}
+
+// RouteAttemptCountEQ applies the EQ predicate on the "route_attempt_count" field.
+func RouteAttemptCountEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldRouteAttemptCount, v))
+}
+
+// RouteAttemptCountNEQ applies the NEQ predicate on the "route_attempt_count" field.
+func RouteAttemptCountNEQ(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldRouteAttemptCount, v))
+}
+
+// RouteAttemptCountIn applies the In predicate on the "route_attempt_count" field.
+func RouteAttemptCountIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldRouteAttemptCount, vs...))
+}
+
+// RouteAttemptCountNotIn applies the NotIn predicate on the "route_attempt_count" field.
+func RouteAttemptCountNotIn(vs ...int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldRouteAttemptCount, vs...))
+}
+
+// RouteAttemptCountGT applies the GT predicate on the "route_attempt_count" field.
+func RouteAttemptCountGT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldRouteAttemptCount, v))
+}
+
+// RouteAttemptCountGTE applies the GTE predicate on the "route_attempt_count" field.
+func RouteAttemptCountGTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldRouteAttemptCount, v))
+}
+
+// RouteAttemptCountLT applies the LT predicate on the "route_attempt_count" field.
+func RouteAttemptCountLT(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldRouteAttemptCount, v))
+}
+
+// RouteAttemptCountLTE applies the LTE predicate on the "route_attempt_count" field.
+func RouteAttemptCountLTE(v int) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldRouteAttemptCount, v))
 }
 
 // UserIDEQ applies the EQ predicate on the "user_id" field.

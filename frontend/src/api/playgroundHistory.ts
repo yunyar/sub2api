@@ -9,6 +9,11 @@ export interface ConversationMessage {
   stepId?: string
 }
 
+export interface ConversationRouting {
+  mode: 'fixed' | 'auto'
+  autoProfileId?: number
+}
+
 export interface WorkflowStep { id: string; prompt: string }
 export interface WorkflowState { steps: WorkflowStep[]; currentStep: number }
 
@@ -16,6 +21,7 @@ export interface Conversation {
   id: string
   title: string
   groupId: number
+  routing?: ConversationRouting
   model: string
   imageModel?: string
   kind?: 'chat' | 'workflow'

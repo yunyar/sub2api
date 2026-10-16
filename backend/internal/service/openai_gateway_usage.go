@@ -219,6 +219,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// Resolve，以免污染 user:group 倍率缓存。
 	baseMultiplier := multiplier
 	pricingAt := openAIUsagePricingAt(input)
+	if apiKey.AutoRouting != nil {
+		if apiKey.AutoRouting.RateMultiplier != nil {
+			baseMultiplier = *apiKey.AutoRouting.RateMultiplier
+		}
+		if !apiKey.AutoRouting.PricingAt.IsZero() {
+			pricingAt = apiKey.AutoRouting.PricingAt
+		}
+	}
 	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, pricingAt)
 	videoMultiplier := resolveVideoRateMultiplier(apiKey, baseMultiplier)
 
@@ -488,6 +496,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	if apiKey.GroupID != nil {
 		usageLog.GroupID = apiKey.GroupID
 	}
+	applyAutoRoutingUsageMetadata(usageLog, apiKey)
 	if subscription != nil {
 		usageLog.SubscriptionID = &subscription.ID
 	}
@@ -907,6 +916,9 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 }
 
 func (s *OpenAIGatewayService) apiKeyWithFreshGroupMediaPricing(ctx context.Context, apiKey *APIKey) *APIKey {
+	if apiKey != nil && apiKey.AutoRouting != nil {
+		return apiKey
+	}
 	if apiKey == nil || apiKey.GroupID == nil || *apiKey.GroupID <= 0 {
 		return apiKey
 	}

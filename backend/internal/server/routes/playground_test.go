@@ -50,6 +50,83 @@ func TestPlaygroundRoutesAreRegistered(t *testing.T) {
 	require.True(t, registered[http.MethodPost+" /api/v1/playground/images/edits"])
 }
 
+func TestParsePlaygroundRoutingSelection(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers http.Header
+		want    playgroundRoutingSelection
+		wantErr bool
+	}{
+		{
+			name:    "fixed group",
+			headers: http.Header{http.CanonicalHeaderKey(playgroundGroupHeader): []string{"42"}},
+			want:    playgroundRoutingSelection{GroupID: 42},
+		},
+		{
+			name:    "Auto profile",
+			headers: http.Header{http.CanonicalHeaderKey(playgroundAutoProfileHeader): []string{"9"}},
+			want:    playgroundRoutingSelection{Auto: true, ProfileID: 9},
+		},
+		{
+			name:    "missing selector",
+			headers: make(http.Header),
+			wantErr: true,
+		},
+		{
+			name: "mutually exclusive selectors",
+			headers: http.Header{
+				http.CanonicalHeaderKey(playgroundGroupHeader):       []string{"42"},
+				http.CanonicalHeaderKey(playgroundAutoProfileHeader): []string{"9"},
+			},
+			wantErr: true,
+		},
+		{
+			name:    "duplicate group selectors",
+			headers: http.Header{http.CanonicalHeaderKey(playgroundGroupHeader): []string{"42", "43"}},
+			wantErr: true,
+		},
+		{
+			name:    "invalid Auto profile",
+			headers: http.Header{http.CanonicalHeaderKey(playgroundAutoProfileHeader): []string{"0"}},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parsePlaygroundRoutingSelection(test.headers)
+			if test.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, got)
+		})
+	}
+}
+
+func TestPlaygroundAutoRoutingRoutesAreJWTOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	v1 := router.Group("/api/v1")
+	noop := func(c *gin.Context) { c.Next() }
+	v1.Use(noop)
+	RegisterPlaygroundAutoRoutingRoutes(v1, handler.NewPlaygroundAutoRoutingHandler(nil))
+
+	registered := make(map[string]bool)
+	for _, route := range router.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	require.True(t, registered[http.MethodGet+" /api/v1/playground/auto-routing/:profile_id"])
+	require.True(t, registered[http.MethodPut+" /api/v1/playground/auto-routing/:profile_id"])
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/playground/auto-routing/8", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusUnauthorized, response.Code)
+	require.NotContains(t, response.Body.String(), "INVALID_PLAYGROUND_SELECTION")
+}
+
 func TestValidatePlaygroundImageEditRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	png := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})

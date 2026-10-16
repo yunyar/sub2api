@@ -19,6 +19,7 @@ type playgroundConversation struct {
 	ID           string                     `json:"id"`
 	Title        string                     `json:"title"`
 	GroupID      int64                      `json:"groupId"`
+	Routing      *playgroundHistoryRouting  `json:"routing,omitempty"`
 	Model        string                     `json:"model"`
 	ImageModel   string                     `json:"imageModel,omitempty"`
 	Kind         string                     `json:"kind,omitempty"`
@@ -28,6 +29,11 @@ type playgroundConversation struct {
 	Messages     []playgroundHistoryMessage `json:"messages"`
 	Revision     int64                      `json:"revision"`
 	ExpiresAt    int64                      `json:"expiresAt"`
+}
+
+type playgroundHistoryRouting struct {
+	Mode          string `json:"mode,omitempty"`
+	AutoProfileID *int64 `json:"autoProfileId,omitempty"`
 }
 
 type playgroundHistoryMessage struct {

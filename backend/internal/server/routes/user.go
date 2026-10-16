@@ -80,6 +80,16 @@ func RegisterUserRoutes(
 			keys.POST("", h.APIKey.Create)
 			keys.PUT("/:id", h.APIKey.Update)
 			keys.DELETE("/:id", h.APIKey.Delete)
+			if h.AutoRouting != nil {
+				keys.GET("/:id/auto-routing", h.AutoRouting.GetKeyRouting)
+				keys.PUT("/:id/auto-routing", h.AutoRouting.UpdateKeyRouting)
+			}
+		}
+		if h.AutoRouting != nil {
+			authenticated.GET("/auto-group-profiles/available", h.AutoRouting.AvailableProfiles)
+		}
+		if h.PlaygroundAutoRouting != nil {
+			RegisterPlaygroundAutoRoutingRoutes(authenticated, h.PlaygroundAutoRouting)
 		}
 
 		// 用户可用分组（非管理员接口）

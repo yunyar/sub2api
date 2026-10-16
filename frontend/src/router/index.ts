@@ -486,6 +486,16 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/auto-groups',
+    name: 'AdminAutoGroups',
+    component: () => import('@/views/admin/AutoGroupsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Auto 分组'
+    }
+  },
+  {
     path: '/admin/channels',
     redirect: '/admin/channels/pricing'
   },

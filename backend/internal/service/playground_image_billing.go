@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -38,7 +39,16 @@ func (s *OpenAIGatewayService) ReservePlaygroundImageBalance(ctx context.Context
 	if apiKey.GroupID != nil {
 		base = s.ResolveUserGroupRateMultiplier(ctx, apiKey.User.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
 	}
-	_, imageMultiplier := computePeakAwareMultipliers(apiKey, base, time.Now())
+	pricingAt := time.Now()
+	if apiKey.AutoRouting != nil {
+		if apiKey.AutoRouting.RateMultiplier != nil {
+			base = *apiKey.AutoRouting.RateMultiplier
+		}
+		if !apiKey.AutoRouting.PricingAt.IsZero() {
+			pricingAt = apiKey.AutoRouting.PricingAt
+		}
+	}
+	_, imageMultiplier := computePeakAwareMultipliers(apiKey, base, pricingAt)
 	maximumCost := 0.0
 	for _, tier := range []string{ImageBillingSize1K, ImageBillingSize2K, ImageBillingSize4K} {
 		cost := s.calculateOpenAIImageCost(ctx, model, apiKey, &OpenAIForwardResult{
@@ -55,6 +65,21 @@ func (s *OpenAIGatewayService) ReservePlaygroundImageBalance(ctx context.Context
 	hold := &BatchImageBalanceHoldCommand{
 		RequestID: BatchImageHoldRequestID(batchID), APIKeyID: apiKey.ID, UserID: apiKey.User.ID,
 		BatchID: batchID, HoldAmount: amount, UnitAmount: QuantizeUsageBillingAmount(amount / float64(count)), RequestedCount: count, RequestPayloadHash: payloadHash,
+	}
+	if apiKey.AutoRouting != nil {
+		hold.AutoExecutionID = apiKey.AutoRouting.ExecutionID
+		hold.AutoAttemptNo = apiKey.AutoRouting.AttemptNo
+		hold.ActualGroupID = apiKey.GroupID
+		snapshot, err := json.Marshal(struct {
+			Model           string  `json:"model"`
+			Platform        string  `json:"platform"`
+			ImageMultiplier float64 `json:"image_multiplier"`
+			MaximumUnitCost float64 `json:"maximum_unit_cost"`
+		}{model, apiKey.Group.Platform, imageMultiplier, hold.UnitAmount})
+		if err != nil {
+			return nil, err
+		}
+		hold.PricingSnapshot = snapshot
 	}
 	reserved, err := s.usageBillingRepo.ReserveBatchImageBalance(ctx, hold)
 	if err != nil {

@@ -21,6 +21,10 @@ const (
 	FieldUpdatedAt = "updated_at"
 	// FieldDeletedAt holds the string denoting the deleted_at field in the database.
 	FieldDeletedAt = "deleted_at"
+	// FieldRoutingMode holds the string denoting the routing_mode field in the database.
+	FieldRoutingMode = "routing_mode"
+	// FieldRoutingRevision holds the string denoting the routing_revision field in the database.
+	FieldRoutingRevision = "routing_revision"
 	// FieldUserID holds the string denoting the user_id field in the database.
 	FieldUserID = "user_id"
 	// FieldKey holds the string denoting the key field in the database.
@@ -98,6 +102,8 @@ var Columns = []string{
 	FieldCreatedAt,
 	FieldUpdatedAt,
 	FieldDeletedAt,
+	FieldRoutingMode,
+	FieldRoutingRevision,
 	FieldUserID,
 	FieldKey,
 	FieldName,
@@ -144,6 +150,10 @@ var (
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
 	UpdateDefaultUpdatedAt func() time.Time
+	// DefaultRoutingMode holds the default value on creation for the "routing_mode" field.
+	DefaultRoutingMode string
+	// DefaultRoutingRevision holds the default value on creation for the "routing_revision" field.
+	DefaultRoutingRevision int64
 	// KeyValidator is a validator for the "key" field. It is called by the builders before save.
 	KeyValidator func(string) error
 	// NameValidator is a validator for the "name" field. It is called by the builders before save.
@@ -191,6 +201,16 @@ func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByDeletedAt orders the results by the deleted_at field.
 func ByDeletedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDeletedAt, opts...).ToFunc()
+}
+
+// ByRoutingMode orders the results by the routing_mode field.
+func ByRoutingMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRoutingMode, opts...).ToFunc()
+}
+
+// ByRoutingRevision orders the results by the routing_revision field.
+func ByRoutingRevision(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRoutingRevision, opts...).ToFunc()
 }
 
 // ByUserID orders the results by the user_id field.

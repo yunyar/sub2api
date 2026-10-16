@@ -29,6 +29,11 @@ vi.mock('@/stores', () => ({
 vi.mock('@/api/playground', () => ({
   PlaygroundImageGenerationError: state.PartialImageError,
   playgroundAPI: { streamChat: state.streamChat, generateImages: state.generateImages },
+  playgroundModelSupportsEndpoint: (model: any, endpoint: string, fallback: boolean) =>
+    model.account_schedulable !== false &&
+    (Array.isArray(model.supported_endpoints)
+      ? model.supported_endpoints.includes(endpoint)
+      : fallback)
 }))
 vi.mock('@/api/playgroundHistory', () => ({
   playgroundHistory: { list: state.list, save: state.save, delete: state.remove },
@@ -42,7 +47,7 @@ vi.mock('@/utils/playgroundId', () => {
   return { createPlaygroundId: () => `id-${++id}` }
 })
 
-const props = { groups: [{ id: 7 }], groupId: 7, chatModel: 'chat-1', imageModel: 'image-1' }
+const props = { groups: [{ id: 7, status: 'active' }], groupId: 7, chatModel: 'chat-1', imageModel: 'image-model-1' }
 
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
@@ -50,7 +55,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     title: 'Saved workflow',
     groupId: 7,
     model: 'chat-1',
-    imageModel: 'image-1',
+    imageModel: 'image-model-1',
     kind: 'workflow',
     workflow: { steps: [{ id: 'step-1', prompt: 'first' }, { id: 'step-2', prompt: 'second' }], currentStep: 1 },
     systemPrompt: '',
@@ -111,7 +116,52 @@ describe('WorkflowPlayground', () => {
     await button(wrapper, 'workflow.run')!.trigger('click')
     await flushPromises()
 
-    expect(state.streamChat).toHaveBeenCalledWith(expect.objectContaining({ groupId: 7, model: 'chat-7' }))
+    expect(state.streamChat).toHaveBeenCalledWith(expect.objectContaining({
+      route: { mode: 'fixed', groupId: 7 },
+      model: 'chat-7'
+    }))
+  })
+
+  it('persists Auto routing and dispatches with the captured profile route', async () => {
+    let finish!: () => void
+    state.streamChat.mockImplementation((input: any) => new Promise<void>(resolve => {
+      input.onDelta('Auto workflow result')
+      finish = resolve
+    }))
+    const wrapper = mountWorkflow({
+      ...props,
+      routing: { mode: 'auto', autoProfileId: 12 },
+      route: { mode: 'auto', autoProfileId: 12 },
+      routeValid: true,
+      models: [{ id: 'auto-chat', supported_endpoints: ['chat'] }],
+      chatModel: 'auto-chat'
+    } as any)
+    await flushPromises()
+    await enterFirstPrompt(wrapper, 'first Auto step')
+    await button(wrapper, 'workflow.run')!.trigger('click')
+    await flushPromises()
+
+    expect(state.streamChat).toHaveBeenCalledWith(expect.objectContaining({
+      route: { mode: 'auto', autoProfileId: 12 },
+      model: 'auto-chat'
+    }))
+    expect(state.save.mock.calls[0][0]).toEqual(expect.objectContaining({
+      groupId: 7,
+      routing: { mode: 'auto', autoProfileId: 12 }
+    }))
+
+    await wrapper.setProps({
+      ...props,
+      routing: { mode: 'fixed' },
+      route: { mode: 'fixed', groupId: 7 },
+      routeValid: true,
+      models: [{ id: 'auto-chat', supported_endpoints: ['chat'] }],
+      chatModel: 'auto-chat'
+    } as any)
+    finish()
+    await flushPromises()
+
+    expect(state.streamChat.mock.calls[0][0].route).toEqual({ mode: 'auto', autoProfileId: 12 })
   })
 
   it('obeys explicit chat and image modes regardless of prompt wording', async () => {
@@ -128,7 +178,7 @@ describe('WorkflowPlayground', () => {
     await enterFirstPrompt(wrapper, 'a lighthouse at sunset')
     await button(wrapper, 'workflow.run')!.trigger('click')
     await flushPromises()
-    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 1, model: 'image-1' }))
+    expect(state.generateImages).toHaveBeenCalledWith(expect.objectContaining({ count: 1, model: 'image-model-1' }))
   })
 
   it('passes multiple text and image references from the shared attachment tray', async () => {
@@ -376,7 +426,12 @@ describe('WorkflowPlayground', () => {
     await button(wrapper, 'Saved workflow')!.trigger('click')
 
     expect(wrapper.text()).toContain('restored output')
-    expect(wrapper.emitted('presets')?.[0]).toEqual([{ groupId: 7, chatModel: 'chat-1', imageModel: 'image-1' }])
+    expect(wrapper.emitted('presets')?.[0]).toEqual([{
+      groupId: 7,
+      routing: { mode: 'fixed' },
+      chatModel: 'chat-1',
+      imageModel: 'image-model-1'
+    }])
   })
 
   it('restores cached images only for the active account and workflow', async () => {

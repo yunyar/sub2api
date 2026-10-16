@@ -1,10 +1,48 @@
 import { apiClient } from './client'
 import { buildApiUrl } from './url'
 import { refreshAuthTokens } from './tokenRefresh'
+import { playgroundImageDataURL } from '@/utils/playgroundImageFormat'
+
+export type PlaygroundRequestRoute =
+  | { mode: 'fixed'; groupId: number }
+  | { mode: 'auto'; autoProfileId: number }
 
 export interface PlaygroundModel {
   id: string
+  model_id?: string
+  object?: string
+  created?: number
+  platform?: string
   owned_by?: string
+  type?: string
+  display_name?: string
+  source_platforms?: string[]
+  upstream_models?: string[]
+  supported_endpoints?: PlaygroundEndpoint[]
+  account_schedulable?: boolean
+}
+
+export type PlaygroundEndpoint =
+  | 'chat'
+  | 'responses'
+  | 'messages'
+  | 'images_generation'
+  | 'images_edit'
+
+export interface PlaygroundAutoRoutingConfig {
+  profile_id: number
+  routing_mode: 'auto'
+  auto_profile_id: number
+  auto_selection_mode: 'inherit' | 'custom'
+  group_ids: number[]
+  cross_group_retry: false
+  routing_revision: number
+}
+
+export interface UpdatePlaygroundAutoRoutingRequest {
+  auto_selection_mode: 'inherit' | 'custom'
+  group_ids: number[]
+  routing_revision: number
 }
 
 export interface PlaygroundMessage {
@@ -32,7 +70,8 @@ export const playgroundImageGenerationCount = {
 } as const
 
 export interface PlaygroundImageGenerationRequest {
-  groupId: number
+  route?: PlaygroundRequestRoute
+  groupId?: number
   model: string
   prompt: string
   size: string
@@ -56,7 +95,8 @@ export class PlaygroundImageGenerationError extends Error {
 }
 
 interface StreamChatOptions {
-  groupId: number
+  route?: PlaygroundRequestRoute
+  groupId?: number
   model: string
   messages: Array<PlaygroundMessage | PlaygroundMultimodalMessage>
   temperature?: number
@@ -64,9 +104,24 @@ interface StreamChatOptions {
   onDelta: (content: string) => void
 }
 
-const groupHeaders = (groupId: number) => ({
-  'X-Playground-Group-ID': String(groupId)
-})
+function routeHeaders(route: PlaygroundRequestRoute | number): Record<string, string> {
+  if (typeof route === 'number') {
+    if (!Number.isInteger(route) || route <= 0) throw new RangeError('A positive group ID is required')
+    return { 'X-Playground-Group-ID': String(route) }
+  }
+  if (route.mode === 'auto') {
+    if (!Number.isInteger(route.autoProfileId) || route.autoProfileId <= 0) throw new RangeError('A positive Auto profile ID is required')
+    return { 'X-Playground-Auto-Profile-ID': String(route.autoProfileId) }
+  }
+  if (!Number.isInteger(route.groupId) || route.groupId <= 0) throw new RangeError('A positive group ID is required')
+  return { 'X-Playground-Group-ID': String(route.groupId) }
+}
+
+function requestRoute(options: { route?: PlaygroundRequestRoute; groupId?: number }): Record<string, string> {
+  const route = options.route ?? options.groupId
+  if (!route) throw new RangeError('A Playground route is required')
+  return routeHeaders(route)
+}
 
 function extractErrorMessage(payload: unknown, fallback: string): string {
   if (!payload || typeof payload !== 'object') return fallback
@@ -105,6 +160,17 @@ export function createPlaygroundSSEParser(onDelta: (content: string) => void) {
   }
 }
 
+export function playgroundModelSupportsEndpoint(
+  model: PlaygroundModel,
+  endpoint: PlaygroundEndpoint,
+  fallback: boolean
+): boolean {
+  if (model.account_schedulable === false) return false
+  return Array.isArray(model.supported_endpoints)
+    ? model.supported_endpoints.includes(endpoint)
+    : fallback
+}
+
 async function authorizedStreamFetch(
   url: string,
   init: RequestInit,
@@ -127,22 +193,56 @@ async function authorizedStreamFetch(
   return response
 }
 
-export async function listPlaygroundModels(groupId: number): Promise<PlaygroundModel[]> {
+export async function listPlaygroundModels(route: PlaygroundRequestRoute | number): Promise<PlaygroundModel[]> {
   const { data } = await apiClient.get('/playground/models', {
-    headers: groupHeaders(groupId)
+    headers: routeHeaders(route)
   })
-  const items = Array.isArray(data) ? data : data?.data
-  if (!Array.isArray(items)) return []
+  const payload = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.models)
+        ? data.models
+        : data && typeof data === 'object' && !('data' in data) && !('models' in data)
+          ? data
+          : []
+  const items = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === 'object'
+      ? Object.entries(payload).map(([id, item]) => item && typeof item === 'object'
+        ? { ...item, id: typeof (item as any).id === 'string' ? (item as any).id : id }
+        : { id })
+      : []
   return items
-    .map((item: any) => typeof item === 'string' ? { id: item } : item)
-    .filter((item: any) => typeof item?.id === 'string' && item.id.trim())
+    .map((item: any) => {
+      if (typeof item === 'string') return { id: item }
+      const id = typeof item?.id === 'string' ? item.id : item?.model_id
+      return typeof id === 'string' ? { ...item, id } : null
+    })
+    .filter((item: PlaygroundModel | null): item is PlaygroundModel => Boolean(item?.id?.trim()))
+}
+
+export async function getPlaygroundAutoRouting(profileId: number): Promise<PlaygroundAutoRoutingConfig> {
+  const { data } = await apiClient.get<PlaygroundAutoRoutingConfig>(`/playground/auto-routing/${profileId}`)
+  return data
+}
+
+export async function updatePlaygroundAutoRouting(
+  profileId: number,
+  config: UpdatePlaygroundAutoRoutingRequest
+): Promise<PlaygroundAutoRoutingConfig> {
+  const { data } = await apiClient.put<PlaygroundAutoRoutingConfig>(
+    `/playground/auto-routing/${profileId}`,
+    config
+  )
+  return data
 }
 
 export async function streamPlaygroundChat(options: StreamChatOptions): Promise<void> {
   const response = await authorizedStreamFetch(buildApiUrl('/playground/chat/completions'), {
     method: 'POST',
     signal: options.signal,
-    headers: groupHeaders(options.groupId),
+    headers: requestRoute(options),
     body: JSON.stringify({
       model: options.model,
       messages: options.messages,
@@ -200,11 +300,13 @@ export async function generatePlaygroundImages(input: PlaygroundImageGenerationR
       ...(input.inputImages?.length
         ? { images: input.inputImages.map(image_url => ({ image_url })) }
         : {})
-    }, { headers: groupHeaders(input.groupId), timeout: 180_000, signal: input.signal })
+    }, { headers: requestRoute(input), timeout: 180_000, signal: input.signal })
 
     const image = (Array.isArray(data?.data) ? data.data : [])
       .map((item: any) => ({
-        url: item.b64_json ? `data:image/png;base64,${item.b64_json}` : item.url,
+        url: typeof item.b64_json === 'string' && item.b64_json.trim()
+          ? playgroundImageDataURL(item.b64_json, item.mime_type, item.output_format, data.mime_type, data.output_format)
+          : item.url,
         revisedPrompt: item.revised_prompt
       }))
       .find((item: PlaygroundImage) => Boolean(item.url))
@@ -243,6 +345,8 @@ export async function generatePlaygroundImages(input: PlaygroundImageGenerationR
 
 export const playgroundAPI = {
   listModels: listPlaygroundModels,
+  getAutoRouting: getPlaygroundAutoRouting,
+  updateAutoRouting: updatePlaygroundAutoRouting,
   streamChat: streamPlaygroundChat,
   generateImages: generatePlaygroundImages
 }

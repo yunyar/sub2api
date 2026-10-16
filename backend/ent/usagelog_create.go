@@ -27,6 +27,62 @@ type UsageLogCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetRoutingMode sets the "routing_mode" field.
+func (_c *UsageLogCreate) SetRoutingMode(v string) *UsageLogCreate {
+	_c.mutation.SetRoutingMode(v)
+	return _c
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRoutingMode(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetRoutingMode(*v)
+	}
+	return _c
+}
+
+// SetAutoProfileID sets the "auto_profile_id" field.
+func (_c *UsageLogCreate) SetAutoProfileID(v int64) *UsageLogCreate {
+	_c.mutation.SetAutoProfileID(v)
+	return _c
+}
+
+// SetNillableAutoProfileID sets the "auto_profile_id" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAutoProfileID(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetAutoProfileID(*v)
+	}
+	return _c
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (_c *UsageLogCreate) SetRoutingRevision(v int64) *UsageLogCreate {
+	_c.mutation.SetRoutingRevision(v)
+	return _c
+}
+
+// SetNillableRoutingRevision sets the "routing_revision" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRoutingRevision(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetRoutingRevision(*v)
+	}
+	return _c
+}
+
+// SetRouteAttemptCount sets the "route_attempt_count" field.
+func (_c *UsageLogCreate) SetRouteAttemptCount(v int) *UsageLogCreate {
+	_c.mutation.SetRouteAttemptCount(v)
+	return _c
+}
+
+// SetNillableRouteAttemptCount sets the "route_attempt_count" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRouteAttemptCount(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetRouteAttemptCount(*v)
+	}
+	return _c
+}
+
 // SetUserID sets the "user_id" field.
 func (_c *UsageLogCreate) SetUserID(v int64) *UsageLogCreate {
 	_c.mutation.SetUserID(v)
@@ -697,6 +753,18 @@ func (_c *UsageLogCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *UsageLogCreate) defaults() {
+	if _, ok := _c.mutation.RoutingMode(); !ok {
+		v := usagelog.DefaultRoutingMode
+		_c.mutation.SetRoutingMode(v)
+	}
+	if _, ok := _c.mutation.RoutingRevision(); !ok {
+		v := usagelog.DefaultRoutingRevision
+		_c.mutation.SetRoutingRevision(v)
+	}
+	if _, ok := _c.mutation.RouteAttemptCount(); !ok {
+		v := usagelog.DefaultRouteAttemptCount
+		_c.mutation.SetRouteAttemptCount(v)
+	}
 	if _, ok := _c.mutation.InputTokens(); !ok {
 		v := usagelog.DefaultInputTokens
 		_c.mutation.SetInputTokens(v)
@@ -781,6 +849,15 @@ func (_c *UsageLogCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *UsageLogCreate) check() error {
+	if _, ok := _c.mutation.RoutingMode(); !ok {
+		return &ValidationError{Name: "routing_mode", err: errors.New(`ent: missing required field "UsageLog.routing_mode"`)}
+	}
+	if _, ok := _c.mutation.RoutingRevision(); !ok {
+		return &ValidationError{Name: "routing_revision", err: errors.New(`ent: missing required field "UsageLog.routing_revision"`)}
+	}
+	if _, ok := _c.mutation.RouteAttemptCount(); !ok {
+		return &ValidationError{Name: "route_attempt_count", err: errors.New(`ent: missing required field "UsageLog.route_attempt_count"`)}
+	}
 	if _, ok := _c.mutation.UserID(); !ok {
 		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "UsageLog.user_id"`)}
 	}
@@ -967,6 +1044,22 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec = sqlgraph.NewCreateSpec(usagelog.Table, sqlgraph.NewFieldSpec(usagelog.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.RoutingMode(); ok {
+		_spec.SetField(usagelog.FieldRoutingMode, field.TypeString, value)
+		_node.RoutingMode = value
+	}
+	if value, ok := _c.mutation.AutoProfileID(); ok {
+		_spec.SetField(usagelog.FieldAutoProfileID, field.TypeInt64, value)
+		_node.AutoProfileID = &value
+	}
+	if value, ok := _c.mutation.RoutingRevision(); ok {
+		_spec.SetField(usagelog.FieldRoutingRevision, field.TypeInt64, value)
+		_node.RoutingRevision = value
+	}
+	if value, ok := _c.mutation.RouteAttemptCount(); ok {
+		_spec.SetField(usagelog.FieldRouteAttemptCount, field.TypeInt, value)
+		_node.RouteAttemptCount = value
+	}
 	if value, ok := _c.mutation.RequestID(); ok {
 		_spec.SetField(usagelog.FieldRequestID, field.TypeString, value)
 		_node.RequestID = value
@@ -1227,7 +1320,7 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 // of the `INSERT` statement. For example:
 //
 //	client.UsageLog.Create().
-//		SetUserID(v).
+//		SetRoutingMode(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -1236,7 +1329,7 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.UsageLogUpsert) {
-//			SetUserID(v+v).
+//			SetRoutingMode(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *UsageLogCreate) OnConflict(opts ...sql.ConflictOption) *UsageLogUpsertOne {
@@ -1271,6 +1364,78 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetRoutingMode sets the "routing_mode" field.
+func (u *UsageLogUpsert) SetRoutingMode(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldRoutingMode, v)
+	return u
+}
+
+// UpdateRoutingMode sets the "routing_mode" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateRoutingMode() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldRoutingMode)
+	return u
+}
+
+// SetAutoProfileID sets the "auto_profile_id" field.
+func (u *UsageLogUpsert) SetAutoProfileID(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldAutoProfileID, v)
+	return u
+}
+
+// UpdateAutoProfileID sets the "auto_profile_id" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAutoProfileID() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAutoProfileID)
+	return u
+}
+
+// AddAutoProfileID adds v to the "auto_profile_id" field.
+func (u *UsageLogUpsert) AddAutoProfileID(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldAutoProfileID, v)
+	return u
+}
+
+// ClearAutoProfileID clears the value of the "auto_profile_id" field.
+func (u *UsageLogUpsert) ClearAutoProfileID() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldAutoProfileID)
+	return u
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (u *UsageLogUpsert) SetRoutingRevision(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldRoutingRevision, v)
+	return u
+}
+
+// UpdateRoutingRevision sets the "routing_revision" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateRoutingRevision() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldRoutingRevision)
+	return u
+}
+
+// AddRoutingRevision adds v to the "routing_revision" field.
+func (u *UsageLogUpsert) AddRoutingRevision(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldRoutingRevision, v)
+	return u
+}
+
+// SetRouteAttemptCount sets the "route_attempt_count" field.
+func (u *UsageLogUpsert) SetRouteAttemptCount(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldRouteAttemptCount, v)
+	return u
+}
+
+// UpdateRouteAttemptCount sets the "route_attempt_count" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateRouteAttemptCount() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldRouteAttemptCount)
+	return u
+}
+
+// AddRouteAttemptCount adds v to the "route_attempt_count" field.
+func (u *UsageLogUpsert) AddRouteAttemptCount(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldRouteAttemptCount, v)
+	return u
+}
 
 // SetUserID sets the "user_id" field.
 func (u *UsageLogUpsert) SetUserID(v int64) *UsageLogUpsert {
@@ -2125,6 +2290,90 @@ func (u *UsageLogUpsertOne) Update(set func(*UsageLogUpsert)) *UsageLogUpsertOne
 		set(&UsageLogUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (u *UsageLogUpsertOne) SetRoutingMode(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRoutingMode(v)
+	})
+}
+
+// UpdateRoutingMode sets the "routing_mode" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateRoutingMode() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRoutingMode()
+	})
+}
+
+// SetAutoProfileID sets the "auto_profile_id" field.
+func (u *UsageLogUpsertOne) SetAutoProfileID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAutoProfileID(v)
+	})
+}
+
+// AddAutoProfileID adds v to the "auto_profile_id" field.
+func (u *UsageLogUpsertOne) AddAutoProfileID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAutoProfileID(v)
+	})
+}
+
+// UpdateAutoProfileID sets the "auto_profile_id" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAutoProfileID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAutoProfileID()
+	})
+}
+
+// ClearAutoProfileID clears the value of the "auto_profile_id" field.
+func (u *UsageLogUpsertOne) ClearAutoProfileID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAutoProfileID()
+	})
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (u *UsageLogUpsertOne) SetRoutingRevision(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRoutingRevision(v)
+	})
+}
+
+// AddRoutingRevision adds v to the "routing_revision" field.
+func (u *UsageLogUpsertOne) AddRoutingRevision(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRoutingRevision(v)
+	})
+}
+
+// UpdateRoutingRevision sets the "routing_revision" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateRoutingRevision() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRoutingRevision()
+	})
+}
+
+// SetRouteAttemptCount sets the "route_attempt_count" field.
+func (u *UsageLogUpsertOne) SetRouteAttemptCount(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRouteAttemptCount(v)
+	})
+}
+
+// AddRouteAttemptCount adds v to the "route_attempt_count" field.
+func (u *UsageLogUpsertOne) AddRouteAttemptCount(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRouteAttemptCount(v)
+	})
+}
+
+// UpdateRouteAttemptCount sets the "route_attempt_count" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateRouteAttemptCount() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRouteAttemptCount()
+	})
 }
 
 // SetUserID sets the "user_id" field.
@@ -3207,7 +3456,7 @@ func (_c *UsageLogCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.UsageLogUpsert) {
-//			SetUserID(v+v).
+//			SetRoutingMode(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *UsageLogCreateBulk) OnConflict(opts ...sql.ConflictOption) *UsageLogUpsertBulk {
@@ -3281,6 +3530,90 @@ func (u *UsageLogUpsertBulk) Update(set func(*UsageLogUpsert)) *UsageLogUpsertBu
 		set(&UsageLogUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (u *UsageLogUpsertBulk) SetRoutingMode(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRoutingMode(v)
+	})
+}
+
+// UpdateRoutingMode sets the "routing_mode" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateRoutingMode() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRoutingMode()
+	})
+}
+
+// SetAutoProfileID sets the "auto_profile_id" field.
+func (u *UsageLogUpsertBulk) SetAutoProfileID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAutoProfileID(v)
+	})
+}
+
+// AddAutoProfileID adds v to the "auto_profile_id" field.
+func (u *UsageLogUpsertBulk) AddAutoProfileID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAutoProfileID(v)
+	})
+}
+
+// UpdateAutoProfileID sets the "auto_profile_id" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAutoProfileID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAutoProfileID()
+	})
+}
+
+// ClearAutoProfileID clears the value of the "auto_profile_id" field.
+func (u *UsageLogUpsertBulk) ClearAutoProfileID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAutoProfileID()
+	})
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (u *UsageLogUpsertBulk) SetRoutingRevision(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRoutingRevision(v)
+	})
+}
+
+// AddRoutingRevision adds v to the "routing_revision" field.
+func (u *UsageLogUpsertBulk) AddRoutingRevision(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRoutingRevision(v)
+	})
+}
+
+// UpdateRoutingRevision sets the "routing_revision" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateRoutingRevision() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRoutingRevision()
+	})
+}
+
+// SetRouteAttemptCount sets the "route_attempt_count" field.
+func (u *UsageLogUpsertBulk) SetRouteAttemptCount(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRouteAttemptCount(v)
+	})
+}
+
+// AddRouteAttemptCount adds v to the "route_attempt_count" field.
+func (u *UsageLogUpsertBulk) AddRouteAttemptCount(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRouteAttemptCount(v)
+	})
+}
+
+// UpdateRouteAttemptCount sets the "route_attempt_count" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateRouteAttemptCount() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRouteAttemptCount()
+	})
 }
 
 // SetUserID sets the "user_id" field.

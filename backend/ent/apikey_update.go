@@ -58,6 +58,41 @@ func (_u *APIKeyUpdate) ClearDeletedAt() *APIKeyUpdate {
 	return _u
 }
 
+// SetRoutingMode sets the "routing_mode" field.
+func (_u *APIKeyUpdate) SetRoutingMode(v string) *APIKeyUpdate {
+	_u.mutation.SetRoutingMode(v)
+	return _u
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableRoutingMode(v *string) *APIKeyUpdate {
+	if v != nil {
+		_u.SetRoutingMode(*v)
+	}
+	return _u
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (_u *APIKeyUpdate) SetRoutingRevision(v int64) *APIKeyUpdate {
+	_u.mutation.ResetRoutingRevision()
+	_u.mutation.SetRoutingRevision(v)
+	return _u
+}
+
+// SetNillableRoutingRevision sets the "routing_revision" field if the given value is not nil.
+func (_u *APIKeyUpdate) SetNillableRoutingRevision(v *int64) *APIKeyUpdate {
+	if v != nil {
+		_u.SetRoutingRevision(*v)
+	}
+	return _u
+}
+
+// AddRoutingRevision adds value to the "routing_revision" field.
+func (_u *APIKeyUpdate) AddRoutingRevision(v int64) *APIKeyUpdate {
+	_u.mutation.AddRoutingRevision(v)
+	return _u
+}
+
 // SetUserID sets the "user_id" field.
 func (_u *APIKeyUpdate) SetUserID(v int64) *APIKeyUpdate {
 	_u.mutation.SetUserID(v)
@@ -587,6 +622,15 @@ func (_u *APIKeyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(apikey.FieldDeletedAt, field.TypeTime)
 	}
+	if value, ok := _u.mutation.RoutingMode(); ok {
+		_spec.SetField(apikey.FieldRoutingMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.RoutingRevision(); ok {
+		_spec.SetField(apikey.FieldRoutingRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRoutingRevision(); ok {
+		_spec.AddField(apikey.FieldRoutingRevision, field.TypeInt64, value)
+	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)
 	}
@@ -842,6 +886,41 @@ func (_u *APIKeyUpdateOne) SetNillableDeletedAt(v *time.Time) *APIKeyUpdateOne {
 // ClearDeletedAt clears the value of the "deleted_at" field.
 func (_u *APIKeyUpdateOne) ClearDeletedAt() *APIKeyUpdateOne {
 	_u.mutation.ClearDeletedAt()
+	return _u
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (_u *APIKeyUpdateOne) SetRoutingMode(v string) *APIKeyUpdateOne {
+	_u.mutation.SetRoutingMode(v)
+	return _u
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableRoutingMode(v *string) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetRoutingMode(*v)
+	}
+	return _u
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (_u *APIKeyUpdateOne) SetRoutingRevision(v int64) *APIKeyUpdateOne {
+	_u.mutation.ResetRoutingRevision()
+	_u.mutation.SetRoutingRevision(v)
+	return _u
+}
+
+// SetNillableRoutingRevision sets the "routing_revision" field if the given value is not nil.
+func (_u *APIKeyUpdateOne) SetNillableRoutingRevision(v *int64) *APIKeyUpdateOne {
+	if v != nil {
+		_u.SetRoutingRevision(*v)
+	}
+	return _u
+}
+
+// AddRoutingRevision adds value to the "routing_revision" field.
+func (_u *APIKeyUpdateOne) AddRoutingRevision(v int64) *APIKeyUpdateOne {
+	_u.mutation.AddRoutingRevision(v)
 	return _u
 }
 
@@ -1403,6 +1482,15 @@ func (_u *APIKeyUpdateOne) sqlSave(ctx context.Context) (_node *APIKey, err erro
 	}
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(apikey.FieldDeletedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.RoutingMode(); ok {
+		_spec.SetField(apikey.FieldRoutingMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.RoutingRevision(); ok {
+		_spec.SetField(apikey.FieldRoutingRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRoutingRevision(); ok {
+		_spec.AddField(apikey.FieldRoutingRevision, field.TypeInt64, value)
 	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)

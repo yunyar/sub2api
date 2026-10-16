@@ -17,6 +17,9 @@ var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerpri
 
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
+	AutoExecutionID    int64
+	AutoAttemptNo      int
+	ActualGroupID      *int64
 	RequestID          string
 	APIKeyID           int64
 	RequestFingerprint string
@@ -172,6 +175,10 @@ type UsageBillingApplyResult struct {
 
 // BatchImageBalanceHoldCommand describes an idempotent balance hold operation.
 type BatchImageBalanceHoldCommand struct {
+	AutoExecutionID    int64
+	AutoAttemptNo      int
+	ActualGroupID      *int64
+	PricingSnapshot    []byte
 	RequestID          string
 	APIKeyID           int64
 	RequestFingerprint string

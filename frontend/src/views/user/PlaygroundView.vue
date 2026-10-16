@@ -31,11 +31,36 @@
           </div>
           <label class="min-w-0 flex-1 sm:flex-none">
             <span class="toolbar-label">{{ t('playground.group') }}</span>
-            <select v-model.number="selectedGroupId" class="toolbar-select" :disabled="streaming || submitting || loadingGroups">
-              <option :value="0" disabled>{{ t('playground.selectGroup') }}</option>
-              <option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option>
+            <select v-model="selectedRouteValue" class="toolbar-select" :disabled="streaming || submitting || loadingGroups || loadingProfiles">
+              <option value="" disabled>{{ t('playground.selectGroup') }}</option>
+              <option
+                v-if="selectedRouteValue.startsWith('auto:') && !selectedAutoProfile"
+                :value="selectedRouteValue"
+                disabled
+              >
+                {{ t('playground.autoProfileUnavailable') }}
+              </option>
+              <optgroup :label="t('playground.fixedGroups')">
+                <option v-for="group in groups" :key="`group-${group.id}`" :value="`group:${group.id}`">{{ group.name }}</option>
+              </optgroup>
+              <optgroup v-if="autoProfiles.length" :label="t('playground.autoProfiles')">
+                <option v-for="profile in autoProfiles" :key="`auto-${profile.id}`" :value="`auto:${profile.id}`">
+                  {{ profile.name }}
+                </option>
+              </optgroup>
             </select>
           </label>
+          <button
+            v-if="selectedRouteValue.startsWith('auto:')"
+            type="button"
+            class="grid h-9 w-9 shrink-0 place-items-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-dark-600 dark:text-gray-300 dark:hover:bg-dark-700"
+            :aria-label="t('playground.configureAuto')"
+            :title="t('playground.configureAuto')"
+            :disabled="!selectedAutoProfile || streaming || submitting"
+            @click="openAutoRoutingEditor"
+          >
+            <Icon name="cog" size="sm" />
+          </button>
           <label class="min-w-0 flex-1">
             <span class="toolbar-label">{{ t('playground.chatModel') }}</span>
             <select v-model="selectedChatModel" class="toolbar-select w-full" :disabled="streaming || submitting || loadingModels">
@@ -56,7 +81,7 @@
           <div class="ml-auto hidden text-right sm:block"><span class="toolbar-label">{{ t('playground.balance') }}</span><span class="text-sm font-medium tabular-nums">${{ (authStore.user?.balance ?? 0).toFixed(4) }}</span></div>
         </header>
 
-        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" :attachments="attachments" :attachments-loading="loadingAttachments" @request-attachments="attachmentInput?.click()" @remove-attachment="removeAttachment" @consume-attachments="removeAttachments" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
+        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :routing="workflowPresets.routing" :route="workflowRequestRoute" :route-valid="workflowRouteValid" :models="models" :models-loading="loadingModels" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" :attachments="attachments" :attachments-loading="loadingAttachments" @request-attachments="attachmentInput?.click()" @remove-attachment="removeAttachment" @consume-attachments="removeAttachments" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
         <div v-show="activeTab === 'standard'" class="standard-playground">
         <div ref="viewport" class="conversation-scroll">
           <div v-if="!current.messages.length && !currentImages.length" class="welcome">
@@ -144,6 +169,98 @@
     <BaseDialog :show="Boolean(preview)" :title="t('playground.preview')" width="wide" :close-on-click-outside="true" @close="preview = null">
       <template v-if="preview"><img :src="preview.url" :alt="preview.prompt" class="max-h-[65vh] w-full object-contain" /><button class="btn btn-primary mt-4" @click="downloadImage(preview)">{{ t('playground.download') }}</button></template>
     </BaseDialog>
+    <BaseDialog :show="autoRoutingEditorOpen" :title="t('playground.autoRoutingTitle')" width="wide" @close="closeAutoRoutingEditor">
+      <div v-if="loadingAutoRouting" class="flex min-h-32 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+        <Icon name="refresh" size="md" class="mr-2 animate-spin" />
+        {{ t('common.loading') }}
+      </div>
+      <div v-else-if="selectedAutoProfile" class="space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ selectedAutoProfile.name }}</p>
+          <span class="text-xs tabular-nums text-gray-500 dark:text-gray-400">
+            {{ t('playground.routingRevision') }} {{ autoRoutingConfig?.routing_revision ?? 0 }}
+          </span>
+        </div>
+        <div class="inline-flex rounded-md border border-gray-200 p-1 dark:border-dark-600" role="group">
+          <button
+            type="button"
+            class="min-h-9 px-4 text-sm font-medium"
+            :class="autoSelectionMode === 'inherit' ? 'rounded-sm bg-gray-100 text-gray-900 dark:bg-dark-700 dark:text-white' : 'text-gray-600 dark:text-gray-300'"
+            :aria-pressed="autoSelectionMode === 'inherit'"
+            :disabled="savingAutoRouting"
+            @click="setAutoSelectionMode('inherit')"
+          >
+            {{ t('playground.inheritAutoOrder') }}
+          </button>
+          <button
+            v-if="selectedAutoProfile.allow_custom_order"
+            type="button"
+            class="min-h-9 px-4 text-sm font-medium"
+            :class="autoSelectionMode === 'custom' ? 'rounded-sm bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300' : 'text-gray-600 dark:text-gray-300'"
+            :aria-pressed="autoSelectionMode === 'custom'"
+            :disabled="savingAutoRouting"
+            @click="setAutoSelectionMode('custom')"
+          >
+            {{ t('playground.customAutoOrder') }}
+          </button>
+        </div>
+        <ol v-if="autoSelectionMode === 'inherit'" class="max-h-64 overflow-y-auto rounded border border-gray-200 dark:border-dark-600">
+          <li
+            v-for="(group, index) in autoInheritedGroups"
+            :key="group.id"
+            class="flex min-h-10 items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-0 dark:border-dark-700"
+          >
+            <span class="w-6 shrink-0 text-right text-xs tabular-nums text-gray-400">{{ index + 1 }}</span>
+            <span class="min-w-0 break-words text-sm text-gray-800 dark:text-gray-100">{{ group.name }}</span>
+          </li>
+          <li v-if="autoInheritedGroups.length === 0" class="px-3 py-4 text-sm text-gray-500 dark:text-gray-400">
+            {{ t('playground.noAutoGroups') }}
+          </li>
+        </ol>
+        <div v-else class="space-y-1">
+          <label
+            v-for="group in autoProfileGroups"
+            :key="group.id"
+            class="flex min-h-10 items-center gap-3 border-b border-gray-100 py-2 text-sm last:border-0 dark:border-dark-700"
+          >
+            <input
+              type="checkbox"
+              class="checkbox shrink-0"
+              :checked="autoGroupIds.includes(group.id)"
+              :disabled="savingAutoRouting || (!autoGroupIds.includes(group.id) && autoGroupIds.length >= selectedAutoProfile.max_candidates)"
+              @change="toggleAutoGroup(group.id, ($event.target as HTMLInputElement).checked)"
+            />
+            <span class="min-w-0 flex-1 break-words text-gray-800 dark:text-gray-100">{{ group.name }}</span>
+            <span v-if="autoGroupIds.includes(group.id)" class="flex shrink-0 items-center gap-1">
+              <span class="w-5 text-center text-xs tabular-nums text-gray-500">{{ autoGroupIds.indexOf(group.id) + 1 }}</span>
+              <button type="button" class="grid h-8 w-8 place-items-center rounded-sm text-gray-500 hover:bg-gray-100 disabled:opacity-30 dark:hover:bg-dark-700" :aria-label="t('playground.moveAutoGroupUp')" :title="t('playground.moveAutoGroupUp')" :disabled="savingAutoRouting || autoGroupIds.indexOf(group.id) === 0" @click="moveAutoGroup(group.id, -1)">
+                <Icon name="arrowUp" size="sm" />
+              </button>
+              <button type="button" class="grid h-8 w-8 place-items-center rounded-sm text-gray-500 hover:bg-gray-100 disabled:opacity-30 dark:hover:bg-dark-700" :aria-label="t('playground.moveAutoGroupDown')" :title="t('playground.moveAutoGroupDown')" :disabled="savingAutoRouting || autoGroupIds.indexOf(group.id) === autoGroupIds.length - 1" @click="moveAutoGroup(group.id, 1)">
+                <Icon name="arrowDown" size="sm" />
+              </button>
+            </span>
+          </label>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('playground.autoGroupCount', { selected: autoGroupIds.length, max: selectedAutoProfile.max_candidates }) }}
+          </p>
+        </div>
+        <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
+          {{ t('playground.crossGroupRetryOff') }}
+        </p>
+        <p v-if="autoRoutingError" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ autoRoutingError }}</p>
+      </div>
+      <p v-else class="text-sm text-red-600 dark:text-red-400">{{ autoRoutingError || t('playground.autoProfileUnavailable') }}</p>
+      <template #footer>
+        <div class="flex w-full justify-end gap-3">
+          <button type="button" class="btn btn-secondary" :disabled="savingAutoRouting" @click="closeAutoRoutingEditor">{{ t('common.cancel') }}</button>
+          <button type="button" class="btn btn-primary" :disabled="!canSaveAutoRouting" @click="saveAutoRouting">
+            <Icon v-if="savingAutoRouting" name="refresh" size="sm" class="mr-2 animate-spin" />
+            {{ savingAutoRouting ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
     <BaseDialog :show="Boolean(deleteTarget)" :title="t('common.delete')" @close="deleteTarget = ''"><p>{{ t('playground.deleteConfirm') }}</p><button class="btn btn-primary mt-4" @click="deleteConversation">{{ t('common.delete') }}</button></BaseDialog>
   </AppLayout>
 </template>
@@ -156,8 +273,10 @@ import DOMPurify from 'dompurify'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import { userGroupsAPI } from '@/api/groups'
-import { PlaygroundImageGenerationError, playgroundAPI, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage, type PlaygroundMultimodalMessage } from '@/api/playground'
-import { playgroundHistory, type Conversation, type ConversationMessage } from '@/api/playgroundHistory'
+import Icon from '@/components/icons/Icon.vue'
+import { autoRoutingAPI, type AvailableAutoGroupProfile } from '@/api/autoRouting'
+import { PlaygroundImageGenerationError, playgroundAPI, playgroundModelSupportsEndpoint, type PlaygroundAutoRoutingConfig, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
+import { playgroundHistory, type Conversation, type ConversationMessage, type ConversationRouting } from '@/api/playgroundHistory'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
 import { isPlaygroundImageModel, isPlaygroundVideoModel } from '@/utils/playgroundModel'
@@ -165,6 +284,7 @@ import { resolvePlaygroundIntent, type PlaygroundMode } from '@/utils/playground
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
 import { playgroundImageBlob, playgroundImageCache } from '@/utils/playgroundImageCache'
+import { playgroundImageExtension } from '@/utils/playgroundImageFormat'
 import { loadPlaygroundPreferences, savePlaygroundPreferences } from '@/utils/playgroundPreferences'
 import { artifactGenerationInstruction, downloadPlaygroundArtifact, extractPlaygroundArtifacts, type PlaygroundArtifact } from '@/utils/playgroundArtifacts'
 import WorkflowPlayground from '@/components/playground/WorkflowPlayground.vue'
@@ -199,6 +319,7 @@ const { t } = useI18n()
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const groups = ref<Group[]>([])
+const autoProfiles = ref<AvailableAutoGroupProfile[]>([])
 const models = ref<PlaygroundModel[]>([])
 const conversations = ref<PlaygroundConversation[]>([])
 const current = ref<PlaygroundConversation>(emptyConversation())
@@ -210,6 +331,7 @@ const error = ref('')
 const saveError = ref('')
 const cacheError = ref('')
 const loadingGroups = ref(false)
+const loadingProfiles = ref(false)
 const loadingModels = ref(false)
 const streamingCount = ref(0)
 const generatingCount = ref(0)
@@ -218,7 +340,14 @@ const saving = ref(false)
 const submitting = ref(false)
 const settingsOpen = ref(false)
 const activeTab = ref<'standard' | 'workflow'>('standard')
-const workflowPresets = ref({ groupId: 0, chatModel: '', imageModel: '' })
+const workflowPresets = ref<{ groupId: number; routing?: ConversationRouting; chatModel: string; imageModel: string }>({ groupId: 0, routing: { mode: 'fixed' }, chatModel: '', imageModel: '' })
+const autoRoutingEditorOpen = ref(false)
+const loadingAutoRouting = ref(false)
+const savingAutoRouting = ref(false)
+const autoRoutingError = ref('')
+const autoRoutingConfig = ref<PlaygroundAutoRoutingConfig | null>(null)
+const autoSelectionMode = ref<'inherit' | 'custom'>('inherit')
+const autoGroupIds = ref<number[]>([])
 const historyOpen = ref(false)
 const deleteTarget = ref('')
 const imageSize = ref('1024x1024')
@@ -235,6 +364,7 @@ const imageControllers = new Set<AbortController>()
 let dragDepth = 0
 let timer: ReturnType<typeof setInterval> | undefined
 let modelRequest = 0
+let routeOptionsRequest = 0
 let accountEpoch = 0
 let attachmentQueue: Promise<void> = Promise.resolve()
 let attachmentBatchCount = 0
@@ -248,22 +378,56 @@ const streaming = computed(() => streamingCount.value > 0)
 const activeRequestCount = computed(() => streamingCount.value + generatingCount.value)
 const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
-const canSend = computed(() => hasBalance.value && !submitting.value && !loadingAttachments.value && !loadingModels.value && Boolean((draft.value.trim() || attachments.value.length) && current.value.groupId))
+const canSend = computed(() => hasBalance.value && !submitting.value && !loadingAttachments.value && !loadingModels.value && Boolean((draft.value.trim() || attachments.value.length) && currentRequestRoute.value))
 const accountId = computed(() => authStore.user?.id ?? null)
 const imageCountResolution = computed(() => resolvePlaygroundImageCount('', imageCount.value))
-const chatModels = computed(() => models.value.filter((model) => !isPlaygroundImageModel(model.id) && !isPlaygroundVideoModel(model.id)))
-const imageModels = computed(() => models.value.filter((model) => isPlaygroundImageModel(model.id)))
+const chatModels = computed(() => models.value.filter((model) =>
+  playgroundModelSupportsEndpoint(model, 'chat', !isPlaygroundImageModel(model.id) && !isPlaygroundVideoModel(model.id))
+))
+const imageModels = computed(() => models.value.filter((model) =>
+  playgroundModelSupportsEndpoint(model, 'images_generation', isPlaygroundImageModel(model.id)) ||
+  playgroundModelSupportsEndpoint(model, 'images_edit', isPlaygroundImageModel(model.id))
+))
 const normalConversations = computed(() => conversations.value.filter((conversation) => conversation.kind !== 'workflow'))
 const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && (image.objectUrl || image.expiresAt > now.value)))
-const selectedGroupId = computed({
-  get: () => activeTab.value === 'workflow' ? workflowPresets.value.groupId : current.value.groupId,
-  set: (value: number) => {
-    if (activeTab.value === 'workflow') {
-      workflowPresets.value.groupId = value
-      savePlaygroundPreferences(accountId.value, { ...workflowPresets.value, imageMode: imageMode.value })
-    }
-    else current.value.groupId = value
+const activeRouteSource = computed(() => activeTab.value === 'workflow' ? workflowPresets.value : current.value)
+const selectedAutoProfile = computed(() => {
+  const routing = activeRouteSource.value.routing
+  return routing?.mode === 'auto'
+    ? autoProfiles.value.find(profile => profile.id === routing.autoProfileId) ?? null
+    : null
+})
+const selectedRouteValue = computed({
+  get: () => {
+    const source = activeRouteSource.value
+    if (source.routing?.mode === 'auto') return `auto:${source.routing.autoProfileId ?? ''}`
+    return source.groupId > 0 ? `group:${source.groupId}` : ''
+  },
+  set: (value: string) => setRouteValue(value)
+})
+const currentRequestRoute = computed(() => requestRouteFor(current.value))
+const workflowRequestRoute = computed(() => requestRouteFor(workflowPresets.value))
+const workflowRouteValid = computed(() => Boolean(workflowRequestRoute.value))
+const autoProfileGroups = computed(() => {
+  const authorizedGroups = new Map(groups.value.map(group => [group.id, group]))
+  return (selectedAutoProfile.value?.group_ids ?? [])
+    .filter(groupID => authorizedGroups.has(groupID))
+    .map(groupID => authorizedGroups.get(groupID)!)
+    .filter(group => group.platform.toLowerCase() !== 'composite' && group.status === 'active')
+})
+const autoInheritedGroups = computed(() =>
+  autoProfileGroups.value.slice(0, selectedAutoProfile.value?.max_candidates ?? 0)
+)
+const canSaveAutoRouting = computed(() => {
+  const profile = selectedAutoProfile.value
+  if (!profile || loadingAutoRouting.value || savingAutoRouting.value || !!autoRoutingError.value) return false
+  if (autoSelectionMode.value === 'custom') {
+    return profile.allow_custom_order &&
+      autoGroupIds.value.length > 0 &&
+      autoGroupIds.value.length <= profile.max_candidates &&
+      autoGroupIds.value.every(groupID => autoProfileGroups.value.some(group => group.id === groupID))
   }
+  return autoInheritedGroups.value.length > 0
 })
 const selectedChatModel = computed({
   get: () => activeTab.value === 'workflow' ? workflowPresets.value.chatModel : current.value.model,
@@ -288,6 +452,180 @@ const selectedImageModel = computed({
 
 function emptyConversation(): PlaygroundConversation {
   return { id: createPlaygroundId(), title: '', groupId: 0, model: '', imageModel: '', systemPrompt: '', temperature: 0.7, messages: [], revision: 0, expiresAt: 0 }
+}
+function requestRouteFor(source: { groupId: number; routing?: ConversationRouting }): PlaygroundRequestRoute | null {
+  if (source.routing?.mode === 'auto') {
+    const profileID = source.routing.autoProfileId
+    if (!profileID || !autoProfiles.value.some(profile => profile.id === profileID && profile.status === 'active')) return null
+    return { mode: 'auto', autoProfileId: profileID }
+  }
+  const group = groups.value.find(item => item.id === source.groupId && item.status === 'active')
+  return group ? { mode: 'fixed', groupId: group.id } : null
+}
+function saveRoutePreference(source: {
+  groupId: number
+  routing?: ConversationRouting
+  chatModel?: string
+  model?: string
+  imageModel?: string
+}) {
+  savePlaygroundPreferences(accountId.value, {
+    groupId: source.groupId,
+    routing: source.routing,
+    chatModel: source.chatModel ?? source.model ?? '',
+    imageModel: source.imageModel ?? '',
+    imageMode: imageMode.value
+  })
+}
+function setRouteValue(value: unknown) {
+  if (typeof value !== 'string') return
+  const separator = value.indexOf(':')
+  if (separator < 0) return
+  const mode = value.slice(0, separator)
+  const id = Number(value.slice(separator + 1))
+  if (mode === 'group' && Number.isInteger(id) && groups.value.some(group => group.id === id && group.status === 'active')) {
+    const source = activeRouteSource.value
+    source.groupId = id
+    source.routing = { mode: 'fixed' }
+    saveRoutePreference(source)
+    return
+  }
+  if (mode === 'auto' && Number.isInteger(id) && autoProfiles.value.some(profile => profile.id === id && profile.status === 'active')) {
+    activeRouteSource.value.routing = { mode: 'auto', autoProfileId: id }
+    saveRoutePreference(activeRouteSource.value)
+  }
+}
+async function initializeRouteOptions(account: number | null) {
+  const request = ++routeOptionsRequest
+  if (account === null) {
+    groups.value = []
+    autoProfiles.value = []
+    loadingGroups.value = false
+    loadingProfiles.value = false
+    return
+  }
+  loadingGroups.value = true
+  loadingProfiles.value = true
+  const [groupsResult, profilesResult] = await Promise.allSettled([
+    userGroupsAPI.getAvailable(),
+    autoRoutingAPI.getAvailableProfiles()
+  ])
+  if (request !== routeOptionsRequest || disposed || account !== accountId.value) return
+  groups.value = groupsResult.status === 'fulfilled' ? groupsResult.value : []
+  autoProfiles.value = profilesResult.status === 'fulfilled' ? profilesResult.value : []
+  loadingGroups.value = false
+  loadingProfiles.value = false
+  if (groupsResult.status === 'rejected' || profilesResult.status === 'rejected') {
+    error.value = t('playground.loadModelsFailed')
+  }
+  const preferences = loadPlaygroundPreferences(account)
+  const selectedGroup = groups.value.find(group => group.id === preferences.groupId && group.status === 'active')
+    ?? groups.value.find(group => group.status === 'active')
+  const savedProfileID = preferences.routing?.mode === 'auto' ? preferences.routing.autoProfileId : undefined
+  const savedProfile = autoProfiles.value.find(profile => profile.id === savedProfileID && profile.status === 'active')
+  current.value = {
+    ...emptyConversation(),
+    groupId: selectedGroup?.id ?? 0,
+    routing: savedProfile ? { mode: 'auto', autoProfileId: savedProfile.id } : { mode: 'fixed' },
+    model: preferences.chatModel,
+    imageModel: preferences.imageModel
+  }
+  workflowPresets.value = {
+    groupId: current.value.groupId,
+    routing: current.value.routing ? { ...current.value.routing } : { mode: 'fixed' },
+    chatModel: current.value.model,
+    imageModel: current.value.imageModel || ''
+  }
+  imageMode.value = preferences.imageMode
+  const context = requestContext()
+  await refreshHistory(context)
+  if (!isCurrentRequest(context) || request !== routeOptionsRequest) return
+  const lastConversation = conversations.value.find(item => item.id === loadLastConversation(account))
+  if (lastConversation) openConversation(lastConversation)
+}
+async function openAutoRoutingEditor() {
+  const profile = selectedAutoProfile.value
+  if (!profile || loadingAutoRouting.value || savingAutoRouting.value) return
+  autoRoutingEditorOpen.value = true
+  loadingAutoRouting.value = true
+  autoRoutingError.value = ''
+  try {
+    const config = await playgroundAPI.getAutoRouting(profile.id)
+    if (!autoRoutingEditorOpen.value || selectedAutoProfile.value?.id !== profile.id) return
+    autoRoutingConfig.value = config
+    autoSelectionMode.value = config.auto_selection_mode === 'custom' && profile.allow_custom_order
+      ? 'custom'
+      : 'inherit'
+    const allowedGroupIDs = new Set(autoProfileGroups.value.map(group => group.id))
+    autoGroupIds.value = config.auto_selection_mode === 'custom'
+      ? (config.group_ids ?? []).filter(groupID => allowedGroupIDs.has(groupID))
+      : autoInheritedGroups.value.map(group => group.id)
+  } catch {
+    autoRoutingConfig.value = null
+    autoRoutingError.value = t('playground.autoRoutingLoadFailed')
+  } finally {
+    loadingAutoRouting.value = false
+  }
+}
+function closeAutoRoutingEditor() {
+  if (savingAutoRouting.value) return
+  autoRoutingEditorOpen.value = false
+  autoRoutingError.value = ''
+}
+function setAutoSelectionMode(mode: 'inherit' | 'custom') {
+  if (mode === 'custom' && !selectedAutoProfile.value?.allow_custom_order) return
+  autoSelectionMode.value = mode
+  if (mode === 'custom' && autoGroupIds.value.length === 0 && selectedAutoProfile.value) {
+    autoGroupIds.value = autoProfileGroups.value
+      .slice(0, selectedAutoProfile.value.max_candidates)
+      .map(group => group.id)
+  }
+  autoRoutingError.value = ''
+}
+function toggleAutoGroup(groupID: number, checked: boolean) {
+  if (checked) {
+    const profile = selectedAutoProfile.value
+    if (!profile || autoGroupIds.value.length >= profile.max_candidates) return
+    if (!autoGroupIds.value.includes(groupID)) autoGroupIds.value.push(groupID)
+  } else {
+    autoGroupIds.value = autoGroupIds.value.filter(id => id !== groupID)
+  }
+  autoRoutingError.value = ''
+}
+function moveAutoGroup(groupID: number, direction: -1 | 1) {
+  const index = autoGroupIds.value.indexOf(groupID)
+  const target = index + direction
+  if (index < 0 || target < 0 || target >= autoGroupIds.value.length) return
+  const next = [...autoGroupIds.value]
+  ;[next[index], next[target]] = [next[target], next[index]]
+  autoGroupIds.value = next
+  autoRoutingError.value = ''
+}
+async function saveAutoRouting() {
+  const profile = selectedAutoProfile.value
+  const config = autoRoutingConfig.value
+  if (!profile || !config || !canSaveAutoRouting.value) return
+  savingAutoRouting.value = true
+  autoRoutingError.value = ''
+  try {
+    const updated = await playgroundAPI.updateAutoRouting(profile.id, {
+      auto_selection_mode: autoSelectionMode.value,
+      group_ids: autoSelectionMode.value === 'custom' ? [...autoGroupIds.value] : [],
+      routing_revision: config.routing_revision
+    })
+    autoRoutingConfig.value = updated
+    autoSelectionMode.value = updated.auto_selection_mode
+    autoGroupIds.value = updated.auto_selection_mode === 'custom'
+      ? [...updated.group_ids]
+      : autoInheritedGroups.value.map(group => group.id)
+    appStore.showSuccess(t('playground.autoRoutingSaved'))
+    autoRoutingEditorOpen.value = false
+    void loadModels(requestRouteFor(activeRouteSource.value), activeTab.value)
+  } catch {
+    autoRoutingError.value = t('playground.autoRoutingSaveFailed')
+  } finally {
+    savingAutoRouting.value = false
+  }
 }
 function createMessageId(): number {
   lastMessageId = Math.max(lastMessageId + 1, Date.now())
@@ -460,8 +798,8 @@ function historyLimitError(conversation: PlaygroundConversation) {
 async function scrollBottom() { await nextTick(); if (viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight }
 function newConversation() {
   if (busy.value) return
-  const { groupId, model, imageModel } = current.value
-  current.value = { ...emptyConversation(), groupId, model, imageModel }
+  const { groupId, routing, model, imageModel } = current.value
+  current.value = { ...emptyConversation(), groupId, routing: routing ? { ...routing } : { mode: 'fixed' }, model, imageModel }
   acceptedRevisions.clear()
   acceptedRevisions.set(current.value.id, current.value.revision)
   draft.value = ''; attachments.value = []; loadingAttachments.value = false; error.value = ''; saveError.value = ''; historyOpen.value = false
@@ -507,19 +845,19 @@ async function cacheGeneratedImage(image: Omit<ImageEntry, 'objectUrl'>, context
   return { ...image, url: URL.createObjectURL(blob), objectUrl: true }
 }
 function openWorkflowTab() {
-  if (!workflowPresets.value.groupId) {
+  if (!workflowPresets.value.groupId && workflowPresets.value.routing?.mode !== 'auto') {
     workflowPresets.value = {
       groupId: current.value.groupId,
+      routing: current.value.routing ? { ...current.value.routing } : { mode: 'fixed' },
       chatModel: current.value.model,
       imageModel: current.value.imageModel || ''
     }
   }
   activeTab.value = 'workflow'
 }
-function applyWorkflowPresets(value: { groupId: number; chatModel: string; imageModel: string }) {
-  workflowPresets.value = { ...value }
-  savePlaygroundPreferences(accountId.value, { ...workflowPresets.value, imageMode: imageMode.value })
-  void loadModels(value.groupId, 'workflow')
+function applyWorkflowPresets(value: { groupId: number; routing?: ConversationRouting; chatModel: string; imageModel: string }) {
+  workflowPresets.value = { ...value, routing: value.routing ?? { mode: 'fixed' } }
+  saveRoutePreference(workflowPresets.value)
 }
 function saveLastConversation(account: number, conversationId: string) {
   try {
@@ -548,6 +886,7 @@ function loadLastConversation(account: number) {
 function openConversation(item: PlaygroundConversation) {
   if (busy.value) return
   current.value = JSON.parse(JSON.stringify(item)) as PlaygroundConversation
+  current.value.routing ??= { mode: 'fixed' }
   acceptedRevisions.clear()
   acceptedRevisions.set(current.value.id, current.value.revision)
   reseedMessageId(current.value.messages)
@@ -611,27 +950,36 @@ async function deleteConversation() {
     deleteTarget.value = ''
   } catch { appStore.showError(t('playground.historyFailed')) }
 }
-async function loadModels(groupId: number, target: 'standard' | 'workflow') {
+async function loadModels(route: PlaygroundRequestRoute | null, target: 'standard' | 'workflow') {
   const request = ++modelRequest
   const preferred = target === 'workflow' ? workflowPresets.value : {
     groupId: current.value.groupId,
+    routing: current.value.routing,
     chatModel: current.value.model,
     imageModel: current.value.imageModel || ''
   }
   models.value = []; loadingModels.value = true
   try {
-    const result = groupId ? await playgroundAPI.listModels(groupId) : []
+    const result = route ? await playgroundAPI.listModels(route) : []
     if (request !== modelRequest) return
     models.value = result
     const chatModel = chatModels.value.some(item => item.id === preferred.chatModel) ? preferred.chatModel : (chatModels.value[0]?.id ?? '')
     const imageModel = imageModels.value.some(item => item.id === preferred.imageModel) ? preferred.imageModel : (imageModels.value[0]?.id ?? '')
-    if (target === 'workflow') workflowPresets.value = { groupId, chatModel, imageModel }
+    if (target === 'workflow') {
+      workflowPresets.value = { ...workflowPresets.value, chatModel, imageModel }
+      saveRoutePreference(workflowPresets.value)
+    }
     else {
       current.value.model = chatModel; current.value.imageModel = imageModel
-      savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel, imageMode: imageMode.value })
+      saveRoutePreference({
+        groupId: current.value.groupId,
+        routing: current.value.routing,
+        chatModel,
+        imageModel
+      })
     }
   } catch { if (request === modelRequest) {
-    if (target === 'workflow') workflowPresets.value = { groupId, chatModel: '', imageModel: '' }
+    if (target === 'workflow') workflowPresets.value = { ...workflowPresets.value, chatModel: '', imageModel: '' }
     else { current.value.model = ''; current.value.imageModel = '' }
     error.value = t('playground.loadModelsFailed')
   } }
@@ -652,6 +1000,8 @@ async function send() {
   const context = requestContext()
   const requestedImageCount = resolvePlaygroundImageCount('', imageCount.value)
   const conversation = current.value
+  const route = currentRequestRoute.value
+  if (!route) { error.value = t('playground.selectGroup'); return }
   const previousIntent = [...conversation.messages].reverse().find(message => message.role === 'assistant')?.kind
   const kind = resolvePlaygroundIntent(prompt, previousIntent, imageMode.value)
   if ((imageMode.value === 'image' || kind === 'image') && textSnapshot.length) {
@@ -659,7 +1009,16 @@ async function send() {
     return
   }
   const model = kind === 'image' ? conversation.imageModel : conversation.model
-  const groupId = conversation.groupId
+  if (!model) { error.value = t(kind === 'image' ? 'playground.noImageModel' : 'playground.noChatModel'); return }
+  const modelCapability = models.value.find(item => item.id === model)
+  const endpoint = kind === 'image'
+    ? imageSnapshot.length ? 'images_edit' : 'images_generation'
+    : 'chat'
+  const fallbackCapability = kind === 'image' ? isPlaygroundImageModel(model) : !isPlaygroundImageModel(model) && !isPlaygroundVideoModel(model)
+  if (!playgroundModelSupportsEndpoint(modelCapability ?? { id: model }, endpoint, fallbackCapability)) {
+    error.value = t('playground.modelEndpointUnsupported')
+    return
+  }
   const systemPrompt = conversation.systemPrompt
   const temperature = conversation.temperature
   const priorImagePrompt = previousIntent === 'image' && isImageRevisionPrompt(prompt)
@@ -668,7 +1027,6 @@ async function send() {
       .map(message => message.content.replace(/\n\n\[Image: [^\]]+\]/g, ''))
       .join('\n\n')
     : ''
-  if (!model) { error.value = t(kind === 'image' ? 'playground.noImageModel' : 'playground.noChatModel'); return }
   if (kind === 'image' && requestedImageCount.error) {
     error.value = t(requestedImageCount.error === 'too_many' ? 'playground.imageCountTooMany' : 'playground.imageCountInvalid')
     return
@@ -677,6 +1035,9 @@ async function send() {
   const userBytes = new TextEncoder().encode(userContent).byteLength
   if (userBytes > maxMessageBytes) { error.value = t('playground.historyMessageTooLarge'); return }
   const title = conversation.title || userContent.slice(0, 60)
+  conversation.routing = route.mode === 'auto'
+    ? { mode: 'auto', autoProfileId: route.autoProfileId }
+    : { mode: 'fixed' }
   const userId = createMessageId()
   const conversationId = conversation.id
   const userMessage: StoredMessage = { id: userId, role: 'user', content: userContent, model, kind }
@@ -741,7 +1102,7 @@ async function send() {
       let generationError: unknown
       try {
         generated = await playgroundAPI.generateImages({
-          groupId,
+          route,
           model,
           prompt: generationPrompt,
           size: imageSize.value,
@@ -795,7 +1156,7 @@ async function send() {
     streamingCount.value += 1
     try {
       await playgroundAPI.streamChat({
-        groupId,
+        route,
         model,
         messages: history,
         temperature,
@@ -838,17 +1199,23 @@ async function downloadImage(image: ImageEntry) {
     if (!result.ok) throw new Error('download')
     const blob = await result.blob()
     const url = URL.createObjectURL(blob)
-    const link = document.createElement('a'); link.href = url; link.download = `playground-${image.id}.png`; link.click()
+    const link = document.createElement('a'); link.href = url; link.download = `playground-${image.id}.${playgroundImageExtension(blob.type)}`; link.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   } catch { appStore.showError(t('playground.downloadFailed')) }
 }
 watch(
-  () => [activeTab.value, selectedGroupId.value] as const,
-  ([target, groupId]) => { void loadModels(groupId, target) }
+  () => [activeTab.value, selectedRouteValue.value] as const,
+  ([target]) => { void loadModels(requestRouteFor(activeRouteSource.value), target) }
 )
 watch(
-  () => [current.value.groupId, current.value.model, current.value.imageModel || ''] as const,
-  ([groupId, chatModel, imageModel]) => savePlaygroundPreferences(accountId.value, { groupId, chatModel, imageModel, imageMode: imageMode.value })
+  () => [current.value.groupId, current.value.routing?.mode, current.value.routing?.autoProfileId, current.value.model, current.value.imageModel || ''] as const,
+  ([groupId, mode, autoProfileId, chatModel, imageModel]) => savePlaygroundPreferences(accountId.value, {
+    groupId,
+    routing: mode === 'auto' ? { mode, autoProfileId } : { mode: 'fixed' },
+    chatModel,
+    imageModel,
+    imageMode: imageMode.value
+  })
 )
 watch(imageMode, (value) => {
   const preferences = loadPlaygroundPreferences(accountId.value)
@@ -856,6 +1223,7 @@ watch(imageMode, (value) => {
 })
 watch(accountId, (account, previousAccount) => {
   if (account === previousAccount) return
+  routeOptionsRequest += 1
   accountEpoch += 1
   abortActiveRequests()
   modelRequest += 1
@@ -879,23 +1247,15 @@ watch(accountId, (account, previousAccount) => {
   error.value = ''
   saveError.value = ''
   cacheError.value = ''
-  workflowPresets.value = { groupId: 0, chatModel: '', imageModel: '' }
-  imageMode.value = loadPlaygroundPreferences(account).imageMode
-  if (account === null) return
-  const preferences = loadPlaygroundPreferences(account)
-  current.value.groupId = groups.value.some(group => group.id === preferences.groupId)
-    ? preferences.groupId
-    : (groups.value[0]?.id ?? 0)
-  current.value.model = preferences.chatModel
-  current.value.imageModel = preferences.imageModel
-  const context = requestContext()
-  void loadModels(current.value.groupId, 'standard')
-  void (async () => {
-    await refreshHistory(context)
-    if (!isCurrentRequest(context)) return
-    const lastConversation = conversations.value.find(item => item.id === loadLastConversation(account))
-    if (lastConversation) openConversation(lastConversation)
-  })()
+  workflowPresets.value = { groupId: 0, routing: { mode: 'fixed' }, chatModel: '', imageModel: '' }
+  if (account === null) {
+    groups.value = []
+    autoProfiles.value = []
+    loadingGroups.value = false
+    loadingProfiles.value = false
+    return
+  }
+  void initializeRouteOptions(account)
 })
 onMounted(async () => {
   timer = setInterval(() => {
@@ -907,23 +1267,7 @@ onMounted(async () => {
     conversations.value = conversations.value.filter(item => item.expiresAt > now.value)
     if (!busy.value && current.value.expiresAt && current.value.expiresAt <= now.value) { newConversation(); error.value = t('playground.expired') }
   }, 1000)
-  loadingGroups.value = true
-  try {
-    groups.value = await userGroupsAPI.getAvailable()
-    const preferences = loadPlaygroundPreferences(accountId.value)
-    current.value.groupId = groups.value.some(group => group.id === preferences.groupId) ? preferences.groupId : (groups.value[0]?.id ?? 0)
-    current.value.model = preferences.chatModel
-    current.value.imageModel = preferences.imageModel
-    imageMode.value = preferences.imageMode
-  }
-  catch { error.value = t('playground.loadModelsFailed') }
-  finally { loadingGroups.value = false }
-  await refreshHistory()
-  if (accountId.value !== null) {
-    const lastConversationId = loadLastConversation(accountId.value)
-    const lastConversation = conversations.value.find(item => item.id === lastConversationId)
-    if (lastConversation) openConversation(lastConversation)
-  }
+  await initializeRouteOptions(accountId.value)
 })
 onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(timer); releaseImages(images.value); images.value = []; preview.value = null })
 </script>

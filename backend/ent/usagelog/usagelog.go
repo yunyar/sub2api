@@ -14,6 +14,14 @@ const (
 	Label = "usage_log"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldRoutingMode holds the string denoting the routing_mode field in the database.
+	FieldRoutingMode = "routing_mode"
+	// FieldAutoProfileID holds the string denoting the auto_profile_id field in the database.
+	FieldAutoProfileID = "auto_profile_id"
+	// FieldRoutingRevision holds the string denoting the routing_revision field in the database.
+	FieldRoutingRevision = "routing_revision"
+	// FieldRouteAttemptCount holds the string denoting the route_attempt_count field in the database.
+	FieldRouteAttemptCount = "route_attempt_count"
 	// FieldUserID holds the string denoting the user_id field in the database.
 	FieldUserID = "user_id"
 	// FieldAPIKeyID holds the string denoting the api_key_id field in the database.
@@ -160,6 +168,10 @@ const (
 // Columns holds all SQL columns for usagelog fields.
 var Columns = []string{
 	FieldID,
+	FieldRoutingMode,
+	FieldAutoProfileID,
+	FieldRoutingRevision,
+	FieldRouteAttemptCount,
 	FieldUserID,
 	FieldAPIKeyID,
 	FieldAccountID,
@@ -220,6 +232,12 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultRoutingMode holds the default value on creation for the "routing_mode" field.
+	DefaultRoutingMode string
+	// DefaultRoutingRevision holds the default value on creation for the "routing_revision" field.
+	DefaultRoutingRevision int64
+	// DefaultRouteAttemptCount holds the default value on creation for the "route_attempt_count" field.
+	DefaultRouteAttemptCount int
 	// RequestIDValidator is a validator for the "request_id" field. It is called by the builders before save.
 	RequestIDValidator func(string) error
 	// ModelValidator is a validator for the "model" field. It is called by the builders before save.
@@ -298,6 +316,26 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByRoutingMode orders the results by the routing_mode field.
+func ByRoutingMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRoutingMode, opts...).ToFunc()
+}
+
+// ByAutoProfileID orders the results by the auto_profile_id field.
+func ByAutoProfileID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAutoProfileID, opts...).ToFunc()
+}
+
+// ByRoutingRevision orders the results by the routing_revision field.
+func ByRoutingRevision(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRoutingRevision, opts...).ToFunc()
+}
+
+// ByRouteAttemptCount orders the results by the route_attempt_count field.
+func ByRouteAttemptCount(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRouteAttemptCount, opts...).ToFunc()
 }
 
 // ByUserID orders the results by the user_id field.

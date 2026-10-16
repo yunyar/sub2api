@@ -119,7 +119,7 @@
 
         <template #cell-group="{ row }">
           <span v-if="row.group" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-            {{ row.group.name }}
+            {{ row.routing_mode === 'auto' ? 'Auto → ' : '' }}{{ row.group.name }}
           </span>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>

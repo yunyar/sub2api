@@ -54,12 +54,50 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
+	if err := settleAutoRoutingExecution(ctx, tx, cmd); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
 	return result, nil
+}
+
+func settleAutoRoutingExecution(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	if cmd.AutoExecutionID == 0 {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE auto_route_executions
+		SET settlement_status = 'settled', updated_at = NOW()
+		WHERE id = $1 AND api_key_id = $2 AND actual_group_id = $3`,
+		cmd.AutoExecutionID, cmd.APIKeyID, cmd.ActualGroupID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errors.New("auto routing billing execution does not match the actual group")
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE auto_route_attempts
+		SET updated_at = NOW()
+		WHERE account_id = $1 AND execution_id = $2 AND attempt_no = $3 AND group_id = $4`,
+		cmd.AccountID, cmd.AutoExecutionID, cmd.AutoAttemptNo, cmd.ActualGroupID)
+	if err != nil {
+		return err
+	}
+	rows, err = result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return errors.New("auto routing billing attempt does not match the actual group")
+	}
+	return nil
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {
@@ -148,6 +186,13 @@ func (r *usageBillingRepository) reservePlaygroundImageBalance(ctx context.Conte
 		return nil, err
 	}
 	result.Applied = true
+	if cmd.AutoExecutionID != 0 {
+		if _, err := tx.ExecContext(ctx, `UPDATE playground_image_balance_holds
+			SET auto_execution_id = $1, actual_group_id = $2, auto_attempt_no = $3, pricing_snapshot = $4::jsonb
+			WHERE batch_id = $5`, cmd.AutoExecutionID, cmd.ActualGroupID, cmd.AutoAttemptNo, string(cmd.PricingSnapshot), cmd.BatchID); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -243,6 +288,9 @@ func (r *usageBillingRepository) SettlePlaygroundImageBalance(ctx context.Contex
 		result.NewBalance = holdResult.NewBalance
 	}
 	if err := r.applyUsageBillingEffects(ctx, tx, usage, result); err != nil {
+		return nil, err
+	}
+	if err := settleAutoRoutingExecution(ctx, tx, usage); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `

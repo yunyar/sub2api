@@ -33,6 +33,8 @@ func (APIKey) Mixin() []ent.Mixin {
 
 func (APIKey) Fields() []ent.Field {
 	return []ent.Field{
+		field.String("routing_mode").Default("fixed"),
+		field.Int64("routing_revision").Default(0),
 		field.Int64("user_id"),
 		field.String("key").
 			MaxLen(128).

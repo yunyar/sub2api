@@ -30,6 +30,14 @@ func RegisterAdminRoutes(
 	// 审计中间件挂在认证之后：所有管理面变更类操作 + 敏感读取入审计日志
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware.AdminComplianceGuard(settingService))
+	if h.AutoRouting != nil {
+		profiles := admin.Group("/auto-group-profiles")
+		profiles.GET("", h.AutoRouting.ListProfiles)
+		profiles.GET("/:id", h.AutoRouting.GetProfile)
+		profiles.POST("", h.AutoRouting.CreateProfile)
+		profiles.PUT("/:id", h.AutoRouting.UpdateProfile)
+		profiles.DELETE("/:id", h.AutoRouting.DisableProfile)
+	}
 	{
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)

@@ -46,17 +46,31 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Group } from '@/types'
 import { useAuthStore } from '@/stores'
-import { PlaygroundImageGenerationError, playgroundAPI, type PlaygroundImage, type PlaygroundMessage, type PlaygroundMultimodalMessage } from '@/api/playground'
-import { playgroundHistory, type Conversation, type ConversationMessage, type WorkflowStep } from '@/api/playgroundHistory'
+import { PlaygroundImageGenerationError, playgroundAPI, playgroundModelSupportsEndpoint, type PlaygroundEndpoint, type PlaygroundImage, type PlaygroundMessage, type PlaygroundModel, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
+import { playgroundHistory, type Conversation, type ConversationMessage, type ConversationRouting, type WorkflowStep } from '@/api/playgroundHistory'
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundIntent, type PlaygroundMode } from '@/utils/playgroundIntent'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
 import { playgroundImageBlob, playgroundImageCache, type CachedPlaygroundImage } from '@/utils/playgroundImageCache'
+import { isPlaygroundImageModel, isPlaygroundVideoModel } from '@/utils/playgroundModel'
 
 type WorkflowAttachment = { id: string; name: string; kind: 'text' | 'image'; text?: string; dataUrl?: string; size: number }
-const props = defineProps<{ groups: Group[]; groupId: number; chatModel: string; imageModel: string; imageMode?: PlaygroundMode; attachments?: WorkflowAttachment[]; attachmentsLoading?: boolean }>()
+const props = defineProps<{
+  groups: Group[]
+  groupId: number
+  routing?: ConversationRouting
+  route?: PlaygroundRequestRoute | null
+  routeValid?: boolean
+  models?: PlaygroundModel[]
+  modelsLoading?: boolean
+  chatModel: string
+  imageModel: string
+  imageMode?: PlaygroundMode
+  attachments?: WorkflowAttachment[]
+  attachmentsLoading?: boolean
+}>()
 const emit = defineEmits<{
-  presets: [value: { groupId: number; chatModel: string; imageModel: string }]
+  presets: [value: { groupId: number; routing?: ConversationRouting; chatModel: string; imageModel: string }]
   mode: [value: PlaygroundMode]
   requestAttachments: []
   removeAttachment: [id: string]
@@ -78,7 +92,7 @@ const results = ref<Record<string, Result>>({})
 const images = ref<Record<string, Image[]>>({})
 const revision = ref(0)
 const expiresAt = ref(0)
-const presets = ref({ groupId: props.groupId, chatModel: props.chatModel, imageModel: props.imageModel })
+const presets = ref({ groupId: props.groupId, routing: props.routing ? { ...props.routing } : { mode: 'fixed' as const }, chatModel: props.chatModel, imageModel: props.imageModel })
 const running = ref<Record<string, boolean>>({})
 const pendingSaves = ref(0)
 const error = ref('')
@@ -124,11 +138,27 @@ function expired(image: Image) { return !image.persistent && image.expiresAt <= 
 function promptTooLong(prompt: string) { return new TextEncoder().encode(prompt).length > 16000 }
 function expiry(value: number) { return value ? t('workflow.expires', { time: new Date(value).toLocaleString() }) : '' }
 function selectedGroupIsValid() {
-  return props.groups.some(group => group.id === presets.value.groupId)
+  return props.groups.some(group => group.id === presets.value.groupId && group.status === 'active')
+}
+function routeIsValid() {
+  if (props.route) return true
+  if (props.routing?.mode === 'auto') return props.routeValid === true
+  return selectedGroupIsValid()
+}
+function requestRouteSnapshot(): PlaygroundRequestRoute | null {
+  if (props.route) return { ...props.route }
+  return selectedGroupIsValid() ? { mode: 'fixed', groupId: presets.value.groupId } : null
+}
+function modelSupports(modelID: string, endpoint: PlaygroundEndpoint) {
+  const model = props.models?.find(item => item.id === modelID) ?? { id: modelID }
+  const fallback = endpoint === 'chat'
+    ? !isPlaygroundImageModel(modelID) && !isPlaygroundVideoModel(modelID)
+    : isPlaygroundImageModel(modelID)
+  return playgroundModelSupportsEndpoint(model, endpoint, fallback)
 }
 
 function canRun(step: WorkflowStep) {
-  return Boolean((step.prompt.trim() || props.attachments?.length) && !promptTooLong(step.prompt) && selectedGroupIsValid() && hasBalance.value && !props.attachmentsLoading)
+  return Boolean((step.prompt.trim() || props.attachments?.length) && !promptTooLong(step.prompt) && routeIsValid() && !props.modelsLoading && hasBalance.value && !props.attachmentsLoading)
 }
 function isImageStep(step: WorkflowStep) {
   const previous = currentStep.value ? result(steps.value[currentStep.value - 1].id)?.kind : undefined
@@ -150,6 +180,7 @@ function snapshot(): Conversation {
     id: id.value,
     title: title.value || steps.value[0]?.prompt.slice(0, 60) || '',
     groupId: presets.value.groupId,
+    routing: presets.value.routing ?? { mode: 'fixed' },
     model: presets.value.chatModel,
     imageModel: presets.value.imageModel,
     kind: 'workflow',
@@ -275,9 +306,41 @@ function resetWorkflow() {
   error.value = ''
   saveError.value = ''
   cacheError.value = ''
-  presets.value = { groupId: props.groupId, chatModel: props.chatModel, imageModel: props.imageModel }
+  presets.value = {
+    groupId: props.groupId,
+    routing: props.routing ? { ...props.routing } : { mode: 'fixed' },
+    chatModel: props.chatModel,
+    imageModel: props.imageModel
+  }
 }
-async function openWorkflow(item: Conversation) { if (item.kind !== 'workflow' || !item.workflow) return; resetRequests(); id.value = item.id; title.value = item.title; steps.value = cloneSteps(item.workflow.steps); currentStep.value = item.workflow.currentStep; results.value = Object.fromEntries(item.messages.filter(message => message.role === 'assistant' && message.stepId).map(message => [message.stepId!, { content: message.content, model: message.model || item.model, kind: message.kind || 'chat' }])); const context = workflowContext(); revision.value = Math.max(item.revision, savedRevisions.get(revisionKey(context)) ?? item.revision); savedRevisions.set(revisionKey(context), revision.value); expiresAt.value = item.expiresAt; presets.value = { groupId: item.groupId, chatModel: item.model, imageModel: item.imageModel || '' }; emit('presets', presets.value); guidance.value = ''; error.value = ''; saveError.value = ''; cacheError.value = ''; imageCount.value = 1; await restoreImages() }
+async function openWorkflow(item: Conversation) {
+  if (item.kind !== 'workflow' || !item.workflow) return
+  resetRequests()
+  id.value = item.id
+  title.value = item.title
+  steps.value = cloneSteps(item.workflow.steps)
+  currentStep.value = item.workflow.currentStep
+  results.value = Object.fromEntries(item.messages
+    .filter(message => message.role === 'assistant' && message.stepId)
+    .map(message => [message.stepId!, { content: message.content, model: message.model || item.model, kind: message.kind || 'chat' }]))
+  const context = workflowContext()
+  revision.value = Math.max(item.revision, savedRevisions.get(revisionKey(context)) ?? item.revision)
+  savedRevisions.set(revisionKey(context), revision.value)
+  expiresAt.value = item.expiresAt
+  presets.value = {
+    groupId: item.groupId,
+    routing: item.routing ?? { mode: 'fixed' },
+    chatModel: item.model,
+    imageModel: item.imageModel || ''
+  }
+  emit('presets', presets.value)
+  guidance.value = ''
+  error.value = ''
+  saveError.value = ''
+  cacheError.value = ''
+  imageCount.value = 1
+  await restoreImages()
+}
 async function removeWorkflow(value: string) { const context = workflowContext(); try { await playgroundHistory.delete(value); if (!isCurrentContext(context)) return; history.value = history.value.filter(item => item.id !== value); if (id.value === value) newWorkflow() } catch { if (isCurrentContext(context)) saveError.value = t('workflow.deleteFailed') } }
 function addStep() { if (steps.value.length < 50) steps.value.push({ id: createPlaygroundId(), prompt: '' }) }
 function removeStep(index: number) {
@@ -335,13 +398,17 @@ async function runCurrent(instruction = ''): Promise<boolean> {
     error.value = !hasBalance.value ? t('workflow.insufficientBalance') : t('workflow.invalidGroup')
     return false
   }
+  const route = requestRouteSnapshot()
+  if (!route) {
+    error.value = t('workflow.invalidGroup')
+    return false
+  }
   const stepIndex = currentStep.value
   const stepID = step.id
   const attachmentSnapshot = (props.attachments || []).map(attachment => ({ ...attachment }))
   const previous = stepIndex ? result(steps.value[stepIndex - 1].id)?.kind : undefined
   const intent = resolvePlaygroundIntent(step.prompt, previous, imageMode.value)
   const model = intent === 'image' ? presets.value.imageModel : presets.value.chatModel
-  const groupId = presets.value.groupId
   if (!model) {
     error.value = t('workflow.noModel')
     return false
@@ -378,12 +445,22 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       error.value = t('workflow.regenerateDependency')
       return false
     }
+    const imageAttachments = attachmentSnapshot.filter((attachment): attachment is WorkflowAttachment & { dataUrl: string } => attachment.kind === 'image' && Boolean(attachment.dataUrl))
+    const hasImageInput = imageAttachments.length > 0 || context.some(message =>
+      typeof message.content !== 'string' && message.content.some(part => part.type === 'image_url')
+    )
+    const endpoint: PlaygroundEndpoint = intent === 'image'
+      ? hasImageInput ? 'images_edit' : 'images_generation'
+      : 'chat'
+    if (!modelSupports(model, endpoint)) {
+      error.value = t('playground.modelEndpointUnsupported')
+      return false
+    }
     if (!await save(draft, request, request) || !isCurrentRequest(request)) return false
     const activeStep = steps.value.find(item => item.id === stepID)!
     activeStep.prompt = stepPrompt
     error.value = ''
     if (attachmentSnapshot.length) emit('consumeAttachments', attachmentSnapshot.map(attachment => attachment.id))
-    const imageAttachments = attachmentSnapshot.filter((attachment): attachment is WorkflowAttachment & { dataUrl: string } => attachment.kind === 'image' && Boolean(attachment.dataUrl))
     if (intent === 'image') {
       const text = [...context.map(message => typeof message.content === 'string'
         ? message.content
@@ -417,7 +494,7 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       try {
         const inputImages = [...context.flatMap(message => typeof message.content === 'string' ? [] : message.content.flatMap(part => part.type === 'image_url' ? [part.image_url.url] : [])), ...imageAttachments.map(attachment => attachment.dataUrl)]
         generated = await playgroundAPI.generateImages({
-          groupId,
+          route,
           model,
           prompt: text,
           size: '1024x1024',
@@ -454,7 +531,7 @@ async function runCurrent(instruction = ''): Promise<boolean> {
           }
         : { role: 'user', content: prompt }
       let replacedImages = false
-      await playgroundAPI.streamChat({ groupId, model, messages: [...context, userMessage], signal: request.controller.signal, onDelta: delta => {
+      await playgroundAPI.streamChat({ route, model, messages: [...context, userMessage], signal: request.controller.signal, onDelta: delta => {
         if (!isCurrentRequest(request)) return
         content += delta
         if (!content.trim()) return
@@ -503,9 +580,14 @@ async function regenerate() {
 async function download(image: Image, index: number) { if (expired(image)) return; try { const response = await fetch(image.url); if (!response.ok) throw new Error(); const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `workflow-${current.value?.id || 'image'}-${index + 1}.png`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000) } catch { error.value = t('workflow.downloadFailed') } }
 onMounted(() => { load(); ticker = setInterval(() => { for (const [stepID, entries] of Object.entries(images.value)) { const active = entries.filter(image => !expired(image)); for (const image of entries) if (expired(image) && image.url.startsWith('blob:')) URL.revokeObjectURL(image.url); if (active.length) images.value[stepID] = active; else delete images.value[stepID] } }, 1000) })
 watch(
-  () => [props.groupId, props.chatModel, props.imageModel] as const,
-  ([groupId, chatModel, imageModel]) => {
-    presets.value = { groupId, chatModel, imageModel }
+  () => [props.groupId, props.routing?.mode, props.routing?.autoProfileId, props.chatModel, props.imageModel] as const,
+  ([groupId, mode, autoProfileId, chatModel, imageModel]) => {
+    presets.value = {
+      groupId,
+      routing: mode === 'auto' ? { mode, autoProfileId } : { mode: 'fixed' },
+      chatModel,
+      imageModel
+    }
   }
 )
 watch(() => props.imageMode, value => { if (value) imageMode.value = value })

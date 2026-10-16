@@ -175,6 +175,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 	var playgroundImageHold *service.BatchImageBalanceHoldCommand
 	playgroundImageHoldTransferred := false
+	autoImageDispatched := false
 	if endpoint == service.GrokMediaEndpointImagesGenerations && strings.HasPrefix(c.Request.URL.Path, "/api/v1/playground/") && (subscription == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
 		playgroundImageHold, err = h.gatewayService.ReservePlaygroundImageBalance(c.Request.Context(), apiKey, requestModel, requestInfo.SizeTier, requestInfo.N, service.HashUsageRequestPayload(body))
 		if err != nil {
@@ -189,7 +190,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			return
 		}
 		defer func() {
-			if playgroundImageHold != nil && !playgroundImageHoldTransferred {
+			if playgroundImageHold != nil && !playgroundImageHoldTransferred && !autoImageDispatched {
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if releaseErr := h.gatewayService.ReleasePlaygroundImageBalance(cleanupCtx, playgroundImageHold); releaseErr != nil {
@@ -410,11 +411,18 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer releaseAccount()
+			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+				return nil, service.ErrAutoRoutingExecutionStateConflict
+			}
+			autoImageDispatched = apiKey.AutoRouting != nil
 			if endpoint.IsSeedance() {
 				return h.gatewayService.ForwardSeedance(requestCtx, c, account, endpoint, requestID, body)
 			}
 			return h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
 		}()
+		if err == nil && result != nil {
+			completeAutoRoutingDispatch(c, result.RequestID)
+		}
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
@@ -426,6 +434,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
+			if apiKey.AutoRouting != nil {
+				h.ensureForwardErrorResponse(c, false)
+				return
+			}
 			if errors.As(err, &failoverErr) {
 				if failoverClientGone(c) {
 					reqLog.Info("grok_media.failover_aborted_client_disconnected",

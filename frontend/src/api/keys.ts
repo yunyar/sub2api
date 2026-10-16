@@ -5,6 +5,12 @@
 
 import { apiClient } from './client'
 import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
+import {
+  getKeyAutoRouting,
+  updateKeyAutoRouting,
+  type KeyAutoRoutingConfig,
+  type UpdateKeyAutoRoutingRequest
+} from './autoRouting'
 
 /**
  * List all API keys for current user
@@ -157,11 +163,24 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
   return update(id, { status })
 }
 
+export async function getAutoRouting(id: number): Promise<KeyAutoRoutingConfig> {
+  return getKeyAutoRouting(id)
+}
+
+export async function updateAutoRouting(
+  id: number,
+  config: UpdateKeyAutoRoutingRequest
+): Promise<KeyAutoRoutingConfig> {
+  return updateKeyAutoRouting(id, config)
+}
+
 export const keysAPI = {
   list,
   getById,
   create,
   update,
+  getAutoRouting,
+  updateAutoRouting,
   bulkUpdate,
   delete: deleteKey,
   toggleStatus

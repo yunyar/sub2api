@@ -32,6 +32,89 @@ func (_u *UsageLogUpdate) Where(ps ...predicate.UsageLog) *UsageLogUpdate {
 	return _u
 }
 
+// SetRoutingMode sets the "routing_mode" field.
+func (_u *UsageLogUpdate) SetRoutingMode(v string) *UsageLogUpdate {
+	_u.mutation.SetRoutingMode(v)
+	return _u
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRoutingMode(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRoutingMode(*v)
+	}
+	return _u
+}
+
+// SetAutoProfileID sets the "auto_profile_id" field.
+func (_u *UsageLogUpdate) SetAutoProfileID(v int64) *UsageLogUpdate {
+	_u.mutation.ResetAutoProfileID()
+	_u.mutation.SetAutoProfileID(v)
+	return _u
+}
+
+// SetNillableAutoProfileID sets the "auto_profile_id" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAutoProfileID(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAutoProfileID(*v)
+	}
+	return _u
+}
+
+// AddAutoProfileID adds value to the "auto_profile_id" field.
+func (_u *UsageLogUpdate) AddAutoProfileID(v int64) *UsageLogUpdate {
+	_u.mutation.AddAutoProfileID(v)
+	return _u
+}
+
+// ClearAutoProfileID clears the value of the "auto_profile_id" field.
+func (_u *UsageLogUpdate) ClearAutoProfileID() *UsageLogUpdate {
+	_u.mutation.ClearAutoProfileID()
+	return _u
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (_u *UsageLogUpdate) SetRoutingRevision(v int64) *UsageLogUpdate {
+	_u.mutation.ResetRoutingRevision()
+	_u.mutation.SetRoutingRevision(v)
+	return _u
+}
+
+// SetNillableRoutingRevision sets the "routing_revision" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRoutingRevision(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRoutingRevision(*v)
+	}
+	return _u
+}
+
+// AddRoutingRevision adds value to the "routing_revision" field.
+func (_u *UsageLogUpdate) AddRoutingRevision(v int64) *UsageLogUpdate {
+	_u.mutation.AddRoutingRevision(v)
+	return _u
+}
+
+// SetRouteAttemptCount sets the "route_attempt_count" field.
+func (_u *UsageLogUpdate) SetRouteAttemptCount(v int) *UsageLogUpdate {
+	_u.mutation.ResetRouteAttemptCount()
+	_u.mutation.SetRouteAttemptCount(v)
+	return _u
+}
+
+// SetNillableRouteAttemptCount sets the "route_attempt_count" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRouteAttemptCount(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRouteAttemptCount(*v)
+	}
+	return _u
+}
+
+// AddRouteAttemptCount adds value to the "route_attempt_count" field.
+func (_u *UsageLogUpdate) AddRouteAttemptCount(v int) *UsageLogUpdate {
+	_u.mutation.AddRouteAttemptCount(v)
+	return _u
+}
+
 // SetUserID sets the "user_id" field.
 func (_u *UsageLogUpdate) SetUserID(v int64) *UsageLogUpdate {
 	_u.mutation.SetUserID(v)
@@ -1135,6 +1218,30 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			}
 		}
 	}
+	if value, ok := _u.mutation.RoutingMode(); ok {
+		_spec.SetField(usagelog.FieldRoutingMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutoProfileID(); ok {
+		_spec.SetField(usagelog.FieldAutoProfileID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedAutoProfileID(); ok {
+		_spec.AddField(usagelog.FieldAutoProfileID, field.TypeInt64, value)
+	}
+	if _u.mutation.AutoProfileIDCleared() {
+		_spec.ClearField(usagelog.FieldAutoProfileID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.RoutingRevision(); ok {
+		_spec.SetField(usagelog.FieldRoutingRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRoutingRevision(); ok {
+		_spec.AddField(usagelog.FieldRoutingRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RouteAttemptCount(); ok {
+		_spec.SetField(usagelog.FieldRouteAttemptCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRouteAttemptCount(); ok {
+		_spec.AddField(usagelog.FieldRouteAttemptCount, field.TypeInt, value)
+	}
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(usagelog.FieldRequestID, field.TypeString, value)
 	}
@@ -1544,6 +1651,89 @@ type UsageLogUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *UsageLogMutation
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (_u *UsageLogUpdateOne) SetRoutingMode(v string) *UsageLogUpdateOne {
+	_u.mutation.SetRoutingMode(v)
+	return _u
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRoutingMode(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRoutingMode(*v)
+	}
+	return _u
+}
+
+// SetAutoProfileID sets the "auto_profile_id" field.
+func (_u *UsageLogUpdateOne) SetAutoProfileID(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetAutoProfileID()
+	_u.mutation.SetAutoProfileID(v)
+	return _u
+}
+
+// SetNillableAutoProfileID sets the "auto_profile_id" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAutoProfileID(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAutoProfileID(*v)
+	}
+	return _u
+}
+
+// AddAutoProfileID adds value to the "auto_profile_id" field.
+func (_u *UsageLogUpdateOne) AddAutoProfileID(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddAutoProfileID(v)
+	return _u
+}
+
+// ClearAutoProfileID clears the value of the "auto_profile_id" field.
+func (_u *UsageLogUpdateOne) ClearAutoProfileID() *UsageLogUpdateOne {
+	_u.mutation.ClearAutoProfileID()
+	return _u
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (_u *UsageLogUpdateOne) SetRoutingRevision(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetRoutingRevision()
+	_u.mutation.SetRoutingRevision(v)
+	return _u
+}
+
+// SetNillableRoutingRevision sets the "routing_revision" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRoutingRevision(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRoutingRevision(*v)
+	}
+	return _u
+}
+
+// AddRoutingRevision adds value to the "routing_revision" field.
+func (_u *UsageLogUpdateOne) AddRoutingRevision(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddRoutingRevision(v)
+	return _u
+}
+
+// SetRouteAttemptCount sets the "route_attempt_count" field.
+func (_u *UsageLogUpdateOne) SetRouteAttemptCount(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetRouteAttemptCount()
+	_u.mutation.SetRouteAttemptCount(v)
+	return _u
+}
+
+// SetNillableRouteAttemptCount sets the "route_attempt_count" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRouteAttemptCount(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRouteAttemptCount(*v)
+	}
+	return _u
+}
+
+// AddRouteAttemptCount adds value to the "route_attempt_count" field.
+func (_u *UsageLogUpdateOne) AddRouteAttemptCount(v int) *UsageLogUpdateOne {
+	_u.mutation.AddRouteAttemptCount(v)
+	return _u
 }
 
 // SetUserID sets the "user_id" field.
@@ -2678,6 +2868,30 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.RoutingMode(); ok {
+		_spec.SetField(usagelog.FieldRoutingMode, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AutoProfileID(); ok {
+		_spec.SetField(usagelog.FieldAutoProfileID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedAutoProfileID(); ok {
+		_spec.AddField(usagelog.FieldAutoProfileID, field.TypeInt64, value)
+	}
+	if _u.mutation.AutoProfileIDCleared() {
+		_spec.ClearField(usagelog.FieldAutoProfileID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.RoutingRevision(); ok {
+		_spec.SetField(usagelog.FieldRoutingRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedRoutingRevision(); ok {
+		_spec.AddField(usagelog.FieldRoutingRevision, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.RouteAttemptCount(); ok {
+		_spec.SetField(usagelog.FieldRouteAttemptCount, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRouteAttemptCount(); ok {
+		_spec.AddField(usagelog.FieldRouteAttemptCount, field.TypeInt, value)
 	}
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(usagelog.FieldRequestID, field.TypeString, value)

@@ -289,6 +289,12 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		var result *service.ForwardResult
+		if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			return
+		}
 		setActualUpstreamEndpoint(c, "")
 		if account.Platform == service.PlatformGemini {
 			if h.geminiCompatService == nil {
@@ -315,6 +321,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
+		}
+		if err == nil && result != nil {
+			completeAutoRoutingDispatch(c, result.RequestID)
 		}
 
 		if err != nil {

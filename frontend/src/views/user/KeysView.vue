@@ -155,7 +155,14 @@
           </template>
 
           <template #cell-group="{ row }">
-            <div class="group/dropdown relative">
+            <div v-if="row.routing_mode === 'auto'" class="flex min-h-8 items-center">
+              <span class="inline-flex min-h-7 items-center gap-2 rounded-sm bg-primary-50 px-2 text-sm font-medium text-primary-700 dark:bg-primary-900/25 dark:text-primary-300">
+                <Icon name="swap" size="sm" />
+                Auto
+                <span v-if="row.auto_profile_id" class="text-xs font-normal tabular-nums">#{{ row.auto_profile_id }}</span>
+              </span>
+            </div>
+            <div v-else class="group/dropdown relative">
               <button
                 :ref="(el) => setGroupButtonRef(row.id, el)"
                 @click="openGroupSelector(row)"
@@ -431,6 +438,14 @@
                 <Icon name="edit" size="sm" />
                 <span class="text-xs">{{ t('common.edit') }}</span>
               </button>
+              <button
+                @click="openAutoRoutingEditor(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-primary-50 hover:text-primary-600 dark:hover:bg-primary-900/20 dark:hover:text-primary-400"
+                :title="routingActionLabel"
+              >
+                <Icon name="cog" size="sm" />
+                <span class="text-xs">{{ routingActionLabel }}</span>
+              </button>
               <!-- Delete Button -->
               <button
                 @click="confirmDelete(row)"
@@ -533,7 +548,7 @@
           </p>
         </fieldset>
 
-        <div>
+        <div v-if="!showEditModal || selectedKey?.routing_mode !== 'auto'">
           <label class="input-label" for="key-form-group">{{ t('keys.groupLabel') }}</label>
           <Select
             :key="showEditModal ? 'edit' : createProvider"
@@ -578,6 +593,15 @@
               />
             </template>
           </Select>
+        </div>
+        <div
+          v-else
+          class="flex min-h-14 items-center justify-between gap-3 rounded-md border border-primary-200 bg-primary-50/60 px-3 dark:border-primary-900 dark:bg-primary-950/20"
+        >
+          <span class="text-sm font-medium text-primary-800 dark:text-primary-300">Auto</span>
+          <span class="text-xs tabular-nums text-primary-700 dark:text-primary-400">
+            #{{ selectedKey.auto_profile_id ?? '—' }}
+          </span>
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -1025,6 +1049,15 @@
       </template>
     </BaseDialog>
 
+    <AutoRoutingEditor
+      :key="routingTarget?.id ?? 'routing-editor'"
+      :show="showAutoRoutingEditor"
+      :api-key="routingTarget"
+      :groups="groups"
+      @close="closeAutoRoutingEditor"
+      @saved="loadApiKeys"
+    />
+
     <BulkEditKeysModal
       :show="showBulkEditModal"
       :selected-keys="selectedApiKeys"
@@ -1199,18 +1232,19 @@
 </template>
 
 <script setup lang="ts">
-	import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 	import { useI18n } from 'vue-i18n'
 	import { useAppStore } from '@/stores/app'
 	import { useOnboardingStore } from '@/stores/onboarding'
 	import { useClipboard } from '@/composables/useClipboard'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 import { keysAPI, authAPI, usageAPI, userGroupsAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
+import AutoRoutingEditor from '@/components/keys/AutoRoutingEditor.vue'
 	import DataTable from '@/components/common/DataTable.vue'
 	import Pagination from '@/components/common/Pagination.vue'
 	import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -1356,13 +1390,20 @@ const columns = computed<Column[]>(() =>
   allColumns.value.filter((col) => ALWAYS_VISIBLE_COLUMNS.has(col.key) || !hiddenColumns.has(col.key))
 )
 
-const apiKeys = ref<ApiKey[]>([])
+type KeyListItem = ApiKey & {
+  routing_mode?: 'fixed' | 'auto'
+  auto_profile_id?: number | null
+}
+
+const apiKeys = ref<KeyListItem[]>([])
 const selectedIds = ref<number[]>([])
 const showBulkEditModal = ref(false)
 const selectedApiKeys = computed(() => apiKeys.value.filter((key) => selectedIds.value.includes(key.id)))
 
 const handleSelectionChange = (ids: Array<string | number>) => {
-  const visibleIds = new Set(apiKeys.value.map((key) => key.id))
+  const visibleIds = new Set(
+    apiKeys.value.filter((key) => key.routing_mode !== 'auto').map((key) => key.id)
+  )
   selectedIds.value = [...new Set(ids.map(Number))].filter((id) => visibleIds.has(id))
 }
 
@@ -1405,10 +1446,15 @@ const showUseKeyModal = ref(false)
 const showCcsClientSelect = ref(false)
 const showColumnDropdown = ref(false)
 const pendingCcsRow = ref<ApiKey | null>(null)
-const selectedKey = ref<ApiKey | null>(null)
+const selectedKey = ref<KeyListItem | null>(null)
+const routingTarget = ref<KeyListItem | null>(null)
+const showAutoRoutingEditor = ref(false)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
+const routingActionLabel = computed(() =>
+  (locale?.value ?? 'en').toLowerCase().startsWith('zh') ? '路由' : 'Routing'
+)
 const dropdownRef = ref<HTMLElement | null>(null)
 const columnDropdownRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
@@ -1608,7 +1654,7 @@ const loadApiKeys = async () => {
       signal
     })
     if (signal.aborted) return
-    apiKeys.value = response.items
+    apiKeys.value = response.items as KeyListItem[]
     handleSelectionChange(selectedIds.value)
     pagination.value.total = response.total
     pagination.value.pages = response.pages
@@ -1693,7 +1739,7 @@ const handleSort = (key: string, order: 'asc' | 'desc') => {
   loadApiKeys()
 }
 
-const editKey = (key: ApiKey) => {
+const editKey = (key: KeyListItem) => {
   selectedKey.value = key
   const hasIPRestriction = (key.ip_whitelist?.length > 0) || (key.ip_blacklist?.length > 0)
   const hasExpiration = !!key.expires_at
@@ -1717,6 +1763,16 @@ const editKey = (key: ApiKey) => {
     expiration_date: key.expires_at ? formatDateTimeLocal(key.expires_at) : ''
   }
   showEditModal.value = true
+}
+
+const openAutoRoutingEditor = (key: KeyListItem) => {
+  routingTarget.value = key
+  showAutoRoutingEditor.value = true
+}
+
+const closeAutoRoutingEditor = () => {
+  showAutoRoutingEditor.value = false
+  routingTarget.value = null
 }
 
 const toggleKeyStatus = async (key: ApiKey) => {
@@ -1799,7 +1855,8 @@ const confirmDelete = (key: ApiKey) => {
 
 const handleSubmit = async () => {
   // Validate group_id is required
-  if (formData.value.group_id === null) {
+  const isAutoRoutedKey = showEditModal.value && selectedKey.value?.routing_mode === 'auto'
+  if (formData.value.group_id === null && !isAutoRoutedKey) {
     appStore.showError(t('keys.groupRequired'))
     return
   }
@@ -1856,7 +1913,6 @@ const handleSubmit = async () => {
     if (showEditModal.value && selectedKey.value) {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
-        group_id: formData.value.group_id,
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -1864,6 +1920,9 @@ const handleSubmit = async () => {
         rate_limit_5h: rateLimitData.rate_limit_5h,
         rate_limit_1d: rateLimitData.rate_limit_1d,
         rate_limit_7d: rateLimitData.rate_limit_7d,
+      }
+      if (!isAutoRoutedKey) {
+        updates.group_id = formData.value.group_id
       }
       if (shouldSubmitEditStatus(selectedKey.value, formData.value.status)) {
         updates.status = formData.value.status

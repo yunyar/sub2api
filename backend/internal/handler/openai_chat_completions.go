@@ -260,8 +260,14 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
+			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+				return nil, service.ErrAutoRoutingExecutionStateConflict
+			}
 			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
 		}()
+		if err == nil && result != nil {
+			completeAutoRoutingDispatch(c, result.RequestID)
+		}
 		var cyberBlockBodyChat []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyChat = body

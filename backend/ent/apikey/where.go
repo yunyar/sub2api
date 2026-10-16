@@ -70,6 +70,16 @@ func DeletedAt(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldDeletedAt, v))
 }
 
+// RoutingMode applies equality check predicate on the "routing_mode" field. It's identical to RoutingModeEQ.
+func RoutingMode(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRoutingMode, v))
+}
+
+// RoutingRevision applies equality check predicate on the "routing_revision" field. It's identical to RoutingRevisionEQ.
+func RoutingRevision(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRoutingRevision, v))
+}
+
 // UserID applies equality check predicate on the "user_id" field. It's identical to UserIDEQ.
 func UserID(v int64) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldUserID, v))
@@ -288,6 +298,111 @@ func DeletedAtIsNil() predicate.APIKey {
 // DeletedAtNotNil applies the NotNil predicate on the "deleted_at" field.
 func DeletedAtNotNil() predicate.APIKey {
 	return predicate.APIKey(sql.FieldNotNull(FieldDeletedAt))
+}
+
+// RoutingModeEQ applies the EQ predicate on the "routing_mode" field.
+func RoutingModeEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRoutingMode, v))
+}
+
+// RoutingModeNEQ applies the NEQ predicate on the "routing_mode" field.
+func RoutingModeNEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldRoutingMode, v))
+}
+
+// RoutingModeIn applies the In predicate on the "routing_mode" field.
+func RoutingModeIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldRoutingMode, vs...))
+}
+
+// RoutingModeNotIn applies the NotIn predicate on the "routing_mode" field.
+func RoutingModeNotIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldRoutingMode, vs...))
+}
+
+// RoutingModeGT applies the GT predicate on the "routing_mode" field.
+func RoutingModeGT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldRoutingMode, v))
+}
+
+// RoutingModeGTE applies the GTE predicate on the "routing_mode" field.
+func RoutingModeGTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldRoutingMode, v))
+}
+
+// RoutingModeLT applies the LT predicate on the "routing_mode" field.
+func RoutingModeLT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldRoutingMode, v))
+}
+
+// RoutingModeLTE applies the LTE predicate on the "routing_mode" field.
+func RoutingModeLTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldRoutingMode, v))
+}
+
+// RoutingModeContains applies the Contains predicate on the "routing_mode" field.
+func RoutingModeContains(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContains(FieldRoutingMode, v))
+}
+
+// RoutingModeHasPrefix applies the HasPrefix predicate on the "routing_mode" field.
+func RoutingModeHasPrefix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasPrefix(FieldRoutingMode, v))
+}
+
+// RoutingModeHasSuffix applies the HasSuffix predicate on the "routing_mode" field.
+func RoutingModeHasSuffix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasSuffix(FieldRoutingMode, v))
+}
+
+// RoutingModeEqualFold applies the EqualFold predicate on the "routing_mode" field.
+func RoutingModeEqualFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEqualFold(FieldRoutingMode, v))
+}
+
+// RoutingModeContainsFold applies the ContainsFold predicate on the "routing_mode" field.
+func RoutingModeContainsFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContainsFold(FieldRoutingMode, v))
+}
+
+// RoutingRevisionEQ applies the EQ predicate on the "routing_revision" field.
+func RoutingRevisionEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionNEQ applies the NEQ predicate on the "routing_revision" field.
+func RoutingRevisionNEQ(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionIn applies the In predicate on the "routing_revision" field.
+func RoutingRevisionIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldRoutingRevision, vs...))
+}
+
+// RoutingRevisionNotIn applies the NotIn predicate on the "routing_revision" field.
+func RoutingRevisionNotIn(vs ...int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldRoutingRevision, vs...))
+}
+
+// RoutingRevisionGT applies the GT predicate on the "routing_revision" field.
+func RoutingRevisionGT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionGTE applies the GTE predicate on the "routing_revision" field.
+func RoutingRevisionGTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionLT applies the LT predicate on the "routing_revision" field.
+func RoutingRevisionLT(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldRoutingRevision, v))
+}
+
+// RoutingRevisionLTE applies the LTE predicate on the "routing_revision" field.
+func RoutingRevisionLTE(v int64) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldRoutingRevision, v))
 }
 
 // UserIDEQ applies the EQ predicate on the "user_id" field.

@@ -795,8 +795,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
+			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+				return nil, service.ErrAutoRoutingExecutionStateConflict
+			}
 			return h.gatewayService.Forward(c.Request.Context(), c, account, attemptBody)
 		}()
+		if err == nil && result != nil {
+			completeAutoRoutingDispatch(c, result.RequestID)
+		}
 		var cyberBlockBodyHTTP []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyHTTP = sessionHashBody
@@ -1388,8 +1394,14 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
+			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+				return nil, service.ErrAutoRoutingExecutionStateConflict
+			}
 			return h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
 		}()
+		if err == nil && result != nil {
+			completeAutoRoutingDispatch(c, result.RequestID)
+		}
 		var cyberBlockBodyMsg []byte
 		if service.GetOpsCyberPolicy(c) != nil {
 			cyberBlockBodyMsg = body

@@ -82,6 +82,7 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		return nil
 	}
 	out := &APIKey{
+		RoutingMode:        k.RoutingMode,
 		ID:                 k.ID,
 		UserID:             k.UserID,
 		Key:                k.Key,
@@ -693,6 +694,10 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		requestedModel = l.Model
 	}
 	return UsageLog{
+		RoutingMode:               l.RoutingMode,
+		AutoProfileID:             l.AutoProfileID,
+		RoutingRevision:           l.RoutingRevision,
+		RouteAttemptCount:         l.RouteAttemptCount,
 		ID:                        l.ID,
 		UserID:                    l.UserID,
 		APIKeyID:                  l.APIKeyID,

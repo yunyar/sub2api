@@ -144,6 +144,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	}
 	var playgroundImageHold *service.BatchImageBalanceHoldCommand
 	playgroundImageHoldTransferred := false
+	autoImageDispatched := false
 	if strings.HasPrefix(c.Request.URL.Path, "/api/v1/playground/") && (subscription == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
 		playgroundImageHold, err = h.gatewayService.ReservePlaygroundImageBalance(c.Request.Context(), apiKey, parsed.Model, parsed.SizeTier, parsed.N, service.HashUsageRequestPayload(body))
 		if err != nil {
@@ -159,7 +160,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			return
 		}
 		defer func() {
-			if playgroundImageHold != nil && !playgroundImageHoldTransferred {
+			if playgroundImageHold != nil && !playgroundImageHoldTransferred && !autoImageDispatched {
 				releaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if releaseErr := h.gatewayService.ReleasePlaygroundImageBalance(releaseCtx, playgroundImageHold); releaseErr != nil {
@@ -286,8 +287,15 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					accountReleaseFunc()
 				}
 			}()
+			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+				return nil, service.ErrAutoRoutingExecutionStateConflict
+			}
+			autoImageDispatched = apiKey.AutoRouting != nil
 			return h.gatewayService.ForwardImages(requestCtx, c, account, body, parsed, channelMapping.MappedModel)
 		}()
+		if err == nil && result != nil {
+			completeAutoRoutingDispatch(c, result.RequestID)
+		}
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
 		responseLatencyMs := forwardDurationMs
@@ -307,6 +315,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				)
 			} else {
 				var imageUpstreamErr *service.OpenAIImagesUpstreamError
+				if apiKey.AutoRouting != nil {
+					h.ensureForwardErrorResponse(c, streamStarted)
+					return
+				}
 				if errors.As(err, &imageUpstreamErr) {
 					retryableServerError := service.IsOpenAIImagesRetryableUpstreamError(imageUpstreamErr)
 					if retryableServerError {

@@ -42,6 +42,28 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Billing information is not supported in simple mode")
 		return
 	}
+	if apiKey.RoutingMode == service.AutoRoutingModeAuto {
+		configuration, valid := middleware2.AutoKeyConfig(c)
+		if !valid || h.apiKeyService == nil || h.apiKeyService.AutoRoutingService() == nil {
+			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Auto billing information is unavailable")
+			return
+		}
+		preparation, err := h.apiKeyService.AutoRoutingService().PrepareRequestKey(c.Request.Context(), apiKey, service.AutoRoutingRequest{IsModelDirectory: true})
+		if err != nil || preparation == nil || preparation.Plan == nil {
+			h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Auto billing information is unavailable")
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, gin.H{
+			"object": "sub2api.key_billing", "schema_version": 2,
+			"billing_scope": "selected_group", "routing_mode": "auto",
+			"auto_profile_id": configuration.ProfileID, "routing_revision": configuration.Revision,
+			"auto_selection_mode": configuration.SelectionMode,
+			"group_ids":           preparation.Plan.CandidateGroupIDs,
+			"cross_group_retry":   false, "observed_at": time.Now().UTC(),
+		})
+		return
+	}
 	if apiKey.GroupID == nil {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", "API key is not assigned to a group")
 		return

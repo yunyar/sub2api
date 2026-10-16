@@ -29,4 +29,21 @@ describe('playgroundPreferences', () => {
     savePlaygroundPreferences(1, { groupId: 3, chatModel: 'chat-b', imageModel: 'image-b' })
     expect(loadPlaygroundPreferences(1)).toEqual({ groupId: 3, chatModel: 'chat-b', imageModel: 'image-b', imageMode: 'image' })
   })
+
+  it('persists an Auto profile selection independently from the retained group ID', () => {
+    savePlaygroundPreferences(1, {
+      groupId: 7,
+      routing: { mode: 'auto', autoProfileId: 12 },
+      chatModel: 'chat-a',
+      imageModel: 'image-a'
+    })
+
+    expect(loadPlaygroundPreferences(1)).toEqual({
+      groupId: 7,
+      routing: { mode: 'auto', autoProfileId: 12 },
+      chatModel: 'chat-a',
+      imageModel: 'image-a',
+      imageMode: 'chat'
+    })
+  })
 })

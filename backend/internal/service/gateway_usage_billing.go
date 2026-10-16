@@ -302,6 +302,7 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	}
 	if usageLog != nil {
 		cmd.Model = usageLog.Model
+		cmd.ActualGroupID = usageLog.GroupID
 		cmd.BillingType = usageLog.BillingType
 		cmd.InputTokens = usageLog.InputTokens
 		cmd.OutputTokens = usageLog.OutputTokens
@@ -319,6 +320,10 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 		}
 	}
 
+	if p.APIKey.AutoRouting != nil {
+		cmd.AutoExecutionID = p.APIKey.AutoRouting.ExecutionID
+		cmd.AutoAttemptNo = p.APIKey.AutoRouting.AttemptNo
+	}
 	if p.SimpleModeKeyRateLimitOnly {
 		if p.Cost.ActualCost > 0 && p.APIKey.HasRateLimits() {
 			cmd.APIKeyRateLimitCost = p.Cost.ActualCost
@@ -379,6 +384,10 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 			return false, ErrBatchImageBillingHoldFailed.WithCause(errors.New("playground image billing settlement is unavailable"))
 		}
 		hold = &BatchImageBalanceHoldCommand{
+			AutoExecutionID:    hold.AutoExecutionID,
+			AutoAttemptNo:      hold.AutoAttemptNo,
+			ActualGroupID:      hold.ActualGroupID,
+			PricingSnapshot:    append([]byte(nil), hold.PricingSnapshot...),
 			RequestID:          PlaygroundImageTerminalRequestID(hold.BatchID),
 			APIKeyID:           hold.APIKeyID,
 			UserID:             hold.UserID,
@@ -939,6 +948,14 @@ func (s *GatewayService) recordUsageMultipliers(ctx context.Context, apiKey *API
 	if pricingAt.IsZero() {
 		pricingAt = timezone.Now()
 	}
+	if apiKey.AutoRouting != nil {
+		if apiKey.AutoRouting.RateMultiplier != nil {
+			multiplier = *apiKey.AutoRouting.RateMultiplier
+		}
+		if !apiKey.AutoRouting.PricingAt.IsZero() {
+			pricingAt = apiKey.AutoRouting.PricingAt
+		}
+	}
 	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
 	return multiplier, imageMultiplier, pricingAt
 }
@@ -1353,6 +1370,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		SubscriptionID:           optionalSubscriptionID(subscription),
 		CreatedAt:                time.Now(),
 	}
+	applyAutoRoutingUsageMetadata(usageLog, apiKey)
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}

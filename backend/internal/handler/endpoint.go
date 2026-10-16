@@ -95,7 +95,7 @@ func NormalizeInboundEndpoint(path string) string {
 		return EndpointAlphaSearch
 	case strings.Contains(path, EndpointChatCompletions):
 		return EndpointChatCompletions
-	case strings.Contains(path, EndpointMessages):
+	case strings.Contains(path, EndpointMessages) || isMessagesAliasPath(path):
 		return EndpointMessages
 	case strings.Contains(path, EndpointSystemOne):
 		return EndpointSystemOne
@@ -124,6 +124,11 @@ func NormalizeInboundEndpoint(path string) string {
 	default:
 		return path
 	}
+}
+
+func isMessagesAliasPath(path string) bool {
+	trimmed := strings.TrimRight(strings.TrimSpace(path), "/")
+	return trimmed == "/messages" || strings.HasPrefix(trimmed, "/messages/")
 }
 
 func isResponsesInputTokensAliasPath(path string) bool {

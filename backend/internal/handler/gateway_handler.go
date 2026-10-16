@@ -497,6 +497,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
+			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				return
+			}
 			if account.Platform == service.PlatformAntigravity {
 				result, err = h.antigravityGatewayService.ForwardGemini(
 					requestCtx,
@@ -511,6 +517,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				)
 			} else {
 				result, err = h.geminiCompatService.Forward(requestCtx, c, account, body)
+			}
+			if err == nil && result != nil {
+				completeAutoRoutingDispatch(c, result.RequestID)
 			}
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
@@ -918,10 +927,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
+			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+				if queueRelease != nil {
+					queueRelease()
+				}
+				attemptParsedReq.OnUpstreamAccepted = nil
+				if accountReleaseFunc != nil {
+					accountReleaseFunc()
+				}
+				return
+			}
 			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
 				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, attemptBody, hasBoundSession)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, attemptParsedReq)
+			}
+			if err == nil && result != nil {
+				completeAutoRoutingDispatch(c, result.RequestID)
 			}
 
 			// 兜底释放串行锁（正常情况已通过回调提前释放）

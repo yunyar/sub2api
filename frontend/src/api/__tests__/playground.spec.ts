@@ -1,16 +1,111 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+const get = vi.hoisted(() => vi.fn())
 const post = vi.hoisted(() => vi.fn())
+const put = vi.hoisted(() => vi.fn())
 
 vi.mock('../client', () => ({
-  apiClient: { post },
+  apiClient: { get, post, put },
 }))
 
-import { createPlaygroundSSEParser, generatePlaygroundImages, streamPlaygroundChat } from '../playground'
+import {
+  createPlaygroundSSEParser,
+  generatePlaygroundImages,
+  getPlaygroundAutoRouting,
+  listPlaygroundModels,
+  playgroundModelSupportsEndpoint,
+  streamPlaygroundChat,
+  updatePlaygroundAutoRouting
+} from '../playground'
 
 afterEach(() => {
+  get.mockReset()
   post.mockReset()
+  put.mockReset()
   vi.unstubAllGlobals()
+})
+
+describe('Playground routing and model catalog', () => {
+  it('normalizes object and list model payloads while retaining capability fields', async () => {
+    get.mockResolvedValueOnce({
+      data: {
+        object: 'list',
+        data: [{
+          id: 'image-v2',
+          object: 'model',
+          owned_by: 'openai',
+          source_platforms: ['openai'],
+          supported_endpoints: ['images_generation', 'images_edit']
+        }]
+      }
+    })
+
+    await expect(listPlaygroundModels({ mode: 'auto', autoProfileId: 12 })).resolves.toEqual([{
+      id: 'image-v2',
+      object: 'model',
+      owned_by: 'openai',
+      source_platforms: ['openai'],
+      supported_endpoints: ['images_generation', 'images_edit']
+    }])
+    expect(get).toHaveBeenCalledWith('/playground/models', {
+      headers: { 'X-Playground-Auto-Profile-ID': '12' }
+    })
+
+    get.mockResolvedValueOnce({ data: { 'chat-v2': { object: 'model', owned_by: 'anthropic', supported_endpoints: ['chat'] } } })
+    await expect(listPlaygroundModels(7)).resolves.toEqual([
+      { id: 'chat-v2', object: 'model', owned_by: 'anthropic', supported_endpoints: ['chat'] }
+    ])
+    expect(get).toHaveBeenLastCalledWith('/playground/models', {
+      headers: { 'X-Playground-Group-ID': '7' }
+    })
+  })
+
+  it('uses explicit endpoint and schedulability capabilities when provided', () => {
+    expect(playgroundModelSupportsEndpoint({
+      id: 'image-v2',
+      supported_endpoints: ['images_generation'],
+      account_schedulable: true
+    }, 'images_generation', false)).toBe(true)
+    expect(playgroundModelSupportsEndpoint({
+      id: 'image-v2',
+      supported_endpoints: ['images_generation'],
+      account_schedulable: true
+    }, 'chat', true)).toBe(false)
+    expect(playgroundModelSupportsEndpoint({
+      id: 'chat-v2',
+      supported_endpoints: ['chat'],
+      account_schedulable: false
+    }, 'chat', true)).toBe(false)
+    expect(playgroundModelSupportsEndpoint({ id: 'legacy-image' }, 'images_generation', true)).toBe(true)
+  })
+
+  it('loads and saves profile-scoped Playground routing with revision control', async () => {
+    const config = {
+      profile_id: 12,
+      routing_mode: 'auto' as const,
+      auto_profile_id: 12,
+      auto_selection_mode: 'custom' as const,
+      group_ids: [8, 4],
+      cross_group_retry: false as const,
+      routing_revision: 3
+    }
+    get.mockResolvedValue({ data: config })
+    put.mockResolvedValue({ data: { ...config, routing_revision: 4 } })
+
+    await expect(getPlaygroundAutoRouting(12)).resolves.toEqual(config)
+    await expect(updatePlaygroundAutoRouting(12, {
+      auto_selection_mode: 'custom',
+      group_ids: [8, 4],
+      routing_revision: 3
+    })).resolves.toEqual({ ...config, routing_revision: 4 })
+
+    expect(get).toHaveBeenCalledWith('/playground/auto-routing/12')
+    expect(put).toHaveBeenCalledWith('/playground/auto-routing/12', {
+      auto_selection_mode: 'custom',
+      group_ids: [8, 4],
+      routing_revision: 3
+    })
+  })
 })
 
 describe('createPlaygroundSSEParser', () => {
@@ -59,7 +154,7 @@ describe('streamPlaygroundChat', () => {
     const onDelta = vi.fn()
 
     await expect(streamPlaygroundChat({
-      groupId: 7,
+      route: { mode: 'auto', autoProfileId: 12 },
       model: 'chat-model',
       messages: [{ role: 'user', content: 'hello' }],
       onDelta,
@@ -68,10 +163,31 @@ describe('streamPlaygroundChat', () => {
     expect(onDelta).toHaveBeenCalledTimes(1)
     expect(onDelta).toHaveBeenCalledWith('partial')
     expect(canceled).toBe(true)
+    const requestHeaders = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].headers
+    expect(requestHeaders['X-Playground-Auto-Profile-ID']).toBe('12')
+    expect(requestHeaders).not.toHaveProperty('X-Playground-Group-ID')
   })
 })
 
 describe('generatePlaygroundImages', () => {
+  it.each([
+    [{ b64_json: '/9j/', mime_type: 'image/jpeg' }, {}, 'data:image/jpeg;base64,/9j/'],
+    [{ b64_json: 'aW1hZ2U=', output_format: 'webp' }, {}, 'data:image/webp;base64,aW1hZ2U='],
+    [{ b64_json: 'aW1hZ2U=' }, { output_format: 'jpeg' }, 'data:image/jpeg;base64,aW1hZ2U='],
+    [{ b64_json: 'data:image/webp;base64,aW1hZ2U=' }, {}, 'data:image/webp;base64,aW1hZ2U='],
+    [{ url: 'https://images.example/one.png' }, {}, 'https://images.example/one.png']
+  ])('preserves the response image format and source', async (item, metadata, url) => {
+    post.mockResolvedValue({ data: { ...metadata, data: [item] } })
+    const onImage = vi.fn()
+
+    await expect(generatePlaygroundImages({
+      groupId: 7, model: 'image-model', prompt: 'sunset',
+      size: '1024x1024', quality: 'auto', count: 1, onImage
+    })).resolves.toEqual([{ url, revisedPrompt: undefined }])
+
+    expect(onImage).toHaveBeenCalledWith({ url, revisedPrompt: undefined })
+  })
+
   it('routes reference images to edits with group attribution and one output per request', async () => {
     post.mockResolvedValue({ data: { data: [{ b64_json: 'generated' }] } })
     const references = ['data:image/png;base64,reference']

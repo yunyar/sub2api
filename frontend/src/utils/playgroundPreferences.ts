@@ -1,7 +1,13 @@
 import type { PlaygroundMode } from './playgroundIntent'
 
+export interface PlaygroundPreferenceRouting {
+  mode: 'fixed' | 'auto'
+  autoProfileId?: number
+}
+
 export interface PlaygroundPreferences {
   groupId: number
+  routing?: PlaygroundPreferenceRouting
   chatModel: string
   imageModel: string
   imageMode: PlaygroundMode
@@ -16,8 +22,16 @@ export function loadPlaygroundPreferences(accountId: number | string | null | un
   if (accountId === null || accountId === undefined || typeof window === 'undefined') return emptyPreferences()
   try {
     const saved = JSON.parse(window.localStorage.getItem(`${STORAGE_PREFIX}${accountId}`) || '{}')
+    const routing = saved.routing?.mode === 'auto' &&
+      Number.isInteger(saved.routing.autoProfileId) &&
+      saved.routing.autoProfileId > 0
+      ? { mode: 'auto' as const, autoProfileId: saved.routing.autoProfileId }
+      : saved.routing?.mode === 'fixed'
+        ? { mode: 'fixed' as const }
+        : undefined
     return {
       groupId: Number.isInteger(saved.groupId) && saved.groupId > 0 ? saved.groupId : 0,
+      ...(routing ? { routing } : {}),
       chatModel: typeof saved.chatModel === 'string' ? saved.chatModel : '',
       imageModel: typeof saved.imageModel === 'string' ? saved.imageModel : '',
       imageMode: saved.imageMode === 'auto' || saved.imageMode === 'image' ? saved.imageMode : 'chat'

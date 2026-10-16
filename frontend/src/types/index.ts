@@ -1785,6 +1785,10 @@ export type ImageSizeSource = 'output' | 'input' | 'default' | 'legacy'
 export type ImageSizeBreakdown = Record<string, number>
 
 export interface UsageLog {
+	 routing_mode?: 'fixed' | 'auto'
+	 auto_profile_id?: number
+	 routing_revision?: number
+	 route_attempt_count?: number
   id: number
   user_id: number
   api_key_id: number

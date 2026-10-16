@@ -67,6 +67,34 @@ func (_c *APIKeyCreate) SetNillableDeletedAt(v *time.Time) *APIKeyCreate {
 	return _c
 }
 
+// SetRoutingMode sets the "routing_mode" field.
+func (_c *APIKeyCreate) SetRoutingMode(v string) *APIKeyCreate {
+	_c.mutation.SetRoutingMode(v)
+	return _c
+}
+
+// SetNillableRoutingMode sets the "routing_mode" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableRoutingMode(v *string) *APIKeyCreate {
+	if v != nil {
+		_c.SetRoutingMode(*v)
+	}
+	return _c
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (_c *APIKeyCreate) SetRoutingRevision(v int64) *APIKeyCreate {
+	_c.mutation.SetRoutingRevision(v)
+	return _c
+}
+
+// SetNillableRoutingRevision sets the "routing_revision" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableRoutingRevision(v *int64) *APIKeyCreate {
+	if v != nil {
+		_c.SetRoutingRevision(*v)
+	}
+	return _c
+}
+
 // SetUserID sets the "user_id" field.
 func (_c *APIKeyCreate) SetUserID(v int64) *APIKeyCreate {
 	_c.mutation.SetUserID(v)
@@ -383,6 +411,14 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.RoutingMode(); !ok {
+		v := apikey.DefaultRoutingMode
+		_c.mutation.SetRoutingMode(v)
+	}
+	if _, ok := _c.mutation.RoutingRevision(); !ok {
+		v := apikey.DefaultRoutingRevision
+		_c.mutation.SetRoutingRevision(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -429,6 +465,12 @@ func (_c *APIKeyCreate) check() error {
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "APIKey.updated_at"`)}
+	}
+	if _, ok := _c.mutation.RoutingMode(); !ok {
+		return &ValidationError{Name: "routing_mode", err: errors.New(`ent: missing required field "APIKey.routing_mode"`)}
+	}
+	if _, ok := _c.mutation.RoutingRevision(); !ok {
+		return &ValidationError{Name: "routing_revision", err: errors.New(`ent: missing required field "APIKey.routing_revision"`)}
 	}
 	if _, ok := _c.mutation.UserID(); !ok {
 		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "APIKey.user_id"`)}
@@ -522,6 +564,14 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.DeletedAt(); ok {
 		_spec.SetField(apikey.FieldDeletedAt, field.TypeTime, value)
 		_node.DeletedAt = &value
+	}
+	if value, ok := _c.mutation.RoutingMode(); ok {
+		_spec.SetField(apikey.FieldRoutingMode, field.TypeString, value)
+		_node.RoutingMode = value
+	}
+	if value, ok := _c.mutation.RoutingRevision(); ok {
+		_spec.SetField(apikey.FieldRoutingRevision, field.TypeInt64, value)
+		_node.RoutingRevision = value
 	}
 	if value, ok := _c.mutation.Key(); ok {
 		_spec.SetField(apikey.FieldKey, field.TypeString, value)
@@ -724,6 +774,36 @@ func (u *APIKeyUpsert) UpdateDeletedAt() *APIKeyUpsert {
 // ClearDeletedAt clears the value of the "deleted_at" field.
 func (u *APIKeyUpsert) ClearDeletedAt() *APIKeyUpsert {
 	u.SetNull(apikey.FieldDeletedAt)
+	return u
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (u *APIKeyUpsert) SetRoutingMode(v string) *APIKeyUpsert {
+	u.Set(apikey.FieldRoutingMode, v)
+	return u
+}
+
+// UpdateRoutingMode sets the "routing_mode" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateRoutingMode() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldRoutingMode)
+	return u
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (u *APIKeyUpsert) SetRoutingRevision(v int64) *APIKeyUpsert {
+	u.Set(apikey.FieldRoutingRevision, v)
+	return u
+}
+
+// UpdateRoutingRevision sets the "routing_revision" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateRoutingRevision() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldRoutingRevision)
+	return u
+}
+
+// AddRoutingRevision adds v to the "routing_revision" field.
+func (u *APIKeyUpsert) AddRoutingRevision(v int64) *APIKeyUpsert {
+	u.Add(apikey.FieldRoutingRevision, v)
 	return u
 }
 
@@ -1140,6 +1220,41 @@ func (u *APIKeyUpsertOne) UpdateDeletedAt() *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) ClearDeletedAt() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearDeletedAt()
+	})
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (u *APIKeyUpsertOne) SetRoutingMode(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRoutingMode(v)
+	})
+}
+
+// UpdateRoutingMode sets the "routing_mode" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateRoutingMode() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRoutingMode()
+	})
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (u *APIKeyUpsertOne) SetRoutingRevision(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRoutingRevision(v)
+	})
+}
+
+// AddRoutingRevision adds v to the "routing_revision" field.
+func (u *APIKeyUpsertOne) AddRoutingRevision(v int64) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddRoutingRevision(v)
+	})
+}
+
+// UpdateRoutingRevision sets the "routing_revision" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateRoutingRevision() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRoutingRevision()
 	})
 }
 
@@ -1778,6 +1893,41 @@ func (u *APIKeyUpsertBulk) UpdateDeletedAt() *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) ClearDeletedAt() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.ClearDeletedAt()
+	})
+}
+
+// SetRoutingMode sets the "routing_mode" field.
+func (u *APIKeyUpsertBulk) SetRoutingMode(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRoutingMode(v)
+	})
+}
+
+// UpdateRoutingMode sets the "routing_mode" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateRoutingMode() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRoutingMode()
+	})
+}
+
+// SetRoutingRevision sets the "routing_revision" field.
+func (u *APIKeyUpsertBulk) SetRoutingRevision(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetRoutingRevision(v)
+	})
+}
+
+// AddRoutingRevision adds v to the "routing_revision" field.
+func (u *APIKeyUpsertBulk) AddRoutingRevision(v int64) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddRoutingRevision(v)
+	})
+}
+
+// UpdateRoutingRevision sets the "routing_revision" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateRoutingRevision() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateRoutingRevision()
 	})
 }
 

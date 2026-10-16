@@ -280,6 +280,12 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		var result *service.ForwardResult
+		if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+			if accountReleaseFunc != nil {
+				accountReleaseFunc()
+			}
+			return
+		}
 		setActualUpstreamEndpoint(c, "")
 		if shouldUseAntigravityCompat(account) {
 			if h.antigravityGatewayService == nil {
@@ -297,6 +303,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
+		}
+		if err == nil && result != nil {
+			completeAutoRoutingDispatch(c, result.RequestID)
 		}
 
 		if err != nil {

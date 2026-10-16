@@ -288,6 +288,7 @@ type RateLimitCacheInvalidator interface {
 }
 
 type APIKeyService struct {
+	autoRouting               *AutoRoutingService
 	apiKeyRepo                APIKeyRepository
 	userRepo                  UserRepository
 	groupRepo                 GroupRepository
@@ -878,6 +879,9 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 
 	if req.GroupID != nil {
 		// 验证分组权限
+		if apiKey.RoutingMode == AutoRoutingModeAuto {
+			return nil, infraerrors.BadRequest("AUTO_ROUTING_CONFIG_REQUIRED", "Change this key's group through its Auto routing configuration")
+		}
 		user, err := s.userRepo.GetByID(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("get user: %w", err)

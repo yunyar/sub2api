@@ -72,6 +72,53 @@ func TestPlaygroundHistoryIsolationExpiryAndConflicts(t *testing.T) {
 	require.NotEqual(t, http.StatusOK, request("PUT", "/oversized", "1", conversation).Code)
 }
 
+func TestPlaygroundHistoryPreservesAutoSelectorAndLegacyGroupID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	router := gin.New()
+	auth := middleware.JWTAuthMiddleware(func(ctx *gin.Context) {
+		ctx.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{UserID: 1})
+		ctx.Next()
+	})
+	RegisterPlaygroundHistoryRoutes(router.Group("/api/v1"), auth, client)
+
+	save := func(id string, conversation playgroundConversation) playgroundConversation {
+		body, err := json.Marshal(conversation)
+		require.NoError(t, err)
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/playground/conversations/"+id, bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code)
+		var saved struct {
+			Data playgroundConversation `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &saved))
+		return saved.Data
+	}
+
+	auto := save("auto-history", playgroundConversation{
+		GroupID:     73,
+		Routing:     &playgroundHistoryRouting{Mode: "auto"},
+		Temperature: 0.7,
+		Messages:    []playgroundHistoryMessage{{ID: 1, Role: "user", Content: "hello"}},
+	})
+	require.Equal(t, int64(73), auto.GroupID)
+	require.NotNil(t, auto.Routing)
+	require.Equal(t, "auto", auto.Routing.Mode)
+	require.Nil(t, auto.Routing.AutoProfileID)
+
+	legacy := save("legacy-history", playgroundConversation{
+		GroupID:     41,
+		Temperature: 0.7,
+		Messages:    []playgroundHistoryMessage{{ID: 1, Role: "user", Content: "hello"}},
+	})
+	require.Equal(t, int64(41), legacy.GroupID)
+	require.Nil(t, legacy.Routing)
+}
+
 func TestPlaygroundAttachmentHistoryValidation(t *testing.T) {
 	conversation := playgroundConversation{Temperature: 0.7, Messages: []playgroundHistoryMessage{{ID: 1, Role: "user", Content: "Reference\n\n--- data.txt ---\n" + strings.Repeat("x", 24*1024)}}}
 	require.True(t, validPlaygroundConversation(&conversation))
