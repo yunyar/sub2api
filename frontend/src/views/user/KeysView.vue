@@ -1659,7 +1659,11 @@ const loadApiKeys = async () => {
     pagination.value.total = response.total
     pagination.value.pages = response.pages
 
-    // Load usage stats for all API keys in the list
+    // Render the key list as soon as the primary request completes. Usage
+    // aggregation can scan a large usage table and must not block the page.
+    loading.value = false
+
+    // Load usage stats in the background for the visible keys.
     if (response.items.length > 0) {
       const keyIds = response.items.map((k) => k.id)
       try {
