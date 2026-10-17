@@ -280,6 +280,46 @@ func MarkAutoRoutingUpstreamStarted(c *gin.Context) {
 	}
 }
 
+// AutoRoutingDispatchStarted reports whether this request already claimed its
+// execution. Account failover stays inside the same request execution and
+// must not claim it a second time.
+func AutoRoutingDispatchStarted(c *gin.Context) bool {
+	state := getAutoRoutingRequestState(c)
+	return state != nil && state.dispatched && !state.finished
+}
+
+// RetryAutoRoutingGroup moves a confirmed pre-response failure to the next
+// configured group and refreshes the request-local API key context.
+func RetryAutoRoutingGroup(
+	c *gin.Context,
+	routing *service.AutoRoutingService,
+	evidenceCode string,
+) (*service.APIKey, bool, error) {
+	state := getAutoRoutingRequestState(c)
+	if state == nil || state.finished || !state.dispatched || routing == nil {
+		return nil, false, nil
+	}
+	preparation, hasNext, err := routing.RetryNextGroup(c.Request.Context(), state.preparation, evidenceCode)
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasNext {
+		state.finished = true
+		return nil, false, nil
+	}
+	if preparation == nil || preparation.EffectiveKey == nil {
+		return nil, false, service.ErrAutoRoutingUnavailable
+	}
+	if err := BindEffectiveGroupContext(c, state.authenticatedKey, preparation.EffectiveKey, preparation.Subscription); err != nil {
+		return nil, false, err
+	}
+	state.preparation = preparation
+	state.dispatched = false
+	state.upstreamStarted = false
+	state.resultReference = ""
+	return preparation.EffectiveKey, true, nil
+}
+
 // FinishAutoRouting persists a verified completion reference or marks a
 // dispatched request unknown after the handler returns.
 func FinishAutoRouting(c *gin.Context, apiKey *service.APIKey, routing *service.AutoRoutingService) {
@@ -439,8 +479,7 @@ func BindEffectiveGroupContext(c *gin.Context, authenticatedKey, effectiveKey *s
 		effectiveKey.AutoRouting.RoutingRevision <= 0 ||
 		effectiveKey.AutoRouting.ExecutionID <= 0 ||
 		effectiveKey.AutoRouting.RequestID == "" ||
-		effectiveKey.AutoRouting.AttemptNo < 0 ||
-		effectiveKey.AutoRouting.AttemptNo > 1 {
+		effectiveKey.AutoRouting.AttemptNo <= 0 {
 		return autoRoutingError(http.StatusInternalServerError, autoRoutingEffectiveGroupInvalidCode, "Auto routing did not bind a valid request-local group")
 	}
 
@@ -460,9 +499,7 @@ func BindEffectiveGroupContext(c *gin.Context, authenticatedKey, effectiveKey *s
 	c.Request = c.Request.WithContext(ctx)
 	c.Set(string(ContextKeyAPIKey), effectiveKey)
 	SetOpsFallbackAPIKey(c, effectiveKey)
-	if subscription != nil {
-		c.Set(string(ContextKeySubscription), subscription)
-	}
+	c.Set(string(ContextKeySubscription), subscription)
 	return nil
 }
 

@@ -49,7 +49,7 @@ func (s *AutoRoutingService) UpdatePlaygroundAutoRouting(
 	config *APIKeyAutoRoutingConfig,
 	expectedRevision int64,
 ) (*APIKeyAutoRoutingConfig, error) {
-	if config == nil || config.CrossGroupRetry || expectedRevision < 0 {
+	if config == nil || expectedRevision < 0 {
 		return nil, ErrAutoRoutingProfileInvalid
 	}
 	if _, err := s.playgroundProfile(ctx, userID, profileID); err != nil {
@@ -59,7 +59,6 @@ func (s *AutoRoutingService) UpdatePlaygroundAutoRouting(
 	updated := cloneAPIKeyAutoRoutingConfig(config)
 	updated.Mode = AutoRoutingModeAuto
 	updated.ProfileID = profileID
-	updated.CrossGroupRetry = false
 	updated.Revision = expectedRevision
 	if updated.SelectionMode == AutoRoutingSelectionInherit {
 		updated.GroupIDs = nil
@@ -180,7 +179,6 @@ func (s *AutoRoutingService) createPlaygroundAutoKey(
 	createdConfig.APIKeyID = candidate.ID
 	createdConfig.Mode = AutoRoutingModeAuto
 	createdConfig.ProfileID = profileID
-	createdConfig.CrossGroupRetry = false
 	createdConfig.Revision = candidate.RoutingRevision
 	if createdConfig.SelectionMode == AutoRoutingSelectionInherit {
 		createdConfig.GroupIDs = nil

@@ -105,21 +105,20 @@ func TestGetPlaygroundAutoRoutingHidesUnavailableProfile(t *testing.T) {
 	require.ErrorIs(t, err, ErrAutoRoutingProfileNotFound)
 }
 
-func TestUpdatePlaygroundAutoRoutingRejectsCrossGroupRetry(t *testing.T) {
+func TestValidatePlaygroundAutoRoutingAllowsCrossGroupRetry(t *testing.T) {
 	group := Group{ID: 8, Status: StatusActive, Platform: PlatformOpenAI}
 	service, repo := newPlaygroundAutoRoutingService(group, &User{ID: 12})
 
-	_, err := service.UpdatePlaygroundAutoRouting(
+	err := service.validateKeyRouting(
 		context.Background(),
 		12,
-		5,
 		&APIKeyAutoRoutingConfig{
+			ProfileID:       5,
 			SelectionMode:   AutoRoutingSelectionInherit,
 			CrossGroupRetry: true,
 		},
-		0,
 	)
 
-	require.ErrorIs(t, err, ErrAutoRoutingProfileInvalid)
+	require.NoError(t, err)
 	require.Nil(t, repo.binding)
 }

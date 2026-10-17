@@ -709,7 +709,7 @@ func (r *autoRoutingRepository) GetAutoRoutingExecution(ctx context.Context, api
 }
 
 func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Context, attempt *service.AutoRoutingAttempt) (bool, error) {
-	if attempt == nil || attempt.ExecutionID <= 0 || attempt.AttemptNo != 1 || attempt.GroupID <= 0 {
+	if attempt == nil || attempt.ExecutionID <= 0 || attempt.AttemptNo <= 0 || attempt.GroupID <= 0 {
 		return false, errors.New("invalid Auto routing dispatch attempt")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -744,7 +744,7 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 	if !selectedGroupID.Valid || selectedGroupID.Int64 != attempt.GroupID {
 		return false, errors.New("dispatch group does not match persisted Auto routing selection")
 	}
-	if status != service.AutoRouteExecutionPrepared || currentAttempt != 0 {
+	if status != service.AutoRouteExecutionPrepared || currentAttempt+1 != attempt.AttemptNo {
 		return false, nil
 	}
 
@@ -752,9 +752,9 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 	err = tx.QueryRowContext(ctx, `
 		SELECT group_id
 		FROM auto_route_attempts
-		WHERE execution_id = $1 AND attempt_no = 1
+		WHERE execution_id = $1 AND attempt_no = $2
 		FOR UPDATE
-	`, attempt.ExecutionID).Scan(&existingGroupID)
+	`, attempt.ExecutionID, attempt.AttemptNo).Scan(&existingGroupID)
 	if err == nil {
 		if existingGroupID != attempt.GroupID {
 			return false, errors.New("auto routing attempt group conflicts with existing attempt")
@@ -769,9 +769,9 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 		INSERT INTO auto_route_attempts (
 			execution_id, attempt_no, group_id, status, account_id, platform,
 			billing_snapshot_ref, upstream_request_id, upstream_task_id, dispatched_at
-		) VALUES ($1, 1, $2, 'dispatching', $3, $4, $5, $6, $7, NOW())
+		) VALUES ($1, $2, $3, 'dispatching', $4, $5, $6, $7, $8, NOW())
 		RETURNING id, status, dispatched_at, created_at, updated_at
-	`, attempt.ExecutionID, attempt.GroupID, attempt.AccountID, attempt.Platform, attempt.BillingSnapshotRef, attempt.UpstreamRequestID, attempt.UpstreamTaskID).
+	`, attempt.ExecutionID, attempt.AttemptNo, attempt.GroupID, attempt.AccountID, attempt.Platform, attempt.BillingSnapshotRef, attempt.UpstreamRequestID, attempt.UpstreamTaskID).
 		Scan(&attempt.ID, &attempt.Status, &attempt.DispatchedAt, &attempt.CreatedAt, &attempt.UpdatedAt)
 	if err != nil {
 		return false, fmt.Errorf("create Auto routing attempt: %w", err)
@@ -779,11 +779,11 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 	result, err := tx.ExecContext(ctx, `
 		UPDATE auto_route_executions
 		SET status = 'dispatching',
-		    current_attempt = 1,
-		    actual_group_id = $2,
+		    current_attempt = $2,
+		    actual_group_id = $3,
 		    updated_at = NOW()
-		WHERE id = $1 AND status = 'prepared' AND current_attempt = 0
-	`, attempt.ExecutionID, attempt.GroupID)
+		WHERE id = $1 AND status = 'prepared' AND current_attempt = $4
+	`, attempt.ExecutionID, attempt.AttemptNo, attempt.GroupID, attempt.AttemptNo-1)
 	if err != nil {
 		return false, fmt.Errorf("claim Auto routing execution dispatch: %w", err)
 	}
@@ -822,7 +822,7 @@ func (r *autoRoutingRepository) finishAttempt(
 	resultReference string,
 	evidenceCode string,
 ) (bool, error) {
-	if executionID <= 0 || attemptNo != 1 {
+	if executionID <= 0 || attemptNo <= 0 {
 		return false, errors.New("invalid Auto routing attempt identity")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -862,6 +862,122 @@ func (r *autoRoutingRepository) finishAttempt(
 	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit Auto routing attempt result: %w", err)
+	}
+	return true, nil
+}
+
+func (r *autoRoutingRepository) PrepareNextAutoRoutingAttempt(
+	ctx context.Context,
+	executionID, attemptNo, nextGroupID int64,
+) (bool, error) {
+	if executionID <= 0 || attemptNo <= 0 || nextGroupID <= 0 {
+		return false, errors.New("invalid Auto routing next attempt identity")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var status string
+	var currentAttempt int
+	var candidates []byte
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status, current_attempt, candidate_group_ids
+		FROM auto_route_executions
+		WHERE id = $1
+		FOR UPDATE
+	`, executionID).Scan(&status, &currentAttempt, &candidates); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("lock Auto routing execution for next attempt: %w", err)
+	}
+	if status != service.AutoRouteExecutionDispatching || currentAttempt != int(attemptNo) {
+		return false, nil
+	}
+	var candidateIDs []int64
+	if err := json.Unmarshal(candidates, &candidateIDs); err != nil {
+		return false, fmt.Errorf("decode Auto routing candidate snapshot: %w", err)
+	}
+	if !containsInt64(candidateIDs, nextGroupID) {
+		return false, errors.New("next group is not in Auto routing candidate snapshot")
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE auto_route_attempts
+		SET status = 'failed', completed_at = NOW(), updated_at = NOW()
+		WHERE execution_id = $1 AND attempt_no = $2 AND status = 'dispatching'
+	`, executionID, attemptNo)
+	if err != nil {
+		return false, fmt.Errorf("fail Auto routing attempt before next group: %w", err)
+	}
+	if err := requireOneRow(result); err != nil {
+		return false, err
+	}
+	result, err = tx.ExecContext(ctx, `
+		UPDATE auto_route_executions
+		SET status = 'prepared',
+		    actual_group_id = $2,
+		    result_reference = NULL,
+		    evidence_code = NULL,
+		    completed_at = NULL,
+		    updated_at = NOW()
+		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $3
+	`, executionID, nextGroupID, attemptNo)
+	if err != nil {
+		return false, fmt.Errorf("prepare Auto routing next group: %w", err)
+	}
+	if err := requireOneRow(result); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit Auto routing next group: %w", err)
+	}
+	return true, nil
+}
+
+func (r *autoRoutingRepository) FailAutoRoutingAttempt(
+	ctx context.Context,
+	executionID int64,
+	attemptNo int,
+	evidenceCode string,
+) (bool, error) {
+	if executionID <= 0 || attemptNo <= 0 || evidenceCode == "" {
+		return false, errors.New("invalid Auto routing failed attempt")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE auto_route_attempts
+		SET status = 'failed', result_reference = $3,
+		    completed_at = NOW(), updated_at = NOW()
+		WHERE execution_id = $1 AND attempt_no = $2 AND status = 'dispatching'
+	`, executionID, attemptNo, evidenceCode)
+	if err != nil {
+		return false, fmt.Errorf("fail Auto routing attempt: %w", err)
+	}
+	if err := requireOneRow(result); err != nil {
+		return false, nil
+	}
+	result, err = tx.ExecContext(ctx, `
+		UPDATE auto_route_executions
+		SET status = 'failed', evidence_code = $2,
+		    completed_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $3
+	`, executionID, evidenceCode, attemptNo)
+	if err != nil {
+		return false, fmt.Errorf("fail Auto routing execution: %w", err)
+	}
+	if err := requireOneRow(result); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit Auto routing failed attempt: %w", err)
 	}
 	return true, nil
 }

@@ -144,7 +144,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	}
 	var playgroundImageHold *service.BatchImageBalanceHoldCommand
 	playgroundImageHoldTransferred := false
-	autoImageDispatched := false
 	if strings.HasPrefix(c.Request.URL.Path, "/api/v1/playground/") && (subscription == nil || apiKey.Group == nil || !apiKey.Group.IsSubscriptionType()) {
 		playgroundImageHold, err = h.gatewayService.ReservePlaygroundImageBalance(c.Request.Context(), apiKey, parsed.Model, parsed.SizeTier, parsed.N, service.HashUsageRequestPayload(body))
 		if err != nil {
@@ -160,7 +159,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			return
 		}
 		defer func() {
-			if playgroundImageHold != nil && !playgroundImageHoldTransferred && !autoImageDispatched {
+			if playgroundImageHold != nil && !playgroundImageHoldTransferred {
 				releaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if releaseErr := h.gatewayService.ReleasePlaygroundImageBalance(releaseCtx, playgroundImageHold); releaseErr != nil {
@@ -195,6 +194,26 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	jsonKeepaliveStarted := false
 	defer func() { stopJSONKeepalive() }()
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
+	switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+		if playgroundImageHold != nil {
+			return false
+		}
+		nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+		if err != nil || !switched {
+			return false
+		}
+		apiKey = nextKey
+		subscription = nextSubscription
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
+		requestCtx = service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
+		failedAccountIDs = make(map[int64]struct{})
+		sameAccountRetryCount = make(map[int64]int)
+		switchCount = 0
+		profitVetoCount = 0
+		lastFailoverErr = nil
+		oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+		return true
+	}
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
@@ -228,6 +247,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				return
 			}
 			if lastFailoverErr != nil {
+				if switchAutoRoutingGroup(lastFailoverErr) {
+					continue
+				}
 				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
 			} else {
 				h.handleFailoverExhaustedSimple(c, 502, streamStarted)
@@ -290,7 +312,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
 				return nil, service.ErrAutoRoutingExecutionStateConflict
 			}
-			autoImageDispatched = apiKey.AutoRouting != nil
 			return h.gatewayService.ForwardImages(requestCtx, c, account, body, parsed, channelMapping.MappedModel)
 		}()
 		if err == nil && result != nil {
@@ -315,10 +336,6 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				)
 			} else {
 				var imageUpstreamErr *service.OpenAIImagesUpstreamError
-				if apiKey.AutoRouting != nil {
-					h.ensureForwardErrorResponse(c, streamStarted)
-					return
-				}
 				if errors.As(err, &imageUpstreamErr) {
 					retryableServerError := service.IsOpenAIImagesRetryableUpstreamError(imageUpstreamErr)
 					if retryableServerError {
@@ -381,6 +398,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
+						if switchAutoRoutingGroup(failoverErr) {
+							continue
+						}
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

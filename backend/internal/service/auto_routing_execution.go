@@ -18,6 +18,7 @@ const (
 	AutoRouteEvidenceProcessRecovery       = "process_recovery"
 	AutoRouteEvidenceClientCanceled        = "client_canceled_after_dispatch"
 	AutoRouteEvidenceResponseStarted       = "response_started"
+	AutoRouteEvidenceUpstreamFailure       = "upstream_failure"
 )
 
 var (
@@ -72,6 +73,11 @@ type autoRoutingExecutionRepository interface {
 	ClaimAutoRoutingAttemptDispatch(ctx context.Context, attempt *AutoRoutingAttempt) (bool, error)
 	CompleteAutoRoutingAttempt(ctx context.Context, executionID int64, attemptNo int, resultReference string) (bool, error)
 	MarkAutoRoutingAttemptUnknown(ctx context.Context, executionID int64, attemptNo int, evidenceCode string) (bool, error)
+}
+
+type autoRoutingAttemptTransitioner interface {
+	PrepareNextAutoRoutingAttempt(ctx context.Context, executionID, attemptNo, nextGroupID int64) (bool, error)
+	FailAutoRoutingAttempt(ctx context.Context, executionID int64, attemptNo int, evidenceCode string) (bool, error)
 }
 
 type AutoRoutingExecutionGuard struct {
@@ -186,7 +192,7 @@ func (g *AutoRoutingExecutionGuard) ClaimDispatch(ctx context.Context, execution
 
 	attempt := &AutoRoutingAttempt{
 		ExecutionID: execution.ID,
-		AttemptNo:   1,
+		AttemptNo:   execution.CurrentAttempt + 1,
 		GroupID:     groupID,
 		Status:      AutoRouteAttemptPrepared,
 	}
@@ -200,7 +206,7 @@ func (g *AutoRoutingExecutionGuard) ClaimDispatch(ctx context.Context, execution
 
 	dispatched := cloneAutoRoutingExecution(execution)
 	dispatched.Status = AutoRouteExecutionDispatching
-	dispatched.CurrentAttempt = 1
+	dispatched.CurrentAttempt = attempt.AttemptNo
 	dispatched.ActualGroupID = int64Pointer(groupID)
 	return dispatched, nil
 }
@@ -209,7 +215,7 @@ func (g *AutoRoutingExecutionGuard) MarkCompleted(ctx context.Context, execution
 	if g == nil || g.repo == nil {
 		return ErrAutoRoutingExecutionStoreUnavailable
 	}
-	if executionID <= 0 || attemptNo != 1 || !validAutoRouteResultReference(resultReference) {
+	if executionID <= 0 || attemptNo <= 0 || !validAutoRouteResultReference(resultReference) {
 		return ErrAutoRoutingExecutionInvalid
 	}
 	completed, err := g.repo.CompleteAutoRoutingAttempt(ctx, executionID, attemptNo, strings.TrimSpace(resultReference))
@@ -226,7 +232,7 @@ func (g *AutoRoutingExecutionGuard) MarkUnknown(ctx context.Context, executionID
 	if g == nil || g.repo == nil {
 		return ErrAutoRoutingExecutionStoreUnavailable
 	}
-	if executionID <= 0 || attemptNo != 1 || !validAutoRouteEvidenceCode(evidenceCode) {
+	if executionID <= 0 || attemptNo <= 0 || !validAutoRouteEvidenceCode(evidenceCode) {
 		return ErrAutoRoutingExecutionInvalid
 	}
 	unknown, err := g.repo.MarkAutoRoutingAttemptUnknown(ctx, executionID, attemptNo, evidenceCode)
@@ -234,6 +240,42 @@ func (g *AutoRoutingExecutionGuard) MarkUnknown(ctx context.Context, executionID
 		return ErrAutoRoutingExecutionStoreUnavailable.WithCause(err)
 	}
 	if !unknown {
+		return ErrAutoRoutingExecutionStateConflict
+	}
+	return nil
+}
+
+func (g *AutoRoutingExecutionGuard) PrepareNextAttempt(ctx context.Context, executionID int64, attemptNo int, nextGroupID int64) error {
+	if g == nil || g.repo == nil || executionID <= 0 || attemptNo <= 0 || nextGroupID <= 0 {
+		return ErrAutoRoutingExecutionInvalid
+	}
+	transitioner, ok := g.repo.(autoRoutingAttemptTransitioner)
+	if !ok {
+		return ErrAutoRoutingExecutionStoreUnavailable
+	}
+	prepared, err := transitioner.PrepareNextAutoRoutingAttempt(ctx, executionID, int64(attemptNo), nextGroupID)
+	if err != nil {
+		return ErrAutoRoutingExecutionStoreUnavailable.WithCause(err)
+	}
+	if !prepared {
+		return ErrAutoRoutingExecutionStateConflict
+	}
+	return nil
+}
+
+func (g *AutoRoutingExecutionGuard) FailAttempt(ctx context.Context, executionID int64, attemptNo int, evidenceCode string) error {
+	if g == nil || g.repo == nil || executionID <= 0 || attemptNo <= 0 || !validAutoRouteEvidenceCode(evidenceCode) {
+		return ErrAutoRoutingExecutionInvalid
+	}
+	transitioner, ok := g.repo.(autoRoutingAttemptTransitioner)
+	if !ok {
+		return ErrAutoRoutingExecutionStoreUnavailable
+	}
+	failed, err := transitioner.FailAutoRoutingAttempt(ctx, executionID, attemptNo, evidenceCode)
+	if err != nil {
+		return ErrAutoRoutingExecutionStoreUnavailable.WithCause(err)
+	}
+	if !failed {
 		return ErrAutoRoutingExecutionStateConflict
 	}
 	return nil
@@ -252,11 +294,11 @@ func BindAutoRoutingExecution(key *APIKey, execution *AutoRoutingExecution) (*AP
 		return nil, ErrAutoRoutingExecutionInvalid
 	}
 	if execution.Status == AutoRouteExecutionDispatching {
-		if execution.CurrentAttempt != 1 || execution.ActualGroupID == nil || *execution.ActualGroupID != *key.GroupID {
+		if execution.CurrentAttempt <= 0 || execution.ActualGroupID == nil || *execution.ActualGroupID != *key.GroupID {
 			return nil, ErrAutoRoutingExecutionInvalid
 		}
 	} else if execution.Status != AutoRouteExecutionPrepared ||
-		execution.CurrentAttempt != 0 ||
+		execution.CurrentAttempt < 0 ||
 		execution.ActualGroupID == nil ||
 		*execution.ActualGroupID != *key.GroupID {
 		return nil, ErrAutoRoutingExecutionInvalid
@@ -264,7 +306,7 @@ func BindAutoRoutingExecution(key *APIKey, execution *AutoRoutingExecution) (*AP
 
 	attemptNo := execution.CurrentAttempt
 	if execution.Status == AutoRouteExecutionPrepared {
-		attemptNo = 1
+		attemptNo++
 	}
 	bound := *key
 	bound.AutoRouting = &AutoRoutingMetadata{
@@ -353,7 +395,7 @@ func validatePersistedAutoRoutingExecution(execution *AutoRoutingExecution) erro
 func validatePreparedAutoRoutingExecution(execution *AutoRoutingExecution) error {
 	if execution == nil || execution.ID <= 0 ||
 		execution.Status != AutoRouteExecutionPrepared ||
-		execution.CurrentAttempt != 0 ||
+		execution.CurrentAttempt < 0 ||
 		execution.ActualGroupID == nil {
 		return ErrAutoRoutingExecutionStateConflict
 	}
@@ -425,7 +467,8 @@ func validAutoRouteEvidenceCode(code string) bool {
 		AutoRouteEvidenceConnectionInterrupted,
 		AutoRouteEvidenceProcessRecovery,
 		AutoRouteEvidenceClientCanceled,
-		AutoRouteEvidenceResponseStarted:
+		AutoRouteEvidenceResponseStarted,
+		AutoRouteEvidenceUpstreamFailure:
 		return true
 	default:
 		return false

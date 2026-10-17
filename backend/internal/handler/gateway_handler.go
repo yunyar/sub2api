@@ -338,6 +338,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 	if platform == service.PlatformGemini {
 		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
+		switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+			nextKey, _, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+			if err != nil || !switched {
+				return false
+			}
+			apiKey = nextKey
+			platform = service.PlatformGemini
+			fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+			return true
+		}
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 		// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
@@ -383,6 +393,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					return
 				default: // FailoverExhausted
 					if fs.LastFailoverErr != nil {
+						if switchAutoRoutingGroup(fs.LastFailoverErr) {
+							continue
+						}
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, service.PlatformGemini, streamStarted)
 					} else {
 						h.handleFailoverExhaustedSimple(c, 502, streamStarted)
@@ -537,6 +550,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					case FailoverContinue:
 						continue
 					case FailoverExhausted:
+						if switchAutoRoutingGroup(fs.LastFailoverErr) {
+							continue
+						}
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, service.PlatformGemini, streamStarted)
 						return
 					case FailoverCanceled:
@@ -647,6 +663,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		fallbackGroupID = apiKey.Group.FallbackGroupIDOnInvalidRequest
 	}
 	fallbackUsed := false
+	retryWithAutoGroup := false
 
 	// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 	// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
@@ -671,10 +688,43 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			h.gatewayService.ReleaseAccountSession(context.Background(), acc, sessionKey)
 		}
 	}()
+	switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+		nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+		if err != nil || !switched {
+			return false
+		}
+		currentAPIKey = nextKey
+		currentSubscription = nextSubscription
+		if currentAPIKey.Group != nil {
+			fallbackGroupID = currentAPIKey.Group.FallbackGroupIDOnInvalidRequest
+		} else {
+			fallbackGroupID = nil
+		}
+		fallbackUsed = false
+		if forcePlatform, ok := middleware2.GetForcePlatformFromContext(c); ok {
+			platform = forcePlatform
+		} else if resolvedPlatform, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
+			platform = resolvedPlatform
+		} else if currentAPIKey.Group != nil {
+			platform = currentAPIKey.Group.Platform
+		}
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), currentAPIKey.GroupID, reqModel)
+		parsedReq.GroupID = currentAPIKey.GroupID
+		sessionKey = sessionHash
+		if platform == service.PlatformGemini && sessionKey != "" {
+			sessionKey = "gemini:" + sessionKey
+		}
+		sessionBoundAccountID = 0
+		for accountID := range sessionSlotAccounts {
+			delete(sessionSlotAccounts, accountID)
+		}
+		return true
+	}
 
 	for {
 		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
 		retryWithFallback := false
+		retryWithAutoGroup = false
 
 		for {
 			attemptParsedReq, err := parsedReq.CloneForBody(body)
@@ -727,11 +777,19 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					return
 				default: // FailoverExhausted
 					if fs.LastFailoverErr != nil {
-						h.handleFailoverExhausted(c, fs.LastFailoverErr, platform, streamStarted)
+						if switchAutoRoutingGroup(fs.LastFailoverErr) {
+							retryWithAutoGroup = true
+						} else {
+							h.handleFailoverExhausted(c, fs.LastFailoverErr, platform, streamStarted)
+							return
+						}
 					} else {
 						h.handleFailoverExhaustedSimple(c, 502, streamStarted)
+						return
 					}
-					return
+				}
+				if retryWithAutoGroup {
+					break
 				}
 			}
 			account := selection.Account
@@ -1092,11 +1150,18 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						delete(sessionSlotAccounts, account.ID)
 						continue
 					case FailoverExhausted:
+						if switchAutoRoutingGroup(failoverErr) {
+							retryWithAutoGroup = true
+							break
+						}
 						h.handleFailoverExhausted(c, fs.LastFailoverErr, account.Platform, streamStarted)
 						return
 					case FailoverCanceled:
 						failoverClientGone(c)
 						return
+					}
+					if retryWithAutoGroup {
+						break
 					}
 				}
 				upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
@@ -1159,7 +1224,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			upstreamServedSession = true
 			return
 		}
-		if !retryWithFallback {
+		if !retryWithFallback && !retryWithAutoGroup {
 			return
 		}
 	}

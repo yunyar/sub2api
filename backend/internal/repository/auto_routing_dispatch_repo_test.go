@@ -24,9 +24,12 @@ func TestAutoRoutingReleaseUnsentClaimIsAtomic(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = database.Close() })
 			mock.ExpectBegin()
-			mock.ExpectExec("UPDATE auto_route_executions").WithArgs(int64(7), int64(3)).WillReturnResult(sqlmock.NewResult(0, test.executionRows))
+			mock.ExpectQuery("SELECT current_attempt").
+				WithArgs(int64(7), int64(3)).
+				WillReturnRows(sqlmock.NewRows([]string{"current_attempt"}).AddRow(1))
+			mock.ExpectExec("UPDATE auto_route_executions").WithArgs(int64(7), int64(3), int64(1)).WillReturnResult(sqlmock.NewResult(0, test.executionRows))
 			if test.executionRows == 1 {
-				mock.ExpectExec("DELETE FROM auto_route_attempts").WithArgs(int64(7), int64(3)).WillReturnResult(sqlmock.NewResult(0, test.attemptRows))
+				mock.ExpectExec("DELETE FROM auto_route_attempts").WithArgs(int64(7), int64(3), int64(1)).WillReturnResult(sqlmock.NewResult(0, test.attemptRows))
 			}
 			success := test.executionRows == 1 && test.attemptRows == 1
 			if success {

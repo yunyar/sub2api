@@ -26,7 +26,9 @@ func (s *AutoRoutingService) ReleaseDispatchClaim(ctx context.Context, preparati
 		return ErrAutoRoutingUnavailable.WithCause(err)
 	}
 	preparation.Execution.Status = AutoRouteExecutionPrepared
-	preparation.Execution.CurrentAttempt = 0
+	if preparation.Execution.CurrentAttempt > 0 {
+		preparation.Execution.CurrentAttempt--
+	}
 	return nil
 }
 

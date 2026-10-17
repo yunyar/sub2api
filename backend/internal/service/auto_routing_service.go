@@ -226,7 +226,6 @@ func (s *AutoRoutingService) AvailableProfiles(ctx context.Context, userID int64
 			continue
 		}
 		profile.Members = members
-		profile.CrossGroupRetryAllowed = false
 		available = append(available, cloneAutoRoutingProfile(&profile))
 	}
 	return available, nil
@@ -377,14 +376,11 @@ func (s *AutoRoutingService) PrepareRequestKey(
 	if config == nil {
 		return nil, ErrAutoRoutingRequestUnsupported
 	}
-	if config.CrossGroupRetry {
-		return nil, ErrAutoRoutingRequestUnsupported
-	}
 	profile, err := s.getProfile(ctx, config.ProfileID)
 	if err != nil {
 		return nil, err
 	}
-	if profile.Status != AutoRoutingProfileStatusActive || profile.CrossGroupRetryAllowed {
+	if profile.Status != AutoRoutingProfileStatusActive {
 		return nil, ErrAutoRoutingRequestUnsupported
 	}
 	candidates, user, err := s.resolveCandidates(ctx, authenticatedKey.UserID, profile, config)
@@ -495,9 +491,6 @@ func (s *AutoRoutingService) PrepareRequestKey(
 	if err != nil {
 		return nil, err
 	}
-	if bound.AutoRouting != nil {
-		bound.AutoRouting.AttemptNo = 1
-	}
 	if err := s.freezeAutoRoutingBilling(ctx, bound, selected.group, authenticatedKey.UserID); err != nil {
 		return nil, err
 	}
@@ -548,7 +541,7 @@ func (s *AutoRoutingService) MarkCompleted(
 		strings.TrimSpace(resultReference) == "" {
 		return ErrAutoRoutingExecutionInvalid
 	}
-	if err := s.executionGuard.MarkCompleted(ctx, preparation.Execution.ID, 1, resultReference); err != nil {
+	if err := s.executionGuard.MarkCompleted(ctx, preparation.Execution.ID, preparation.Execution.CurrentAttempt, resultReference); err != nil {
 		return err
 	}
 	preparation.Execution.Status = AutoRouteExecutionCompleted
@@ -572,7 +565,7 @@ func (s *AutoRoutingService) MarkUnknown(
 		preparation.Execution.Status != AutoRouteExecutionDispatching {
 		return ErrAutoRoutingExecutionInvalid
 	}
-	if err := s.executionGuard.MarkUnknown(ctx, preparation.Execution.ID, 1, evidenceCode); err != nil {
+	if err := s.executionGuard.MarkUnknown(ctx, preparation.Execution.ID, preparation.Execution.CurrentAttempt, evidenceCode); err != nil {
 		return err
 	}
 	preparation.Execution.Status = AutoRouteExecutionUnknown
@@ -591,7 +584,7 @@ func (s *AutoRoutingService) getAPIKeyRouting(ctx context.Context, keyID int64) 
 		return nil, nil
 	}
 	if config.APIKeyID != keyID || config.Mode != AutoRoutingModeAuto || config.ProfileID <= 0 ||
-		config.Revision <= 0 || config.CrossGroupRetry ||
+		config.Revision <= 0 ||
 		(config.SelectionMode != AutoRoutingSelectionInherit && config.SelectionMode != AutoRoutingSelectionCustom) ||
 		(config.SelectionMode == AutoRoutingSelectionInherit && len(config.GroupIDs) != 0) ||
 		(config.SelectionMode == AutoRoutingSelectionCustom && len(config.GroupIDs) == 0) {
@@ -689,8 +682,7 @@ func (s *AutoRoutingService) validateProfile(ctx context.Context, profile *AutoR
 	}
 	profile.Name = strings.TrimSpace(profile.Name)
 	if profile.Name == "" || len(profile.Name) > 100 ||
-		(profile.Status != "" && profile.Status != AutoRoutingProfileStatusActive && profile.Status != AutoRoutingProfileStatusDisabled) ||
-		profile.CrossGroupRetryAllowed {
+		(profile.Status != "" && profile.Status != AutoRoutingProfileStatusActive && profile.Status != AutoRoutingProfileStatusDisabled) {
 		return ErrAutoRoutingProfileInvalid
 	}
 	if profile.MaxCandidates == 0 {
@@ -727,12 +719,11 @@ func (s *AutoRoutingService) validateProfile(ctx context.Context, profile *AutoR
 	if profile.Status == "" {
 		profile.Status = AutoRoutingProfileStatusActive
 	}
-	profile.CrossGroupRetryAllowed = false
 	return nil
 }
 
 func (s *AutoRoutingService) validateKeyRouting(ctx context.Context, userID int64, config *APIKeyAutoRoutingConfig) error {
-	if config == nil || config.ProfileID <= 0 || config.CrossGroupRetry ||
+	if config == nil || config.ProfileID <= 0 ||
 		(config.Mode != "" && config.Mode != AutoRoutingModeAuto) {
 		return ErrAutoRoutingProfileInvalid
 	}
@@ -740,7 +731,7 @@ func (s *AutoRoutingService) validateKeyRouting(ctx context.Context, userID int6
 	if err != nil {
 		return err
 	}
-	if profile.Status != AutoRoutingProfileStatusActive || profile.CrossGroupRetryAllowed {
+	if profile.Status != AutoRoutingProfileStatusActive {
 		return ErrAutoRoutingProfileInvalid
 	}
 	memberOrder := make(map[int64]int, len(profile.Members))

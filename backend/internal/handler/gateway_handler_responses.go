@@ -182,6 +182,18 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 3. Account selection + failover loop
 	fs := NewFailoverState(h.maxAccountSwitches, false)
+	switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+		nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+		if err != nil || !switched {
+			return false
+		}
+		apiKey = nextKey
+		subscription = nextSubscription
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+		requestCtx = c.Request.Context()
+		fs = NewFailoverState(h.maxAccountSwitches, false)
+		return true
+	}
 
 	for {
 		if failoverClientGone(c) {
@@ -215,6 +227,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				return
 			default:
 				if fs.LastFailoverErr != nil {
+					if switchAutoRoutingGroup(fs.LastFailoverErr) {
+						continue
+					}
 					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 				} else {
 					h.responsesErrorResponse(c, http.StatusBadGateway, "server_error", "All available accounts exhausted")
@@ -321,6 +336,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
+					if switchAutoRoutingGroup(fs.LastFailoverErr) {
+						continue
+					}
 					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 					return
 				case FailoverCanceled:

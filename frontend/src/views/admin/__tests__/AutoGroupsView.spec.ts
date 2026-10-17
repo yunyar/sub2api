@@ -113,6 +113,35 @@ describe('AutoGroupsView', () => {
     expect(mocks.showSuccess).toHaveBeenCalledWith('Auto profile created.')
   })
 
+  it('loads and saves an enabled cross-group retry setting', async () => {
+    const enabledProfile = { ...profile, cross_group_retry_allowed: true }
+    mocks.listProfiles.mockResolvedValue([enabledProfile])
+    mocks.getProfile.mockResolvedValue(enabledProfile)
+    mocks.updateProfile.mockResolvedValue({ ...enabledProfile, revision: 5 })
+
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[aria-label="Edit Primary Auto"]').trigger('click')
+    await flushPromises()
+
+    const retryInput = wrapper.get('[data-testid="auto-profile-cross-group-retry"]')
+    expect(retryInput.attributes('disabled')).toBeUndefined()
+    expect((retryInput.element as HTMLInputElement).checked).toBe(true)
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.updateProfile).toHaveBeenCalledWith(3, {
+      name: 'Primary Auto',
+      status: 'active',
+      max_candidates: 3,
+      allow_custom_order: true,
+      cross_group_retry_allowed: true,
+      group_ids: [11],
+      revision: 4
+    })
+  })
+
   it('preserves a draft after revision conflict and reloads the latest profile on request', async () => {
     const latest = { ...profile, name: 'Updated on server', revision: 5 }
     mocks.listProfiles.mockResolvedValue([profile])

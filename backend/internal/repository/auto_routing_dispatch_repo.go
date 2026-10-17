@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -12,10 +14,23 @@ func (r *autoRoutingRepository) ReleaseAutoRoutingDispatchClaim(ctx context.Cont
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE auto_route_executions
-		SET status = 'prepared', current_attempt = 0, updated_at = NOW()
+	var attemptNo int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT current_attempt
+		FROM auto_route_executions
 		WHERE id = $1 AND actual_group_id = $2 AND status = 'dispatching'
-		AND current_attempt = 1 AND settlement_status = 'pending'`, executionID, groupID)
+		AND settlement_status = 'pending'
+		FOR UPDATE
+	`, executionID, groupID).Scan(&attemptNo); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return service.ErrAutoRoutingExecutionStateConflict
+		}
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE auto_route_executions
+		SET status = 'prepared', current_attempt = $3 - 1, updated_at = NOW()
+		WHERE id = $1 AND actual_group_id = $2 AND status = 'dispatching'
+		AND current_attempt = $3 AND settlement_status = 'pending'`, executionID, groupID, attemptNo)
 	if err != nil {
 		return err
 	}
@@ -23,7 +38,7 @@ func (r *autoRoutingRepository) ReleaseAutoRoutingDispatchClaim(ctx context.Cont
 		return service.ErrAutoRoutingExecutionStateConflict
 	}
 	result, err = tx.ExecContext(ctx, `DELETE FROM auto_route_attempts
-		WHERE execution_id = $1 AND group_id = $2 AND attempt_no = 1 AND status = 'dispatching'`, executionID, groupID)
+		WHERE execution_id = $1 AND group_id = $2 AND attempt_no = $3 AND status = 'dispatching'`, executionID, groupID, attemptNo)
 	if err != nil {
 		return err
 	}

@@ -9,8 +9,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func retryAutoRoutingAfterConfirmedFailure(
+	c *gin.Context,
+	apiKeys *service.APIKeyService,
+	failoverErr *service.UpstreamFailoverError,
+) (*service.APIKey, *service.UserSubscription, bool, error) {
+	if c == nil || apiKeys == nil {
+		return nil, nil, false, nil
+	}
+	if failoverErr == nil || !failoverErr.ShouldRetryNextAccount() ||
+		(failoverErr.StatusCode < http.StatusBadRequest && !failoverErr.IsCredentialFailure()) ||
+		(c.Writer != nil && c.Writer.Size() > 0) {
+		return nil, nil, false, nil
+	}
+	next, switched, err := middleware.RetryAutoRoutingGroup(
+		c,
+		apiKeys.AutoRoutingService(),
+		service.AutoRouteEvidenceUpstreamFailure,
+	)
+	if err != nil || !switched || next == nil {
+		return nil, nil, false, err
+	}
+	subscription, _ := middleware.GetSubscriptionFromContext(c)
+	return next, subscription, true, nil
+}
+
 func beginAutoRoutingDispatch(c *gin.Context, key *service.APIKey, apiKeys *service.APIKeyService, account *service.Account) bool {
 	if key == nil || key.AutoRouting == nil {
+		return true
+	}
+	// A single Auto request may try several accounts after an upstream failure.
+	// The execution guard intentionally allows only one durable claim, so later
+	// failover attempts reuse the request-local claim.
+	if middleware.AutoRoutingDispatchStarted(c) {
 		return true
 	}
 	routing := apiKeys.AutoRoutingService()

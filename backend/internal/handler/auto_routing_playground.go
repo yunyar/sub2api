@@ -38,7 +38,7 @@ func playgroundAutoRoutingResponseFrom(config *service.APIKeyAutoRoutingConfig) 
 		AutoProfileID:     config.ProfileID,
 		AutoSelectionMode: config.SelectionMode,
 		GroupIDs:          groupIDs,
-		CrossGroupRetry:   false,
+		CrossGroupRetry:   config.CrossGroupRetry,
 		RoutingRevision:   config.Revision,
 	}
 }
@@ -88,8 +88,7 @@ func (h *PlaygroundAutoRoutingHandler) Update(c *gin.Context) {
 		return
 	}
 	var request playgroundAutoRoutingUpdateRequest
-	if c.ShouldBindJSON(&request) != nil || request.RoutingRevision == nil ||
-		(request.CrossGroupRetry != nil && *request.CrossGroupRetry) {
+	if c.ShouldBindJSON(&request) != nil || request.RoutingRevision == nil {
 		response.BadRequest(c, "Valid Auto routing configuration and routing_revision are required")
 		return
 	}
@@ -98,6 +97,9 @@ func (h *PlaygroundAutoRoutingHandler) Update(c *gin.Context) {
 		ProfileID:     profileID,
 		SelectionMode: request.AutoSelectionMode,
 		GroupIDs:      append([]int64(nil), request.GroupIDs...),
+	}
+	if request.CrossGroupRetry != nil {
+		config.CrossGroupRetry = *request.CrossGroupRetry
 	}
 	updated, err := h.routing.UpdatePlaygroundAutoRouting(
 		c.Request.Context(), subject.UserID, profileID, config, *request.RoutingRevision,

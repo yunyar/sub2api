@@ -185,6 +185,26 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	if groupPlatform == service.PlatformGemini {
 		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
 	}
+	switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+		nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+		if err != nil || !switched {
+			return false
+		}
+		apiKey = nextKey
+		subscription = nextSubscription
+		groupPlatform = effectiveAPIKeyPlatform(c, apiKey)
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+		selectionSessionHash = sessionHash
+		if groupPlatform == service.PlatformGemini && selectionSessionHash != "" {
+			selectionSessionHash = "gemini:" + selectionSessionHash
+		}
+		if groupPlatform == service.PlatformGemini {
+			fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
+		} else {
+			fs = NewFailoverState(h.maxAccountSwitches, false)
+		}
+		return true
+	}
 
 	for {
 		if failoverClientGone(c) {
@@ -218,6 +238,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			default:
 				if fs.LastFailoverErr != nil {
+					if switchAutoRoutingGroup(fs.LastFailoverErr) {
+						continue
+					}
 					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 				} else {
 					h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "server_error", "All available accounts exhausted")
@@ -338,6 +361,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
+					if switchAutoRoutingGroup(fs.LastFailoverErr) {
+						continue
+					}
 					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
 					return
 				case FailoverCanceled:

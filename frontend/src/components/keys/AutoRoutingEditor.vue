@@ -194,10 +194,21 @@
             </p>
           </div>
 
-          <label class="flex min-h-10 items-center gap-3 border-t border-gray-200 pt-3 text-sm text-gray-500 dark:border-dark-600 dark:text-gray-400">
-            <input type="checkbox" class="checkbox" disabled />
-            <span>{{ copy.crossGroupRetryOff }}</span>
-          </label>
+          <div class="border-t border-gray-200 pt-3 dark:border-dark-600">
+            <label class="flex min-h-10 items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+              <input
+                data-testid="key-cross-group-retry"
+                v-model="config.cross_group_retry"
+                type="checkbox"
+                class="checkbox"
+                :disabled="saving || !crossGroupRetryAllowed"
+              />
+              <span>{{ copy.crossGroupRetry }}</span>
+            </label>
+            <p class="ml-7 text-xs text-gray-500 dark:text-gray-400">
+              {{ crossGroupRetryAllowed ? copy.crossGroupRetryHint : copy.crossGroupRetryUnavailable }}
+            </p>
+          </div>
         </template>
       </div>
 
@@ -222,6 +233,7 @@
         <button
           type="button"
           class="btn btn-primary"
+          data-testid="key-auto-routing-save"
           :disabled="!canSave"
           @click="save"
         >
@@ -301,7 +313,9 @@ const copy = computed(() => (locale?.value ?? 'en').toLowerCase().startsWith('zh
       moveUp: '上移',
       moveDown: '下移',
       customCount: '已选数量',
-      crossGroupRetryOff: '跨分组重试：关闭',
+      crossGroupRetry: '失败后跨分组重试',
+      crossGroupRetryHint: '请求确认未执行时，按候选分组顺序尝试下一个分组。',
+      crossGroupRetryUnavailable: '管理员未允许此配置跨分组重试。',
       loadFailed: '无法加载路由配置',
       saveFailed: '无法保存路由配置',
       saved: '路由配置已保存',
@@ -329,7 +343,9 @@ const copy = computed(() => (locale?.value ?? 'en').toLowerCase().startsWith('zh
       moveUp: 'Move up',
       moveDown: 'Move down',
       customCount: 'Selected',
-      crossGroupRetryOff: 'Cross-group retry: off',
+      crossGroupRetry: 'Retry across groups after failure',
+      crossGroupRetryHint: 'When a request is confirmed not to have executed, try the next candidate group in order.',
+      crossGroupRetryUnavailable: 'The administrator has not allowed cross-group retry for this profile.',
       loadFailed: 'Could not load routing configuration',
       saveFailed: 'Could not save routing configuration',
       saved: 'Routing configuration saved',
@@ -341,6 +357,10 @@ const copy = computed(() => (locale?.value ?? 'en').toLowerCase().startsWith('zh
 
 const selectedProfile = computed(() =>
   availableProfiles.value.find((profile) => profile.id === profileId.value) ?? null
+)
+
+const crossGroupRetryAllowed = computed(() =>
+  mode.value === 'auto' && selectedProfile.value?.cross_group_retry_allowed === true
 )
 
 const eligibleGroups = computed(() => {
@@ -385,6 +405,7 @@ const load = async () => {
     profileId.value = routingConfig.auto_profile_id ?? 0
     selectionMode.value = routingConfig.auto_selection_mode ?? 'inherit'
     const profile = availableProfiles.value.find((item) => item.id === profileId.value)
+    config.cross_group_retry = Boolean(routingConfig.cross_group_retry && profile?.cross_group_retry_allowed)
     const availableIds = new Set(
       (profile?.group_ids ?? []).filter((id) =>
         props.groups.some((group) => group.id === id && group.platform.toLowerCase() !== 'composite')
@@ -403,6 +424,7 @@ const load = async () => {
 const onProfileChange = () => {
   selectionMode.value = 'inherit'
   customGroupIds.value = []
+  config.cross_group_retry = false
   clearFormError()
 }
 
@@ -449,7 +471,7 @@ const save = async () => {
       group_ids: mode.value === 'auto' && selectionMode.value === 'custom'
         ? [...customGroupIds.value]
         : [],
-      cross_group_retry: false,
+      cross_group_retry: crossGroupRetryAllowed.value && config.cross_group_retry,
       routing_revision: config.routing_revision,
       group_id: mode.value === 'fixed' ? fixedGroupId.value : null
     } satisfies Parameters<typeof keysAPI.updateAutoRouting>[1]

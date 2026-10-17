@@ -190,8 +190,8 @@
               <span class="block text-xs text-gray-500 dark:text-gray-400">{{ copy.crossGroupRetryHint }}</span>
             </span>
             <input
+              data-testid="auto-profile-cross-group-retry"
               v-model="form.cross_group_retry_allowed"
-              disabled
               type="checkbox"
               class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500 dark:bg-dark-700"
             />
@@ -383,7 +383,7 @@ const copy = computed(() => (locale.value ?? 'en').toLowerCase().startsWith('zh'
       allowCustomOrder: '允许用户自定义顺序',
       allowCustomOrderHint: '用户可以从此配置中选择分组并调整顺序。',
       allowCrossGroupRetry: '允许跨组重试',
-      crossGroupRetryHint: '此选项暂不可用；系统仅会在派发上游请求前选择其他候选组。',
+      crossGroupRetryHint: '请求确认未执行时，按候选分组顺序自动尝试下一个分组。',
       allowedGroupsOrder: '允许的分组及默认顺序',
       groupEligibilityHint: '不包含组合分组。停用分组仍会显示，便于检查。',
       selectedGroups: (count: number) => `已选择 ${count} 个分组`,
@@ -437,7 +437,7 @@ const copy = computed(() => (locale.value ?? 'en').toLowerCase().startsWith('zh'
       allowCustomOrder: 'Allow custom user ordering',
       allowCustomOrderHint: 'Users can choose and order groups from this profile.',
       allowCrossGroupRetry: 'Allow cross-group retry',
-      crossGroupRetryHint: 'Unavailable in this version; automatic fallback is limited to pre-dispatch selection.',
+      crossGroupRetryHint: 'When a request is confirmed not to have executed, try the next candidate group in order.',
       allowedGroupsOrder: 'Allowed groups and default order',
       groupEligibilityHint: 'Composite groups are excluded. Inactive groups remain visible for review.',
       selectedGroups: (count: number) => `${count} selected`,

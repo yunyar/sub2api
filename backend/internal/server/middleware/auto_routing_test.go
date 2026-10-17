@@ -120,6 +120,23 @@ func TestDispatchAutoRoutingRejectsRepeatedDispatch(t *testing.T) {
 	}
 }
 
+func TestAutoRoutingDispatchStartedTracksActiveRequestClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	if AutoRoutingDispatchStarted(ctx) {
+		t.Fatal("AutoRoutingDispatchStarted() = true without request state")
+	}
+	ctx.Set(autoRoutingStateContextKey, &autoRoutingRequestState{dispatched: true})
+	if !AutoRoutingDispatchStarted(ctx) {
+		t.Fatal("AutoRoutingDispatchStarted() = false for active dispatch")
+	}
+	state := getAutoRoutingRequestState(ctx)
+	state.finished = true
+	if AutoRoutingDispatchStarted(ctx) {
+		t.Fatal("AutoRoutingDispatchStarted() = true after request finished")
+	}
+}
+
 func TestWriteAutoRoutingRequestErrorDoesNotAppendAfterResponseCommitted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {

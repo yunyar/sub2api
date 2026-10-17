@@ -173,6 +173,26 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	// 分组利润控制：chat completions 文本入口请求级装门并固定 pricingAt。
 	ccPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(ccPricingCtx)
+	switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+		nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+		if err != nil || !switched {
+			return false
+		}
+		apiKey = nextKey
+		subscription = nextSubscription
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+		forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+		requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+		ccPricingCtx, _ = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+		c.Request = c.Request.WithContext(ccPricingCtx)
+		failedAccountIDs = make(map[int64]struct{})
+		sameAccountRetryCount = make(map[int64]int)
+		switchCount = 0
+		profitVetoCount = 0
+		lastFailoverErr = nil
+		oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+		return true
+	}
 
 	for {
 		if failoverClientGone(c) {
@@ -212,6 +232,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			} else {
 				if lastFailoverErr != nil {
+					if switchAutoRoutingGroup(lastFailoverErr) {
+						continue
+					}
 					h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
 				} else {
 					h.handleStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
@@ -381,6 +404,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
+						if switchAutoRoutingGroup(failoverErr) {
+							continue
+						}
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
