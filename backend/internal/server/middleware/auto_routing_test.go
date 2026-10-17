@@ -120,20 +120,75 @@ func TestDispatchAutoRoutingRejectsRepeatedDispatch(t *testing.T) {
 	}
 }
 
-func TestAutoRoutingDispatchStartedTracksActiveRequestClaim(t *testing.T) {
+func TestAutoRoutingDispatchStartedRequiresAdmittedMatchingExecution(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	if AutoRoutingDispatchStarted(ctx) {
-		t.Fatal("AutoRoutingDispatchStarted() = true without request state")
-	}
-	ctx.Set(autoRoutingStateContextKey, &autoRoutingRequestState{dispatched: true})
-	if !AutoRoutingDispatchStarted(ctx) {
-		t.Fatal("AutoRoutingDispatchStarted() = false for active dispatch")
-	}
-	state := getAutoRoutingRequestState(ctx)
-	state.finished = true
-	if AutoRoutingDispatchStarted(ctx) {
-		t.Fatal("AutoRoutingDispatchStarted() = true after request finished")
+	for _, test := range []struct {
+		name   string
+		change func(*gin.Context, *autoRoutingRequestState, *service.APIKey)
+		want   bool
+	}{
+		{name: "account failover reuses admitted claim", want: true},
+		{name: "missing preparation", change: func(_ *gin.Context, state *autoRoutingRequestState, _ *service.APIKey) { state.preparation = nil }},
+		{name: "unclaimed", change: func(_ *gin.Context, state *autoRoutingRequestState, _ *service.APIKey) { state.dispatched = false }},
+		{name: "admission failed", change: func(_ *gin.Context, state *autoRoutingRequestState, _ *service.APIKey) { state.upstreamStarted = false }},
+		{name: "finished", change: func(_ *gin.Context, state *autoRoutingRequestState, _ *service.APIKey) { state.finished = true }},
+		{name: "result already received", change: func(_ *gin.Context, state *autoRoutingRequestState, _ *service.APIKey) {
+			state.resultReference = "response-1"
+		}},
+		{name: "different key", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) { key.ID++ }},
+		{name: "different user", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) { key.User.ID++ }},
+		{name: "different group", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) {
+			groupID := int64(20)
+			key.GroupID = &groupID
+		}},
+		{name: "different execution", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) { key.AutoRouting.ExecutionID++ }},
+		{name: "different revision", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) {
+			key.AutoRouting.RoutingRevision++
+		}},
+		{name: "different profile", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) { key.AutoRouting.ProfileID++ }},
+		{name: "different request", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) {
+			key.AutoRouting.RequestID = "other"
+		}},
+		{name: "different attempt", change: func(_ *gin.Context, _ *autoRoutingRequestState, key *service.APIKey) { key.AutoRouting.AttemptNo++ }},
+		{name: "terminal execution", change: func(_ *gin.Context, state *autoRoutingRequestState, _ *service.APIKey) {
+			state.preparation.Execution.Status = service.AutoRouteExecutionCompleted
+		}},
+		{name: "lost request binding", change: func(ctx *gin.Context, _ *autoRoutingRequestState, _ *service.APIKey) {
+			ctx.Request = ctx.Request.WithContext(context.Background())
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			groupID := int64(2)
+			key := &service.APIKey{
+				ID: 9, UserID: 7, User: &service.User{ID: 7},
+				RoutingMode: service.AutoRoutingModeAuto, GroupID: &groupID,
+				Group: &service.Group{ID: 2},
+				AutoRouting: &service.AutoRoutingMetadata{
+					ProfileID: 3, RoutingRevision: 4, ExecutionID: 5, AttemptNo: 1, RequestID: "client:request",
+				},
+			}
+			state := &autoRoutingRequestState{
+				dispatched: true, upstreamStarted: true,
+				authenticatedKey: &service.APIKey{ID: 9, User: &service.User{ID: 7}},
+				preparation: &service.AutoRoutingPreparation{Execution: &service.AutoRoutingExecution{
+					ID: 5, APIKeyID: 9, ProfileID: 3, RoutingRevision: 4,
+					ActualGroupID: &groupID, CurrentAttempt: 1, RequestID: "client:request",
+					Status: service.AutoRouteExecutionDispatching,
+				}},
+			}
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+			ctx.Request = ctx.Request.WithContext(context.WithValue(ctx.Request.Context(), effectiveGroupContextKey{}, EffectiveGroupContext{
+				APIKeyID: 9, GroupID: 2, ProfileID: 3, RoutingRevision: 4, ExecutionID: 5, AttemptNo: 1, RequestID: "client:request",
+			}))
+			ctx.Set(autoRoutingStateContextKey, state)
+			if test.change != nil {
+				test.change(ctx, state, key)
+			}
+			if got := AutoRoutingDispatchStarted(ctx, key); got != test.want {
+				t.Fatalf("AutoRoutingDispatchStarted() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

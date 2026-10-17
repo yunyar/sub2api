@@ -52,7 +52,7 @@ func (r *autoRoutingRepository) RecordAutoRoutingDispatchSnapshot(ctx context.Co
 	result, err := r.db.ExecContext(ctx, `UPDATE auto_route_attempts
 		SET account_id = $1, platform = $2, billing_snapshot = $3::jsonb, updated_at = NOW()
 		WHERE execution_id = $4 AND attempt_no = $5 AND group_id = $6
-		AND status = 'dispatching' AND account_id IS NULL`,
+		AND status = 'dispatching'`,
 		accountID, platform, string(snapshot), executionID, attemptNo, groupID)
 	if err != nil {
 		return err

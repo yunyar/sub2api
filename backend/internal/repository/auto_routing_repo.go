@@ -721,13 +721,14 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 	var status string
 	var currentAttempt int
 	var selectedGroupID sql.NullInt64
+	var settlementStatus string
 	var candidates []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT status, current_attempt, actual_group_id, candidate_group_ids
+		SELECT status, current_attempt, actual_group_id, candidate_group_ids, settlement_status
 		FROM auto_route_executions
 		WHERE id = $1
 		FOR UPDATE
-	`, attempt.ExecutionID).Scan(&status, &currentAttempt, &selectedGroupID, &candidates)
+	`, attempt.ExecutionID).Scan(&status, &currentAttempt, &selectedGroupID, &candidates, &settlementStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -744,7 +745,8 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 	if !selectedGroupID.Valid || selectedGroupID.Int64 != attempt.GroupID {
 		return false, errors.New("dispatch group does not match persisted Auto routing selection")
 	}
-	if status != service.AutoRouteExecutionPrepared || currentAttempt+1 != attempt.AttemptNo {
+	if settlementStatus != "pending" ||
+		status != service.AutoRouteExecutionPrepared || currentAttempt+1 != attempt.AttemptNo {
 		return false, nil
 	}
 
@@ -783,6 +785,7 @@ func (r *autoRoutingRepository) ClaimAutoRoutingAttemptDispatch(ctx context.Cont
 		    actual_group_id = $3,
 		    updated_at = NOW()
 		WHERE id = $1 AND status = 'prepared' AND current_attempt = $4
+		  AND settlement_status = 'pending'
 	`, attempt.ExecutionID, attempt.AttemptNo, attempt.GroupID, attempt.AttemptNo-1)
 	if err != nil {
 		return false, fmt.Errorf("claim Auto routing execution dispatch: %w", err)
@@ -832,13 +835,14 @@ func (r *autoRoutingRepository) finishAttempt(
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx, `
-		UPDATE auto_route_attempts
-		SET status = $3, result_reference = NULLIF($4, ''),
-		    completed_at = NOW(), updated_at = NOW()
-		WHERE execution_id = $1 AND attempt_no = $2 AND status = 'dispatching'
-	`, executionID, attemptNo, attemptStatus, resultReference)
+		UPDATE auto_route_executions
+		SET status = $2, result_reference = NULLIF($3, ''),
+		    evidence_code = NULLIF($4, ''), completed_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $5
+		  AND settlement_status = 'pending'
+	`, executionID, executionStatus, resultReference, evidenceCode, attemptNo)
 	if err != nil {
-		return false, fmt.Errorf("transition Auto routing attempt: %w", err)
+		return false, fmt.Errorf("transition Auto routing execution: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
@@ -849,16 +853,18 @@ func (r *autoRoutingRepository) finishAttempt(
 	}
 
 	result, err = tx.ExecContext(ctx, `
-		UPDATE auto_route_executions
-		SET status = $2, result_reference = NULLIF($3, ''),
-		    evidence_code = NULLIF($4, ''), completed_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $5
-	`, executionID, executionStatus, resultReference, evidenceCode, attemptNo)
+		UPDATE auto_route_attempts
+		SET status = $3, result_reference = NULLIF($4, ''),
+		    completed_at = NOW(), updated_at = NOW()
+		WHERE execution_id = $1 AND attempt_no = $2 AND status = 'dispatching'
+	`, executionID, attemptNo, attemptStatus, resultReference)
 	if err != nil {
-		return false, fmt.Errorf("transition Auto routing execution: %w", err)
+		return false, fmt.Errorf("transition Auto routing attempt: %w", err)
 	}
-	if err := requireOneRow(result); err != nil {
+	if affected, err := result.RowsAffected(); err != nil {
 		return false, err
+	} else if affected != 1 {
+		return false, nil
 	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit Auto routing attempt result: %w", err)
@@ -869,8 +875,9 @@ func (r *autoRoutingRepository) finishAttempt(
 func (r *autoRoutingRepository) PrepareNextAutoRoutingAttempt(
 	ctx context.Context,
 	executionID, attemptNo, nextGroupID int64,
+	evidenceCode string,
 ) (bool, error) {
-	if executionID <= 0 || attemptNo <= 0 || nextGroupID <= 0 {
+	if executionID <= 0 || attemptNo <= 0 || nextGroupID <= 0 || evidenceCode == "" {
 		return false, errors.New("invalid Auto routing next attempt identity")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -881,19 +888,21 @@ func (r *autoRoutingRepository) PrepareNextAutoRoutingAttempt(
 
 	var status string
 	var currentAttempt int
+	var settlementStatus string
 	var candidates []byte
 	if err := tx.QueryRowContext(ctx, `
-		SELECT status, current_attempt, candidate_group_ids
+		SELECT status, current_attempt, candidate_group_ids, settlement_status
 		FROM auto_route_executions
 		WHERE id = $1
 		FOR UPDATE
-	`, executionID).Scan(&status, &currentAttempt, &candidates); err != nil {
+	`, executionID).Scan(&status, &currentAttempt, &candidates, &settlementStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, fmt.Errorf("lock Auto routing execution for next attempt: %w", err)
 	}
-	if status != service.AutoRouteExecutionDispatching || currentAttempt != int(attemptNo) {
+	if settlementStatus != "pending" ||
+		status != service.AutoRouteExecutionDispatching || currentAttempt != int(attemptNo) {
 		return false, nil
 	}
 	var candidateIDs []int64
@@ -906,9 +915,10 @@ func (r *autoRoutingRepository) PrepareNextAutoRoutingAttempt(
 
 	result, err := tx.ExecContext(ctx, `
 		UPDATE auto_route_attempts
-		SET status = 'failed', completed_at = NOW(), updated_at = NOW()
+		SET status = 'failed', result_reference = $3,
+		    completed_at = NOW(), updated_at = NOW()
 		WHERE execution_id = $1 AND attempt_no = $2 AND status = 'dispatching'
-	`, executionID, attemptNo)
+	`, executionID, attemptNo, evidenceCode)
 	if err != nil {
 		return false, fmt.Errorf("fail Auto routing attempt before next group: %w", err)
 	}
@@ -924,6 +934,7 @@ func (r *autoRoutingRepository) PrepareNextAutoRoutingAttempt(
 		    completed_at = NULL,
 		    updated_at = NOW()
 		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $3
+		  AND settlement_status = 'pending'
 	`, executionID, nextGroupID, attemptNo)
 	if err != nil {
 		return false, fmt.Errorf("prepare Auto routing next group: %w", err)
@@ -953,6 +964,21 @@ func (r *autoRoutingRepository) FailAutoRoutingAttempt(
 	defer func() { _ = tx.Rollback() }()
 
 	result, err := tx.ExecContext(ctx, `
+		UPDATE auto_route_executions
+		SET status = 'failed', evidence_code = $2,
+		    completed_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $3
+		  AND settlement_status = 'pending'
+	`, executionID, evidenceCode, attemptNo)
+	if err != nil {
+		return false, fmt.Errorf("fail Auto routing execution: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return false, err
+	} else if affected != 1 {
+		return false, nil
+	}
+	result, err = tx.ExecContext(ctx, `
 		UPDATE auto_route_attempts
 		SET status = 'failed', result_reference = $3,
 		    completed_at = NOW(), updated_at = NOW()
@@ -961,20 +987,10 @@ func (r *autoRoutingRepository) FailAutoRoutingAttempt(
 	if err != nil {
 		return false, fmt.Errorf("fail Auto routing attempt: %w", err)
 	}
-	if err := requireOneRow(result); err != nil {
-		return false, nil
-	}
-	result, err = tx.ExecContext(ctx, `
-		UPDATE auto_route_executions
-		SET status = 'failed', evidence_code = $2,
-		    completed_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $3
-	`, executionID, evidenceCode, attemptNo)
-	if err != nil {
-		return false, fmt.Errorf("fail Auto routing execution: %w", err)
-	}
-	if err := requireOneRow(result); err != nil {
+	if affected, err := result.RowsAffected(); err != nil {
 		return false, err
+	} else if affected != 1 {
+		return false, nil
 	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit Auto routing failed attempt: %w", err)

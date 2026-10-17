@@ -284,17 +284,17 @@ func TestAutoRoutingRepository_ClaimBindsPersistedSelectedGroupAtomically(t *tes
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT status, current_attempt, actual_group_id, candidate_group_ids").
 		WithArgs(int64(22)).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "current_attempt", "actual_group_id", "candidate_group_ids"}).
-			AddRow(service.AutoRouteExecutionPrepared, 0, int64(14), []byte(`[12,14]`)))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "current_attempt", "actual_group_id", "candidate_group_ids", "settlement_status"}).
+			AddRow(service.AutoRouteExecutionPrepared, 0, int64(14), []byte(`[12,14]`), "pending"))
 	mock.ExpectQuery("SELECT group_id FROM auto_route_attempts").
-		WithArgs(int64(22)).
+		WithArgs(int64(22), int64(1)).
 		WillReturnRows(sqlmock.NewRows([]string{"group_id"}))
 	mock.ExpectQuery("INSERT INTO auto_route_attempts").
-		WithArgs(int64(22), int64(14), nil, nil, nil, nil, nil).
+		WithArgs(int64(22), int64(1), int64(14), nil, nil, nil, nil, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "dispatched_at", "created_at", "updated_at"}).
 			AddRow(int64(30), service.AutoRouteAttemptDispatching, now, now, now))
 	mock.ExpectExec("UPDATE auto_route_executions").
-		WithArgs(int64(22), int64(14)).
+		WithArgs(int64(22), int64(1), int64(14), int64(0)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -315,8 +315,8 @@ func TestAutoRoutingRepository_ClaimRejectsDifferentPreparedSelection(t *testing
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT status, current_attempt, actual_group_id, candidate_group_ids").
 		WithArgs(int64(22)).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "current_attempt", "actual_group_id", "candidate_group_ids"}).
-			AddRow(service.AutoRouteExecutionPrepared, 0, int64(14), []byte(`[12,14]`)))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "current_attempt", "actual_group_id", "candidate_group_ids", "settlement_status"}).
+			AddRow(service.AutoRouteExecutionPrepared, 0, int64(14), []byte(`[12,14]`), "pending"))
 	mock.ExpectRollback()
 
 	claimed, err := (&autoRoutingRepository{db: database}).ClaimAutoRoutingAttemptDispatch(context.Background(), &service.AutoRoutingAttempt{
@@ -384,11 +384,11 @@ func TestAutoRoutingRepository_CompleteAttemptIsAtomicAndPreservesSettlement(t *
 	defer func() { _ = database.Close() }()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE auto_route_attempts").
-		WithArgs(int64(22), 1, service.AutoRouteAttemptCompleted, "result-ref").
-		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE auto_route_executions SET status = \\$2, result_reference = NULLIF\\(\\$3, ''\\), evidence_code = NULLIF\\(\\$4, ''\\), completed_at = NOW\\(\\), updated_at = NOW\\(\\)").
 		WithArgs(int64(22), service.AutoRouteExecutionCompleted, "result-ref", "", 1).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE auto_route_attempts").
+		WithArgs(int64(22), 1, service.AutoRouteAttemptCompleted, "result-ref").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

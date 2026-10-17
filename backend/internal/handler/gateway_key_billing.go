@@ -60,7 +60,7 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 			"auto_profile_id": configuration.ProfileID, "routing_revision": configuration.Revision,
 			"auto_selection_mode": configuration.SelectionMode,
 			"group_ids":           preparation.Plan.CandidateGroupIDs,
-			"cross_group_retry":   false, "observed_at": time.Now().UTC(),
+			"cross_group_retry":   configuration.CrossGroupRetry, "observed_at": time.Now().UTC(),
 		})
 		return
 	}

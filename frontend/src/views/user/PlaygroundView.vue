@@ -245,8 +245,18 @@
             {{ t('playground.autoGroupCount', { selected: autoGroupIds.length, max: selectedAutoProfile.max_candidates }) }}
           </p>
         </div>
-        <p class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-          {{ t('playground.crossGroupRetryOff') }}
+        <label
+          v-if="selectedAutoProfile.cross_group_retry_allowed"
+          class="flex items-start gap-3 border-t border-gray-200 pt-3 dark:border-dark-600"
+        >
+          <input v-model="crossGroupRetry" type="checkbox" class="checkbox mt-0.5 shrink-0" :disabled="savingAutoRouting" />
+          <span class="text-sm text-gray-700 dark:text-gray-200">
+            <span class="block font-medium">{{ t('playground.crossGroupRetry') }}</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t('playground.crossGroupRetryHint') }}</span>
+          </span>
+        </label>
+        <p v-else class="border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
+          {{ t('playground.crossGroupRetryUnavailable') }}
         </p>
         <p v-if="autoRoutingError" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ autoRoutingError }}</p>
       </div>
@@ -348,6 +358,7 @@ const autoRoutingError = ref('')
 const autoRoutingConfig = ref<PlaygroundAutoRoutingConfig | null>(null)
 const autoSelectionMode = ref<'inherit' | 'custom'>('inherit')
 const autoGroupIds = ref<number[]>([])
+const crossGroupRetry = ref(false)
 const historyOpen = ref(false)
 const deleteTarget = ref('')
 const imageSize = ref('1024x1024')
@@ -553,6 +564,7 @@ async function openAutoRoutingEditor() {
     const config = await playgroundAPI.getAutoRouting(profile.id)
     if (!autoRoutingEditorOpen.value || selectedAutoProfile.value?.id !== profile.id) return
     autoRoutingConfig.value = config
+    crossGroupRetry.value = Boolean(config.cross_group_retry && profile.cross_group_retry_allowed)
     autoSelectionMode.value = config.auto_selection_mode === 'custom' && profile.allow_custom_order
       ? 'custom'
       : 'inherit'
@@ -611,9 +623,11 @@ async function saveAutoRouting() {
     const updated = await playgroundAPI.updateAutoRouting(profile.id, {
       auto_selection_mode: autoSelectionMode.value,
       group_ids: autoSelectionMode.value === 'custom' ? [...autoGroupIds.value] : [],
+      cross_group_retry: selectedAutoProfile.value.cross_group_retry_allowed && crossGroupRetry.value,
       routing_revision: config.routing_revision
     })
     autoRoutingConfig.value = updated
+    crossGroupRetry.value = Boolean(updated.cross_group_retry && profile.cross_group_retry_allowed)
     autoSelectionMode.value = updated.auto_selection_mode
     autoGroupIds.value = updated.auto_selection_mode === 'custom'
       ? [...updated.group_ids]

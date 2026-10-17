@@ -76,7 +76,7 @@ type autoRoutingExecutionRepository interface {
 }
 
 type autoRoutingAttemptTransitioner interface {
-	PrepareNextAutoRoutingAttempt(ctx context.Context, executionID, attemptNo, nextGroupID int64) (bool, error)
+	PrepareNextAutoRoutingAttempt(ctx context.Context, executionID, attemptNo, nextGroupID int64, evidenceCode string) (bool, error)
 	FailAutoRoutingAttempt(ctx context.Context, executionID int64, attemptNo int, evidenceCode string) (bool, error)
 }
 
@@ -245,15 +245,18 @@ func (g *AutoRoutingExecutionGuard) MarkUnknown(ctx context.Context, executionID
 	return nil
 }
 
-func (g *AutoRoutingExecutionGuard) PrepareNextAttempt(ctx context.Context, executionID int64, attemptNo int, nextGroupID int64) error {
+func (g *AutoRoutingExecutionGuard) PrepareNextAttempt(ctx context.Context, executionID int64, attemptNo int, nextGroupID int64, evidenceCode string) error {
 	if g == nil || g.repo == nil || executionID <= 0 || attemptNo <= 0 || nextGroupID <= 0 {
+		return ErrAutoRoutingExecutionInvalid
+	}
+	if !validAutoRouteEvidenceCode(evidenceCode) {
 		return ErrAutoRoutingExecutionInvalid
 	}
 	transitioner, ok := g.repo.(autoRoutingAttemptTransitioner)
 	if !ok {
 		return ErrAutoRoutingExecutionStoreUnavailable
 	}
-	prepared, err := transitioner.PrepareNextAutoRoutingAttempt(ctx, executionID, int64(attemptNo), nextGroupID)
+	prepared, err := transitioner.PrepareNextAutoRoutingAttempt(ctx, executionID, int64(attemptNo), nextGroupID, evidenceCode)
 	if err != nil {
 		return ErrAutoRoutingExecutionStoreUnavailable.WithCause(err)
 	}
@@ -405,9 +408,6 @@ func validatePreparedAutoRoutingExecution(execution *AutoRoutingExecution) error
 func autoRoutingExecutionReplayError(execution *AutoRoutingExecution) error {
 	switch execution.Status {
 	case AutoRouteExecutionPrepared:
-		if execution.CurrentAttempt != 0 {
-			return ErrAutoRoutingExecutionStoreUnavailable.WithCause(errors.New("prepared execution has an attempt"))
-		}
 		return nil
 	case AutoRouteExecutionDispatching:
 		return ErrAutoRoutingExecutionInProgress

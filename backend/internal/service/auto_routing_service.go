@@ -734,6 +734,9 @@ func (s *AutoRoutingService) validateKeyRouting(ctx context.Context, userID int6
 	if profile.Status != AutoRoutingProfileStatusActive {
 		return ErrAutoRoutingProfileInvalid
 	}
+	if config.CrossGroupRetry && !profile.CrossGroupRetryAllowed {
+		return ErrAutoRoutingProfileInvalid
+	}
 	memberOrder := make(map[int64]int, len(profile.Members))
 	for index, member := range profile.Members {
 		memberOrder[member.GroupID] = index

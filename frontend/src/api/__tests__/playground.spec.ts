@@ -86,7 +86,7 @@ describe('Playground routing and model catalog', () => {
       auto_profile_id: 12,
       auto_selection_mode: 'custom' as const,
       group_ids: [8, 4],
-      cross_group_retry: false as const,
+      cross_group_retry: true,
       routing_revision: 3
     }
     get.mockResolvedValue({ data: config })
@@ -96,6 +96,7 @@ describe('Playground routing and model catalog', () => {
     await expect(updatePlaygroundAutoRouting(12, {
       auto_selection_mode: 'custom',
       group_ids: [8, 4],
+      cross_group_retry: true,
       routing_revision: 3
     })).resolves.toEqual({ ...config, routing_revision: 4 })
 
@@ -103,6 +104,7 @@ describe('Playground routing and model catalog', () => {
     expect(put).toHaveBeenCalledWith('/playground/auto-routing/12', {
       auto_selection_mode: 'custom',
       group_ids: [8, 4],
+      cross_group_retry: true,
       routing_revision: 3
     })
   })

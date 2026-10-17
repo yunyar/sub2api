@@ -8,7 +8,7 @@ import (
 )
 
 type autoRoutingRPMCache interface {
-	AdmitAutoRoutingRPM(context.Context, int64, int64, int64, int, int) (int, error)
+	AdmitAutoRoutingRPM(context.Context, int64, int64, int64, int64, int, int) (int, error)
 }
 
 func (s *AutoRoutingService) SetDispatchBilling(billing *BillingCacheService) {
@@ -37,7 +37,7 @@ func (s *BillingCacheService) checkAutoRoutingRPM(ctx context.Context, user *Use
 	if user.UserGroupRPMOverride != nil {
 		groupLimit = *user.UserGroupRPMOverride
 	}
-	result, err := cache.AdmitAutoRoutingRPM(ctx, user.ID, group.ID, key.AutoRouting.ExecutionID, user.RPMLimit, groupLimit)
+	result, err := cache.AdmitAutoRoutingRPM(ctx, user.ID, group.ID, key.AutoRouting.ExecutionID, int64(key.AutoRouting.AttemptNo), user.RPMLimit, groupLimit)
 	if err != nil {
 		logger.LegacyPrintf("service.billing_cache", "Warning: Auto RPM admission failed for user=%d group=%d: %v", user.ID, group.ID, err)
 		return nil

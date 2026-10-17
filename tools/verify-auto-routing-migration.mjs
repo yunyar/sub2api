@@ -60,7 +60,11 @@ await assert.rejects(database.exec(`INSERT INTO auto_route_executions(id,api_key
 await database.exec(`INSERT INTO auto_route_attempts(execution_id,attempt_no,group_id,status) VALUES (1,1,2,'dispatching');`);
 await assert.rejects(database.exec(`INSERT INTO auto_route_attempts(execution_id,attempt_no,group_id,status) VALUES (1,2,1,'dispatching')`));
 await database.exec(`UPDATE auto_route_attempts SET account_id=9,billing_snapshot='{"version":1}' WHERE execution_id=1 AND account_id IS NULL;`);
-assert.equal((await database.query(`UPDATE auto_route_attempts SET account_id=10 WHERE execution_id=1 AND account_id IS NULL RETURNING id`)).rows.length,0);
+assert.equal((await database.query(`UPDATE auto_route_attempts SET account_id=10,billing_snapshot='{"version":1,"account_rate":2}' WHERE execution_id=1 AND attempt_no=1 AND group_id=2 AND status='dispatching' RETURNING id`)).rows.length,1);
+assert.equal((await database.query(`SELECT account_id FROM auto_route_attempts WHERE execution_id=1`)).rows[0].account_id,10);
+await database.exec(`UPDATE auto_route_attempts SET status='completed' WHERE execution_id=1;`);
+assert.equal((await database.query(`UPDATE auto_route_attempts SET account_id=11 WHERE execution_id=1 AND attempt_no=1 AND group_id=2 AND status='dispatching' RETURNING id`)).rows.length,0);
+await database.exec(`UPDATE auto_route_attempts SET status='dispatching' WHERE execution_id=1;`);
 await database.exec(`UPDATE auto_route_executions SET status='dispatching',current_attempt=1 WHERE id=1;`);
 await database.exec(`BEGIN;
 UPDATE auto_route_executions SET status='prepared',current_attempt=0 WHERE id=1 AND actual_group_id=2 AND status='dispatching' AND current_attempt=1 AND settlement_status='pending';
@@ -71,5 +75,5 @@ await database.exec(`INSERT INTO auto_route_attempts(execution_id,attempt_no,gro
 assert.equal((await database.query(`UPDATE auto_route_executions SET status='prepared',current_attempt=0 WHERE id=1 AND status='dispatching' AND settlement_status='pending' RETURNING id`)).rows.length,0);
 await database.exec(`INSERT INTO usage_logs(id,routing_mode,auto_profile_id,routing_revision,route_attempt_count) VALUES(1,'auto',1,5,1)`);
 await assert.rejects(database.exec(`INSERT INTO usage_logs(id,routing_mode) VALUES(2,'auto')`));
-console.log('PASS: PostgreSQL WASM migration repeatability, fixed/Auto transitions, monotonic revisions, route identity constraints, immutable account CAS, unsent claim release, audit constraints');
+console.log('PASS: PostgreSQL WASM migration repeatability, fixed/Auto transitions, monotonic revisions, route identity constraints, account failover snapshots, terminal snapshot protection, unsent claim release, audit constraints');
 await database.close();

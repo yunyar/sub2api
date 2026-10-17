@@ -187,6 +187,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil || !switched {
 			return false
 		}
+		if !autoRoutingGroupBillingEligible(c, h.billingCacheService, nextKey, nextSubscription) {
+			return false
+		}
 		apiKey = nextKey
 		subscription = nextSubscription
 		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)

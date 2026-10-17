@@ -35,13 +35,14 @@ export interface PlaygroundAutoRoutingConfig {
   auto_profile_id: number
   auto_selection_mode: 'inherit' | 'custom'
   group_ids: number[]
-  cross_group_retry: false
+  cross_group_retry: boolean
   routing_revision: number
 }
 
 export interface UpdatePlaygroundAutoRoutingRequest {
   auto_selection_mode: 'inherit' | 'custom'
   group_ids: number[]
+  cross_group_retry?: boolean
   routing_revision: number
 }
 

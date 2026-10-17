@@ -339,11 +339,15 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	if platform == service.PlatformGemini {
 		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
 		switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
-			nextKey, _, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+			nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
 			if err != nil || !switched {
 				return false
 			}
+			if !autoRoutingGroupBillingEligible(c, h.billingCacheService, nextKey, nextSubscription) {
+				return false
+			}
 			apiKey = nextKey
+			subscription = nextSubscription
 			platform = service.PlatformGemini
 			fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
 			return true
@@ -693,6 +697,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		if err != nil || !switched {
 			return false
 		}
+		if !autoRoutingGroupBillingEligible(c, h.billingCacheService, nextKey, nextSubscription) {
+			return false
+		}
 		currentAPIKey = nextKey
 		currentSubscription = nextSubscription
 		if currentAPIKey.Group != nil {
@@ -708,6 +715,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		} else if currentAPIKey.Group != nil {
 			platform = currentAPIKey.Group.Platform
 		}
+		if currentAPIKey.AutoRouting != nil && !currentAPIKey.AutoRouting.PricingAt.IsZero() {
+			pricingAt = currentAPIKey.AutoRouting.PricingAt
+		}
 		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), currentAPIKey.GroupID, reqModel)
 		parsedReq.GroupID = currentAPIKey.GroupID
 		sessionKey = sessionHash
@@ -715,7 +725,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			sessionKey = "gemini:" + sessionKey
 		}
 		sessionBoundAccountID = 0
-		for accountID := range sessionSlotAccounts {
+		hasBoundSession = false
+		for accountID, account := range sessionSlotAccounts {
+			h.gatewayService.ReleaseAccountSession(context.Background(), account, sessionKey)
 			delete(sessionSlotAccounts, accountID)
 		}
 		return true
@@ -967,7 +979,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				}
 			}
 			// Bedrock CC 兼容：清理 body 专有字段 + 过滤 anthropic-beta header，适用于所有转发路径
-			if err := attemptParsedReq.ReplaceBody(h.gatewayService.ApplyBedrockCCCompat(c, attemptParsedReq.Body.Bytes(), attemptParsedReq.Model, account, apiKey.GroupID)); err != nil {
+			if err := attemptParsedReq.ReplaceBody(h.gatewayService.ApplyBedrockCCCompat(c, attemptParsedReq.Body.Bytes(), attemptParsedReq.Model, account, currentAPIKey.GroupID)); err != nil {
 				h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 				return
 			}
@@ -985,7 +997,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
-			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
+			if !beginAutoRoutingDispatch(c, currentAPIKey, h.apiKeyService, account) {
 				if queueRelease != nil {
 					queueRelease()
 				}
@@ -1109,7 +1121,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							_ = h.antigravityGatewayService.WriteMappedClaudeError(c, account, promptTooLongErr.StatusCode, promptTooLongErr.RequestID, promptTooLongErr.Body)
 							return
 						}
-						fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
+						fallbackAPIKey := cloneAPIKeyWithGroup(currentAPIKey, fallbackGroup)
 						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
 							status, code, message, retryAfter := billingErrorDetails(err)
 							if retryAfter > 0 {
@@ -1280,7 +1292,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
-	if len(availableModels) > 0 {
+	if len(availableModels) > 0 || (platform == service.PlatformOpenAI && availableModels != nil) {
 		writeModelsList(c, platform, availableModels)
 		return
 	}
@@ -1395,7 +1407,7 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 			continue
 		}
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
-		if len(platformModels) == 0 {
+		if len(platformModels) == 0 && (platform != service.PlatformOpenAI || platformModels == nil) {
 			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
 			// default 分支是 Claude 列表），composite 下只暴露账号映射键。
 			if _, ok := schedulablePlatforms[platform]; ok && !service.IsMultiProtocolAPIKeyProvider(platform) {
@@ -1544,6 +1556,9 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 // 与平台默认列表（fallbackModels）。账号映射为空时回落默认列表；Anthropic
 // 平台两者取并集，其余平台以账号映射键为准。
 func modelListingSource(platform string, availableModels, fallbackModels []string) []string {
+	if platform == service.PlatformOpenAI && availableModels != nil {
+		return availableModels
+	}
 	if len(availableModels) == 0 {
 		return fallbackModels
 	}

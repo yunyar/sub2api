@@ -9,6 +9,9 @@ ALTER TABLE auto_route_attempts
     DROP CONSTRAINT IF EXISTS auto_route_attempts_first_attempt_only;
 
 ALTER TABLE auto_route_attempts
+    DROP CONSTRAINT IF EXISTS auto_route_attempts_attempt_number_check;
+
+ALTER TABLE auto_route_attempts
     ADD CONSTRAINT auto_route_attempts_attempt_number_check
     CHECK (attempt_no >= 1);
 

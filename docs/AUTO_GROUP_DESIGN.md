@@ -9,7 +9,7 @@
 3. 游乐场聊天和工作流可选择 Auto 配置；游乐场使用独立的服务端 Key 绑定，不复用用户同名 Key。对话历史保存所选配置。模型列表按端点能力区分聊天、文生图和图生图。
 4. 请求在发送上游前确定实际分组，使用该组的权限、内容审查、订阅、账号调度和扣费链路。用户全局 RPM 和用户×实际组 RPM 共同限制。用量记录保留实际组及 Auto 配置、版本、尝试次数。
 5. 配置更新要求版本号；固定组与 Auto 来回切换时版本保持递增。已撤销权限的候选不再使用；自定义候选全部失效时返回错误，不隐式改成继承顺序。
-6. 已开始发送的请求不跨组重试；执行状态持久化并在发送前竞争唯一执行权。RPM 准入在实际派发边界执行，排队、选择账号或保存快照失败不消耗 RPM。确定没有调用上游时，在事务中释放执行权，保留同一请求的重试机会；已发送但结果不明时禁止重放。图片结果不明时保留预留款，待核对，避免重复生成或无依据退款。
+6. 已开始发送的请求不跨组重试；执行状态持久化并在发送前竞争唯一执行权。组内账号故障切换仅复用本次请求已经准入的执行权，每次派发前保存当前账号及倍率快照，结算使用最终实际账号；不得在完成、收到结果证据或请求身份变化后复用。RPM 准入在实际派发边界执行，排队、选择账号或保存快照失败不消耗 RPM。确定没有调用上游时，在事务中释放执行权，保留同一请求的重试机会；已发送但结果不明时禁止重放。图片结果不明时保留预留款，待核对，避免重复生成或无依据退款。
 
 ### 第一阶段边界
 
@@ -23,7 +23,7 @@
 
 后端使用仓库要求的 Go 1.27.2；可运行 `GO_BIN=/path/to/go GOPROXY=off bash tools/verify-auto-routing.sh` 和 `bash tools/verify-community.sh`。前端使用已有 pnpm 环境运行类型检查、专项测试和生产构建。
 
-迁移验证脚本 `tools/verify-auto-routing-migration.mjs` 使用独立 PGlite 实例，不连接业务数据库。将 `@electric-sql/pglite` 安装到临时目录后，设置 `PGLITE_MODULE` 为其 `dist/index.js` 的绝对路径并运行 `node tools/verify-auto-routing-migration.mjs --full-schema`。覆盖全量迁移、重复迁移、固定/Auto 切换、版本递增、错误绑定约束、唯一执行记录与账号 CAS。该验证运行 PostgreSQL WASM 引擎，不代替原生 PostgreSQL 多连接并发与整站端到端验收。
+迁移验证脚本 `tools/verify-auto-routing-migration.mjs` 使用独立 PGlite 实例，不连接业务数据库。将 `@electric-sql/pglite` 安装到临时目录后，设置 `PGLITE_MODULE` 为其 `dist/index.js` 的绝对路径并运行 `node tools/verify-auto-routing-migration.mjs --full-schema`。覆盖全量迁移、重复迁移、固定/Auto 切换、版本递增、错误绑定约束、唯一执行记录、组内账号快照切换与终态保护。该验证运行 PostgreSQL WASM 引擎，不代替原生 PostgreSQL 多连接并发与整站端到端验收。
 
 目标仓库：`yunyar/sub2api`，本地 `work/sub2api-custom-playground`，基线 `1d6e92a7b3d1bdc162a806a4064bd4bc1ffa7fab`。当前游乐场图片格式修复是独立的未提交变更，不是 Auto 实现或线上故障已彻底解决的证明。
 

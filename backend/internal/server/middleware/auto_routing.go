@@ -280,14 +280,6 @@ func MarkAutoRoutingUpstreamStarted(c *gin.Context) {
 	}
 }
 
-// AutoRoutingDispatchStarted reports whether this request already claimed its
-// execution. Account failover stays inside the same request execution and
-// must not claim it a second time.
-func AutoRoutingDispatchStarted(c *gin.Context) bool {
-	state := getAutoRoutingRequestState(c)
-	return state != nil && state.dispatched && !state.finished
-}
-
 // RetryAutoRoutingGroup moves a confirmed pre-response failure to the next
 // configured group and refreshes the request-local API key context.
 func RetryAutoRoutingGroup(
@@ -318,6 +310,37 @@ func RetryAutoRoutingGroup(
 	state.upstreamStarted = false
 	state.resultReference = ""
 	return preparation.EffectiveKey, true, nil
+}
+
+// Only admitted, unfinished attempts may reuse their request-local claim during account failover.
+func AutoRoutingDispatchStarted(c *gin.Context, apiKey *service.APIKey) bool {
+	state := getAutoRoutingRequestState(c)
+	if apiKey == nil || apiKey.RoutingMode != service.AutoRoutingModeAuto ||
+		apiKey.AutoRouting == nil || apiKey.GroupID == nil || apiKey.Group == nil ||
+		apiKey.User == nil || state == nil || !state.dispatched ||
+		!state.upstreamStarted || state.finished || state.resultReference != "" ||
+		state.preparation == nil || state.preparation.Execution == nil ||
+		state.authenticatedKey == nil || state.authenticatedKey.User == nil {
+		return false
+	}
+	execution := state.preparation.Execution
+	metadata := apiKey.AutoRouting
+	binding, ok := GetEffectiveGroupContext(c)
+	return ok && apiKey.ID == state.authenticatedKey.ID &&
+		apiKey.User.ID == state.authenticatedKey.User.ID &&
+		execution.APIKeyID == apiKey.ID &&
+		execution.Status == service.AutoRouteExecutionDispatching &&
+		execution.ActualGroupID != nil && *execution.ActualGroupID == *apiKey.GroupID &&
+		apiKey.Group.ID == *apiKey.GroupID &&
+		binding == (EffectiveGroupContext{
+			APIKeyID: apiKey.ID, GroupID: *apiKey.GroupID,
+			ProfileID: execution.ProfileID, RoutingRevision: execution.RoutingRevision,
+			ExecutionID: execution.ID, AttemptNo: execution.CurrentAttempt, RequestID: execution.RequestID,
+		}) &&
+		metadata.ProfileID == execution.ProfileID &&
+		metadata.RoutingRevision == execution.RoutingRevision &&
+		metadata.ExecutionID == execution.ID && metadata.AttemptNo > 0 &&
+		metadata.AttemptNo == execution.CurrentAttempt && metadata.RequestID == execution.RequestID
 }
 
 // FinishAutoRouting persists a verified completion reference or marks a

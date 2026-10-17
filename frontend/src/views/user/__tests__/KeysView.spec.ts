@@ -156,16 +156,17 @@ const TablePageLayoutStub = {
 
 const DataTableStub = {
   name: 'DataTable',
-  props: { columns: Array, data: Array, selectedKeys: Array, selectable: Boolean },
+  props: { columns: Array, data: Array, selectedKeys: Array, selectable: Boolean, loading: Boolean },
   emits: ['sort', 'update:selectedKeys'],
   template: `
     <div>
+      <div v-if="loading" data-test="loading-overlay">Loading</div>
       <div data-test="columns">{{ columns.map((col) => col.key).join(',') }}</div>
       <div data-test="columns-meta">{{ JSON.stringify(columns.map((col) => ({ key: col.key, sortable: !!col.sortable }))) }}</div>
       <button data-test="sort-current-concurrency" @click="$emit('sort', 'current_concurrency', 'asc')">
         Sort Current Concurrency
       </button>
-      <div v-for="row in data" :key="row.id">
+      <div v-for="row in data" :key="row.id" data-test="key-row">
         <div
           v-if="columns.some((col) => col.key === 'id')"
           data-test="key-id"
@@ -295,6 +296,33 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('shows the key list and primary actions while usage stats are pending', async () => {
+    let resolveUsageStats!: (response: { stats: Record<string, unknown> }) => void
+    getDashboardApiKeysUsage.mockReturnValue(
+      new Promise<{ stats: Record<string, unknown> }>((resolve) => {
+        resolveUsageStats = resolve
+      }),
+    )
+
+    const wrapper = await mountView()
+    const table = wrapper.findComponent({ name: 'DataTable' })
+    const refreshButton = wrapper.get('button[title="Refresh"]')
+    const createButton = getButtonByText(wrapper, 'Create API Key')
+
+    expect(getDashboardApiKeysUsage).toHaveBeenCalled()
+    expect(table.props('data')).toHaveLength(1)
+    expect(table.props('loading')).toBe(false)
+    expect(wrapper.get('[data-test="key-row"]').text()).toContain('test-key')
+    expect(wrapper.find('[data-test="loading-overlay"]').exists()).toBe(false)
+    expect(refreshButton.isDisabled()).toBe(false)
+    expect(createButton.isVisible()).toBe(true)
+    expect(createButton.isDisabled()).toBe(false)
+
+    wrapper.unmount()
+    resolveUsageStats({ stats: {} })
+    await flushPromises()
   })
 
   it.each([

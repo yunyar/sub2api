@@ -1658,6 +1658,7 @@ const loadApiKeys = async () => {
     handleSelectionChange(selectedIds.value)
     pagination.value.total = response.total
     pagination.value.pages = response.pages
+    loading.value = false
 
     // Render the key list as soon as the primary request completes. Usage
     // aggregation can scan a large usage table and must not block the page.

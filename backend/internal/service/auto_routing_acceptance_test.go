@@ -116,7 +116,7 @@ type autoRoutingAcceptanceRPMCache struct {
 
 func (c *autoRoutingAcceptanceRPMCache) AdmitAutoRoutingRPM(
 	_ context.Context,
-	userID, groupID, executionID int64,
+	userID, groupID, executionID, _ int64,
 	userLimit, groupLimit int,
 ) (int, error) {
 	c.admissionCalls++

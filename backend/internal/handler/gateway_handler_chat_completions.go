@@ -190,6 +190,9 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if err != nil || !switched {
 			return false
 		}
+		if !autoRoutingGroupBillingEligible(c, h.billingCacheService, nextKey, nextSubscription) {
+			return false
+		}
 		apiKey = nextKey
 		subscription = nextSubscription
 		groupPlatform = effectiveAPIKeyPlatform(c, apiKey)

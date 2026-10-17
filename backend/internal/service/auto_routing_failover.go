@@ -49,6 +49,10 @@ func (s *AutoRoutingService) RetryNextGroup(
 	}
 
 	currentGroupID := *preparation.Execution.ActualGroupID
+	currentPlatform := ""
+	if preparation.EffectiveKey.Group != nil {
+		currentPlatform = preparation.EffectiveKey.Group.Platform
+	}
 	currentIndex := -1
 	for index, groupID := range preparation.Execution.CandidateGroupIDs {
 		if groupID == currentGroupID {
@@ -64,6 +68,9 @@ func (s *AutoRoutingService) RetryNextGroup(
 	for _, groupID := range preparation.Execution.CandidateGroupIDs[currentIndex+1:] {
 		candidate, ok := candidateByGroup[groupID]
 		if !ok || candidate.group == nil {
+			continue
+		}
+		if currentPlatform != "" && candidate.group.Platform != currentPlatform {
 			continue
 		}
 		capability, supported, resolveErr := s.catalog.ResolveGroupModelCapability(
@@ -83,15 +90,6 @@ func (s *AutoRoutingService) RetryNextGroup(
 		}
 		return nil, false, nil
 	}
-	if err := s.executionGuard.PrepareNextAttempt(
-		ctx,
-		preparation.Execution.ID,
-		preparation.Execution.CurrentAttempt,
-		selected.group.ID,
-	); err != nil {
-		return nil, false, err
-	}
-
 	execution := cloneAutoRoutingExecution(preparation.Execution)
 	execution.Status = AutoRouteExecutionPrepared
 	execution.ActualGroupID = int64Pointer(selected.group.ID)
@@ -103,6 +101,15 @@ func (s *AutoRoutingService) RetryNextGroup(
 		return nil, false, err
 	}
 	if err := s.freezeAutoRoutingBilling(ctx, bound, selected.group, preparation.Plan.UserID); err != nil {
+		return nil, false, err
+	}
+	if err := s.executionGuard.PrepareNextAttempt(
+		ctx,
+		preparation.Execution.ID,
+		preparation.Execution.CurrentAttempt,
+		selected.group.ID,
+		evidenceCode,
+	); err != nil {
 		return nil, false, err
 	}
 	plan := *preparation.Plan

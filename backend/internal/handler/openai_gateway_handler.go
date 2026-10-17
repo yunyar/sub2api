@@ -663,6 +663,35 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// token 计费部分仍受利润门保护，独立图片/视频端点才在门外。
 	pricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(pricingCtx)
+	switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+		nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+		if err != nil || !switched || !autoRoutingGroupBillingEligible(c, h.billingCacheService, nextKey, nextSubscription) {
+			return false
+		}
+		if imageIntent && !service.GroupAllowsImageGeneration(nextKey.Group) {
+			return false
+		}
+		apiKey = nextKey
+		subscription = nextSubscription
+		requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+		channelMapping, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+		forwardBody = openAIModelMappedBody(body, channelMapping.Mapped, channelMapping.MappedModel, h.gatewayService.ReplaceModelInBody)
+		seedOpenAIForwardImageIntentHint(c, channelMapping.Mapped, imageIntent)
+		forwardModel = openAIChannelForwardModel(channelMapping, reqModel)
+		requestCtx := service.WithOpenAIForwardModel(c.Request.Context(), forwardModel, legacyCompact)
+		pricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(requestCtx, apiKey.GroupID)
+		c.Request = c.Request.WithContext(pricingCtx)
+		requiredCapability = openAIResponsesRequiredCapabilityForRequest(imageIntent, needsResponses, requestPlatform)
+		failedAccountIDs = make(map[int64]struct{})
+		sameAccountRetryCount = make(map[int64]int)
+		switchCount = 0
+		firstOutputTimeoutSwitchCount = 0
+		profitVetoCount = 0
+		lastFailoverErr = nil
+		oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+		passthroughFailoverState = openAIPassthroughFailoverState{}
+		return true
+	}
 
 	for {
 		// Streaming Forward intentionally detaches the upstream request so usage can
@@ -711,6 +740,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				return
 			}
 			if lastFailoverErr != nil {
+				if switchAutoRoutingGroup(lastFailoverErr) {
+					continue
+				}
 				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
 			} else {
 				h.handleFailoverExhaustedSimple(c, 502, streamStarted)
@@ -943,6 +975,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
+						if switchAutoRoutingGroup(failoverErr) {
+							continue
+						}
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1302,6 +1337,27 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	// 分组利润控制：Messages 文本入口同样请求级装门并固定 pricingAt。
 	msgPricingCtx, pricingAt := h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
 	c.Request = c.Request.WithContext(msgPricingCtx)
+	switchAutoRoutingGroup := func(failoverErr *service.UpstreamFailoverError) bool {
+		nextKey, nextSubscription, switched, err := retryAutoRoutingAfterConfirmedFailure(c, h.apiKeyService, failoverErr)
+		if err != nil || !switched || !autoRoutingGroupBillingEligible(c, h.billingCacheService, nextKey, nextSubscription) {
+			return false
+		}
+		apiKey = nextKey
+		subscription = nextSubscription
+		requestPlatform = openAICompatibleRequestPlatform(c.Request.Context(), apiKey)
+		channelMappingMsg, _ = h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+		effectiveMappedModel = resolveOpenAIMessagesDispatchMappedModel(c, apiKey, reqModel)
+		rebindOpenAIReasoningEffortPolicyForMessagesRequest(c, apiKey, body)
+		msgPricingCtx, pricingAt = h.gatewayService.WithOpenAIRequestPricingContext(c.Request.Context(), apiKey.GroupID)
+		c.Request = c.Request.WithContext(msgPricingCtx)
+		failedAccountIDs = make(map[int64]struct{})
+		sameAccountRetryCount = make(map[int64]int)
+		switchCount = 0
+		profitVetoCount = 0
+		lastFailoverErr = nil
+		oauth429FailoverState = service.OpenAIOAuth429FailoverState{}
+		return true
+	}
 
 	for {
 		if failoverClientGone(c) {
@@ -1346,6 +1402,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 				}
 			} else {
 				if lastFailoverErr != nil {
+					if switchAutoRoutingGroup(lastFailoverErr) {
+						continue
+					}
 					h.handleAnthropicFailoverExhausted(c, lastFailoverErr, streamStarted)
 				} else {
 					h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
@@ -1517,6 +1576,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					if switchCount >= maxAccountSwitches {
+						if switchAutoRoutingGroup(failoverErr) {
+							continue
+						}
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

@@ -64,12 +64,13 @@ func newPlaygroundAutoRoutingService(
 ) (*AutoRoutingService, *playgroundAutoRoutingRepoStub) {
 	repo := &playgroundAutoRoutingRepoStub{
 		profile: AutoRoutingProfile{
-			ID:            5,
-			Name:          "Auto",
-			Status:        AutoRoutingProfileStatusActive,
-			Revision:      1,
-			MaxCandidates: 5,
-			Members:       []AutoRoutingProfileMember{{GroupID: group.ID, SortOrder: 0}},
+			ID:                     5,
+			Name:                   "Auto",
+			Status:                 AutoRoutingProfileStatusActive,
+			Revision:               1,
+			MaxCandidates:          5,
+			CrossGroupRetryAllowed: true,
+			Members:                []AutoRoutingProfileMember{{GroupID: group.ID, SortOrder: 0}},
 		},
 	}
 	groups := &playgroundAutoRoutingGroupRepoStub{groups: []Group{group}}
