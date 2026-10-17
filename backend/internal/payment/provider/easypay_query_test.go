@@ -17,6 +17,7 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 	tests := []struct {
 		name        string
 		body        string
+		pid         string
 		statusCode  int
 		wantError   bool
 		wantStatus  string
@@ -65,6 +66,47 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			wantAmount:  3.21,
 		},
 		{
+			name:        "PHP string scalar response remains compatible",
+			body:        `{"code":"1","pid":"pid-1","status":"1","money":"3.21","trade_no":"gateway-legacy-123","out_trade_no":"order-123"}`,
+			wantStatus:  payment.ProviderStatusPaid,
+			wantTradeNo: "gateway-legacy-123",
+			wantAmount:  3.21,
+		},
+		{
+			name:        "PHP string zero status remains pending",
+			body:        `{"code":"1","pid":"pid-1","status":"0","money":"3.21","trade_no":"gateway-pending-123","out_trade_no":"order-123"}`,
+			wantStatus:  payment.ProviderStatusPending,
+			wantTradeNo: "gateway-pending-123",
+			wantAmount:  3.21,
+		},
+		{
+			name:        "pending response with empty order echo remains compatible",
+			body:        `{"code":1,"status":"0","money":"3.21","trade_no":"gateway-pending-123","out_trade_no":""}`,
+			wantStatus:  payment.ProviderStatusPending,
+			wantTradeNo: "gateway-pending-123",
+			wantAmount:  3.21,
+		},
+		{
+			name:      "paid response with empty order echo is rejected",
+			body:      `{"code":1,"pid":"pid-1","status":1,"money":"3.21","trade_no":"gateway-paid-123","out_trade_no":""}`,
+			wantError: true,
+		},
+		{
+			name:        "numeric merchant pid remains compatible",
+			body:        `{"code":1,"pid":1001,"status":1,"money":"1.00","trade_no":"gateway-caihong-123","out_trade_no":"order-123"}`,
+			pid:         "1001",
+			wantStatus:  payment.ProviderStatusPaid,
+			wantTradeNo: "gateway-caihong-123",
+			wantAmount:  1,
+		},
+		{
+			name:        "null root fields fall back to nested data",
+			body:        `{"code":1,"pid":null,"out_trade_no":null,"status":null,"money":null,"trade_no":null,"data":{"pid":"pid-1","out_trade_no":"order-123","status":1,"money":"5.00","trade_no":"data-789"}}`,
+			wantStatus:  payment.ProviderStatusPaid,
+			wantTradeNo: "data-789",
+			wantAmount:  5,
+		},
+		{
 			name:        "legacy numeric non paid status is pending",
 			body:        `{"code":1,"status":0,"money":"3.21"}`,
 			wantStatus:  payment.ProviderStatusPending,
@@ -107,6 +149,21 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			wantError: true,
 		},
 		{
+			name:      "duplicate nested JSON key is an error",
+			body:      `{"code":1,"data":{"pid":"pid-1","status":1,"status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}}`,
+			wantError: true,
+		},
+		{
+			name:      "conflicting root and nested merchant is an error",
+			body:      `{"code":1,"pid":"pid-1","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123","data":{"pid":"other-pid","status":1,"money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}}`,
+			wantError: true,
+		},
+		{
+			name:      "conflicting root and nested status is an error",
+			body:      `{"code":1,"pid":"pid-1","status":"1","money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123","data":{"pid":"pid-1","status":"0","money":"12.34","trade_no":"gateway-123","out_trade_no":"order-123"}}`,
+			wantError: true,
+		},
+		{
 			name:      "different returned order reference is an error",
 			body:      `{"code":1,"trade_status":"TRADE_SUCCESS","money":"12.34","trade_no":"gateway-123","out_trade_no":"another-order"}`,
 			wantError: true,
@@ -135,6 +192,7 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			t.Parallel()
 
 			var gotForm url.Values
+			var gotQuery url.Values
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost {
 					t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
@@ -149,6 +207,7 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 				for key, values := range r.PostForm {
 					gotForm[key] = append([]string(nil), values...)
 				}
+				gotQuery = r.URL.Query()
 				w.Header().Set("Content-Type", "application/json")
 				if tt.statusCode != 0 {
 					w.WriteHeader(tt.statusCode)
@@ -158,6 +217,11 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			defer server.Close()
 
 			provider := newTestEasyPay(t, server.URL)
+			expectedPID := tt.pid
+			if expectedPID == "" {
+				expectedPID = "pid-1"
+			}
+			provider.config["pid"] = expectedPID
 			resp, err := provider.QueryOrder(context.Background(), orderID)
 			if err != nil {
 				if !tt.wantError {
@@ -182,12 +246,15 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 			}
 			for key, want := range map[string]string{
 				"act":          "order",
-				"pid":          "pid-1",
+				"pid":          expectedPID,
 				"key":          "pkey-1",
 				"out_trade_no": orderID,
 			} {
 				if got := gotForm.Get(key); got != want {
 					t.Fatalf("form[%s] = %q, want %q (form=%v)", key, got, want, gotForm)
+				}
+				if got := gotQuery.Get(key); got != want {
+					t.Fatalf("query[%s] = %q, want %q (query=%v)", key, got, want, gotQuery)
 				}
 			}
 		})

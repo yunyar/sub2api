@@ -99,6 +99,8 @@ func DetectModelPlatform(model string) (string, bool) {
 		provider := strings.TrimSpace(normalized[:slash])
 		rest := strings.TrimSpace(normalized[slash+1:])
 		switch provider {
+		case "antigravity", "antigravity-gemini", "google-antigravity":
+			return PlatformAntigravity, true
 		case "anthropic", "claude":
 			return PlatformAnthropic, true
 		case "openai", "chatgpt":
@@ -115,6 +117,12 @@ func DetectModelPlatform(model string) (string, bool) {
 			return PlatformDeepseek, true
 		case "minimax":
 			return PlatformMiniMax, true
+		case "opencode", "opencode-go":
+			return PlatformOpenCodeGo, true
+		case "command-code", "commandcode":
+			return PlatformCommandCode, true
+		case "cline":
+			return PlatformCline, true
 		case "typesafe", "jev":
 			return PlatformTypeSafe, true
 		}
@@ -124,6 +132,8 @@ func DetectModelPlatform(model string) (string, bool) {
 	}
 
 	switch {
+	case strings.HasPrefix(normalized, "antigravity-"):
+		return PlatformAntigravity, true
 	case strings.HasPrefix(normalized, "anthropic.claude-"),
 		strings.HasPrefix(normalized, "claude-"):
 		return PlatformAnthropic, true
@@ -144,20 +154,34 @@ func DetectModelPlatform(model string) (string, bool) {
 		return PlatformGemini, true
 	case normalized == "grok" || strings.HasPrefix(normalized, "grok-"):
 		return PlatformGrok, true
+	case strings.HasPrefix(normalized, "xai-"):
+		return PlatformGrok, true
 	case normalized == "k3",
 		normalized == "k3-256k",
 		strings.HasPrefix(normalized, "kimi-"),
-		strings.HasPrefix(normalized, "moonshot-"):
+		strings.HasPrefix(normalized, "moonshot-"),
+		strings.HasPrefix(normalized, "moonshot-v"):
 		return PlatformKimi, true
-	case strings.HasPrefix(normalized, "glm-"):
+	case strings.HasPrefix(normalized, "glm-"),
+		strings.HasPrefix(normalized, "glm4-"),
+		strings.HasPrefix(normalized, "chatglm"):
 		return PlatformZhipu, true
-	case strings.HasPrefix(normalized, "deepseek-"):
+	case strings.HasPrefix(normalized, "deepseek-"),
+		normalized == "deepseek-chat",
+		normalized == "deepseek-reasoner":
 		return PlatformDeepseek, true
 	case strings.HasPrefix(normalized, "minimax-"),
 		strings.HasPrefix(normalized, "abab5"),
 		strings.HasPrefix(normalized, "abab6"),
-		strings.HasPrefix(normalized, "abab7"):
+		strings.HasPrefix(normalized, "abab7"),
+		strings.HasPrefix(normalized, "m-mini"):
 		return PlatformMiniMax, true
+	case strings.HasPrefix(normalized, "opencode-"):
+		return PlatformOpenCodeGo, true
+	case strings.HasPrefix(normalized, "command-code-"):
+		return PlatformCommandCode, true
+	case strings.HasPrefix(normalized, "cline-"):
+		return PlatformCline, true
 	case normalized == "jev-latest" || strings.HasPrefix(normalized, "jev-"):
 		return PlatformTypeSafe, true
 	default:

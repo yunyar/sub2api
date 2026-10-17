@@ -44,3 +44,25 @@ func TestAutoRoutingReleaseUnsentClaimIsAtomic(t *testing.T) {
 		})
 	}
 }
+
+func TestAutoRoutingAccountFailoverUpdatesSnapshotWithinDispatchingAttempt(t *testing.T) {
+	database, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+	repo := &autoRoutingRepository{db: database}
+	query := `UPDATE auto_route_attempts
+		SET account_id = $1, platform = $2, billing_snapshot = $3::jsonb, updated_at = NOW()
+		WHERE execution_id = $4 AND attempt_no = $5 AND group_id = $6
+		AND status = 'dispatching'`
+	for _, accountID := range []int64{10, 11} {
+		mock.ExpectExec(query).
+			WithArgs(accountID, service.PlatformAnthropic, `{"account_rate":2}`, int64(7), 1, int64(3)).
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		require.NoError(t, repo.RecordAutoRoutingDispatchSnapshot(context.Background(), 7, 1, 3, accountID, service.PlatformAnthropic, []byte(`{"account_rate":2}`)))
+	}
+	mock.ExpectExec(query).
+		WithArgs(int64(12), service.PlatformAnthropic, `{}`, int64(7), 1, int64(3)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	require.ErrorIs(t, repo.RecordAutoRoutingDispatchSnapshot(context.Background(), 7, 1, 3, 12, service.PlatformAnthropic, []byte(`{}`)), service.ErrAutoRoutingExecutionStateConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

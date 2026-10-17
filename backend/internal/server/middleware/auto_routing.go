@@ -280,6 +280,37 @@ func MarkAutoRoutingUpstreamStarted(c *gin.Context) {
 	}
 }
 
+// Only admitted, unfinished attempts may reuse their request-local claim during account failover.
+func AutoRoutingDispatchStarted(c *gin.Context, apiKey *service.APIKey) bool {
+	state := getAutoRoutingRequestState(c)
+	if apiKey == nil || apiKey.RoutingMode != service.AutoRoutingModeAuto ||
+		apiKey.AutoRouting == nil || apiKey.GroupID == nil || apiKey.Group == nil ||
+		apiKey.User == nil || state == nil || !state.dispatched ||
+		!state.upstreamStarted || state.finished || state.resultReference != "" ||
+		state.preparation == nil || state.preparation.Execution == nil ||
+		state.authenticatedKey == nil || state.authenticatedKey.User == nil {
+		return false
+	}
+	execution := state.preparation.Execution
+	metadata := apiKey.AutoRouting
+	binding, ok := GetEffectiveGroupContext(c)
+	return ok && apiKey.ID == state.authenticatedKey.ID &&
+		apiKey.User.ID == state.authenticatedKey.User.ID &&
+		execution.APIKeyID == apiKey.ID &&
+		execution.Status == service.AutoRouteExecutionDispatching &&
+		execution.ActualGroupID != nil && *execution.ActualGroupID == *apiKey.GroupID &&
+		apiKey.Group.ID == *apiKey.GroupID &&
+		binding == (EffectiveGroupContext{
+			APIKeyID: apiKey.ID, GroupID: *apiKey.GroupID,
+			ProfileID: execution.ProfileID, RoutingRevision: execution.RoutingRevision,
+			ExecutionID: execution.ID, AttemptNo: execution.CurrentAttempt, RequestID: execution.RequestID,
+		}) &&
+		metadata.ProfileID == execution.ProfileID &&
+		metadata.RoutingRevision == execution.RoutingRevision &&
+		metadata.ExecutionID == execution.ID && metadata.AttemptNo == 1 &&
+		metadata.AttemptNo == execution.CurrentAttempt && metadata.RequestID == execution.RequestID
+}
+
 // FinishAutoRouting persists a verified completion reference or marks a
 // dispatched request unknown after the handler returns.
 func FinishAutoRouting(c *gin.Context, apiKey *service.APIKey, routing *service.AutoRoutingService) {
