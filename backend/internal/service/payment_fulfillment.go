@@ -91,7 +91,7 @@ func (s *PaymentService) ConfirmNotificationUpstream(ctx context.Context, prov p
 		return nil
 	}
 	if order, lookupErr := s.entClient.PaymentOrder.Query().Where(paymentorder.OutTradeNo(n.OrderID)).Only(ctx); lookupErr == nil {
-		s.writeAuditLog(ctx, order.ID, "PAYMENT_UPSTREAM_UNCONFIRMED", prov.ProviderKey(), map[string]any{
+		_ = s.writeAuditLog(ctx, order.ID, "PAYMENT_UPSTREAM_UNCONFIRMED", prov.ProviderKey(), map[string]any{
 			"detail":  err.Error(),
 			"tradeNo": notifiedTradeNo,
 			"amount":  n.Amount,
