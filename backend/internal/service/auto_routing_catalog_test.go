@@ -188,6 +188,227 @@ func TestAutoModelCatalogResolvesOpenAIMessagesDispatchBeforeAccountMapping(t *t
 	}
 }
 
+func TestAutoModelCatalogGeminiAndAntigravityResponsesUseMappedAccounts(t *testing.T) {
+	tests := []struct {
+		name                   string
+		groupPlatform          string
+		accountPlatform        string
+		accountType            string
+		model                  string
+		upstreamModel          string
+		mapping                map[string]any
+		extra                  map[string]any
+		wantChatSupported      bool
+		wantResponsesSupported bool
+	}{
+		{
+			name:              "native Gemini API key",
+			groupPlatform:     PlatformGemini,
+			accountPlatform:   PlatformGemini,
+			accountType:       AccountTypeAPIKey,
+			model:             "gemini-3-flash",
+			upstreamModel:     "gemini-3-flash-preview",
+			mapping:           map[string]any{"gemini-3-flash": "gemini-3-flash-preview"},
+			wantChatSupported: true,
+		},
+		{
+			name:              "native Gemini OAuth",
+			groupPlatform:     PlatformGemini,
+			accountPlatform:   PlatformGemini,
+			accountType:       AccountTypeOAuth,
+			model:             "gemini-3-flash",
+			upstreamModel:     "gemini-3-flash-preview",
+			mapping:           map[string]any{"gemini-3-flash": "gemini-3-flash-preview"},
+			wantChatSupported: true,
+		},
+		{
+			name:                   "Antigravity API key",
+			groupPlatform:          PlatformAntigravity,
+			accountPlatform:        PlatformAntigravity,
+			accountType:            AccountTypeAPIKey,
+			model:                  "gemini-4-argon",
+			upstreamModel:          "gemini-4-argon-high",
+			mapping:                map[string]any{"gemini-4-argon": "gemini-4-argon-high"},
+			wantChatSupported:      true,
+			wantResponsesSupported: true,
+		},
+		{
+			name:                   "Antigravity OAuth",
+			groupPlatform:          PlatformAntigravity,
+			accountPlatform:        PlatformAntigravity,
+			accountType:            AccountTypeOAuth,
+			model:                  "gemini-4-argon",
+			upstreamModel:          "gemini-4-argon-high",
+			mapping:                map[string]any{"gemini-4-argon": "gemini-4-argon-high"},
+			wantChatSupported:      true,
+			wantResponsesSupported: true,
+		},
+		{
+			name:                   "GPT OSS model in Antigravity group",
+			groupPlatform:          PlatformAntigravity,
+			accountPlatform:        PlatformAntigravity,
+			accountType:            AccountTypeAPIKey,
+			model:                  "gpt-oss-120b-medium",
+			upstreamModel:          "gpt-oss-120b-medium",
+			mapping:                map[string]any{"gpt-oss-120b-medium": "gpt-oss-120b-medium"},
+			wantChatSupported:      true,
+			wantResponsesSupported: true,
+		},
+		{
+			name:              "mixed Antigravity API key in Gemini group",
+			groupPlatform:     PlatformGemini,
+			accountPlatform:   PlatformAntigravity,
+			accountType:       AccountTypeAPIKey,
+			model:             "gemini-3.8-flash",
+			upstreamModel:     "gemini-3.8-flash-high",
+			mapping:           map[string]any{"gemini-3.8-flash": "gemini-3.8-flash-high"},
+			extra:             map[string]any{"mixed_scheduling": true},
+			wantChatSupported: true,
+		},
+		{
+			name:            "Antigravity API key without mixed scheduling",
+			groupPlatform:   PlatformGemini,
+			accountPlatform: PlatformAntigravity,
+			accountType:     AccountTypeAPIKey,
+			model:           "gemini-3.8-flash",
+			upstreamModel:   "gemini-3.8-flash-high",
+			mapping:         map[string]any{"gemini-3.8-flash": "gemini-3.8-flash-high"},
+		},
+		{
+			name:            "unmapped Antigravity model",
+			groupPlatform:   PlatformAntigravity,
+			accountPlatform: PlatformAntigravity,
+			accountType:     AccountTypeAPIKey,
+			model:           "gemini-4-argon",
+			mapping:         map[string]any{"another-model": "gemini-4-argon-high"},
+		},
+	}
+
+	for index, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo := &autoModelCatalogAccountRepoStub{
+				accounts: []Account{{
+					ID:          int64(40 + index),
+					Platform:    testCase.accountPlatform,
+					Type:        testCase.accountType,
+					Status:      StatusActive,
+					Schedulable: true,
+					Extra:       testCase.extra,
+					Credentials: map[string]any{
+						"model_mapping": testCase.mapping,
+					},
+				}},
+			}
+			group := &Group{
+				ID:       int64(40 + index),
+				Platform: testCase.groupPlatform,
+				Status:   StatusActive,
+				ModelAllowlist: GroupModelAllowlist{
+					Enabled: true,
+					Models:  []string{testCase.model},
+				},
+			}
+			catalog := NewAutoModelCatalog(repo)
+
+			for _, endpointCase := range []struct {
+				endpoint      AutoModelEndpoint
+				wantSupported bool
+			}{
+				{AutoModelEndpointChat, testCase.wantChatSupported},
+				{AutoModelEndpointResponses, testCase.wantResponsesSupported},
+			} {
+				endpoint := endpointCase.endpoint
+				capability, ok, err := catalog.ResolveGroupModelCapability(
+					context.Background(), group, testCase.model, endpoint,
+				)
+				if err != nil || ok != endpointCase.wantSupported {
+					t.Fatalf("%s: ResolveGroupModelCapability() = (%#v, %v, %v), want supported=%v",
+						endpoint, capability, ok, err, endpointCase.wantSupported)
+				}
+				if !endpointCase.wantSupported {
+					continue
+				}
+				if !reflect.DeepEqual(capability.UpstreamModels, []string{testCase.upstreamModel}) {
+					t.Fatalf("%s: UpstreamModels = %#v, want mapped model %q",
+						endpoint, capability.UpstreamModels, testCase.upstreamModel)
+				}
+			}
+
+			if !testCase.wantChatSupported && !testCase.wantResponsesSupported {
+				return
+			}
+
+			listed, err := catalog.ListGroupModelCapabilities(context.Background(), group)
+			if err != nil {
+				t.Fatalf("ListGroupModelCapabilities() error = %v", err)
+			}
+			if len(listed) != 1 || listed[0].ModelID != testCase.model {
+				t.Fatalf("ListGroupModelCapabilities() = %#v, want only %q", listed, testCase.model)
+			}
+			hasResponses := false
+			for _, endpoint := range listed[0].SupportedEndpoints {
+				if endpoint == AutoModelEndpointResponses {
+					hasResponses = true
+					break
+				}
+			}
+			if hasResponses != testCase.wantResponsesSupported {
+				t.Fatalf("listed SupportedEndpoints = %#v, want Responses=%v",
+					listed[0].SupportedEndpoints, testCase.wantResponsesSupported)
+			}
+
+			group.ClaudeCodeOnly = true
+			if _, ok, err := catalog.ResolveGroupModelCapability(
+				context.Background(), group, testCase.model, AutoModelEndpointResponses,
+			); err != nil || ok {
+				t.Fatalf("ClaudeCodeOnly Responses: supported=%v err=%v, want unsupported", ok, err)
+			}
+			group.ClaudeCodeOnly = false
+
+			group.ModelAllowlist.Models = []string{"another-model"}
+			if _, ok, err := catalog.ResolveGroupModelCapability(
+				context.Background(), group, testCase.model, AutoModelEndpointResponses,
+			); err != nil || ok {
+				t.Fatalf("disallowed model Responses: supported=%v err=%v, want unsupported", ok, err)
+			}
+		})
+	}
+}
+
+func TestAutoModelCatalogResponsesKeepsOpenAIEndpointCapabilityGate(t *testing.T) {
+	repo := &autoModelCatalogAccountRepoStub{
+		accounts: []Account{{
+			ID:          44,
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"model_mapping":       map[string]any{"catalog-model": "upstream-model"},
+				"openai_capabilities": []any{"embeddings"},
+			},
+		}},
+	}
+	group := &Group{
+		ID:       44,
+		Platform: PlatformOpenAI,
+		Status:   StatusActive,
+		ModelAllowlist: GroupModelAllowlist{
+			Enabled: true,
+			Models:  []string{"catalog-model"},
+		},
+	}
+	catalog := NewAutoModelCatalog(repo)
+
+	for _, endpoint := range []AutoModelEndpoint{AutoModelEndpointChat, AutoModelEndpointResponses} {
+		if _, ok, err := catalog.ResolveGroupModelCapability(
+			context.Background(), group, "catalog-model", endpoint,
+		); err != nil || ok {
+			t.Fatalf("OpenAI %s: supported=%v err=%v, want unsupported without chat capability", endpoint, ok, err)
+		}
+	}
+}
+
 func TestAutoModelCatalogResolveSeparatesUnsupportedFromLookupFailure(t *testing.T) {
 	group := &Group{ID: 21, Platform: PlatformOpenAI, Status: StatusActive}
 	repo := &autoModelCatalogAccountRepoStub{

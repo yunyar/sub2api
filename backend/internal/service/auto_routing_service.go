@@ -159,6 +159,9 @@ func (s *AutoRoutingService) UpdateProfile(
 		return nil, err
 	}
 	profile := cloneAutoRoutingProfile(input)
+	if profile.ModelCatalogFilter == nil {
+		profile.ModelCatalogFilter = cloneAutoRoutingModelCatalogFilter(current.ModelCatalogFilter)
+	}
 	profile.CreatedAt = current.CreatedAt
 	profile.UpdatedAt = current.UpdatedAt
 	if profile.Status == "" {
@@ -392,6 +395,7 @@ func (s *AutoRoutingService) PrepareRequestKey(
 		if err != nil {
 			return nil, err
 		}
+		capabilities = filterAutoModelCapabilities(capabilities, profile.ModelCatalogFilter)
 		return &AutoRoutingPreparation{
 			Plan: &AutoRoutingPlan{
 				APIKeyID: authenticatedKey.ID, UserID: authenticatedKey.UserID,
@@ -692,6 +696,15 @@ func (s *AutoRoutingService) validateProfile(ctx context.Context, profile *AutoR
 		len(profile.Members) == 0 || len(profile.Members) > profile.MaxCandidates {
 		return ErrAutoRoutingProfileInvalid
 	}
+	modelCatalogFilter := GroupModelAllowlist{}
+	if profile.ModelCatalogFilter != nil {
+		modelCatalogFilter = *profile.ModelCatalogFilter
+	}
+	normalizedModelCatalogFilter, err := normalizeGroupModelAllowlist(modelCatalogFilter)
+	if err != nil {
+		return err
+	}
+	profile.ModelCatalogFilter = &normalizedModelCatalogFilter
 	members := append([]AutoRoutingProfileMember(nil), profile.Members...)
 	sort.SliceStable(members, func(i, j int) bool {
 		return members[i].SortOrder < members[j].SortOrder
@@ -954,6 +967,36 @@ func (s *AutoRoutingService) resolveDirectory(
 	return capabilities, nil
 }
 
+func filterAutoModelCapabilities(
+	capabilities []AutoModelCapability,
+	filter *GroupModelAllowlist,
+) []AutoModelCapability {
+	if filter == nil || !filter.Enabled {
+		return capabilities
+	}
+	filtered := make([]AutoModelCapability, 0, len(capabilities))
+	seen := make(map[string]struct{}, len(capabilities))
+	for _, pattern := range filter.Models {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		for _, capability := range capabilities {
+			modelID := strings.TrimSpace(capability.ModelID)
+			key := strings.ToLower(modelID)
+			if modelID == "" || !groupAllowlistPatternMatches(pattern, modelID) {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			filtered = append(filtered, capability)
+		}
+	}
+	return filtered
+}
+
 func validateAutoRoutingRequest(request AutoRoutingRequest) error {
 	if request.IsModelDirectory || strings.TrimSpace(request.ModelID) == "" ||
 		request.RequestID == "" || request.Body == nil || !autoModelEndpointSupported(request.Endpoint) {
@@ -1029,7 +1072,17 @@ func cloneAutoRoutingProfile(profile *AutoRoutingProfile) AutoRoutingProfile {
 	}
 	cloned := *profile
 	cloned.Members = append([]AutoRoutingProfileMember(nil), profile.Members...)
+	cloned.ModelCatalogFilter = cloneAutoRoutingModelCatalogFilter(profile.ModelCatalogFilter)
 	return cloned
+}
+
+func cloneAutoRoutingModelCatalogFilter(filter *GroupModelAllowlist) *GroupModelAllowlist {
+	if filter == nil {
+		return nil
+	}
+	cloned := *filter
+	cloned.Models = append([]string(nil), filter.Models...)
+	return &cloned
 }
 
 func cloneAPIKeyAutoRoutingConfig(config *APIKeyAutoRoutingConfig) *APIKeyAutoRoutingConfig {

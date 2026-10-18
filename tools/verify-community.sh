@@ -19,6 +19,8 @@ fi
 "${pnpm_cmd[@]}" --dir frontend run typecheck
 "${pnpm_cmd[@]}" --dir frontend exec vitest run \
   src/api/__tests__/communityQRCodes.spec.ts \
+  src/api/__tests__/admin.autoGroups.spec.ts \
+  src/views/admin/__tests__/AutoGroupsView.spec.ts \
   src/api/__tests__/admin.paymentRechargeRisk.spec.ts \
   src/api/__tests__/playground.spec.ts \
   src/api/__tests__/url.spec.ts \
@@ -49,6 +51,7 @@ fi
 (cd backend && "$go_bin" test ./internal/service -run 'PlaygroundImage|PlaygroundHoldSettlesResolvedOutputPrice|OpenAIImage.*(Attachment|DownloadURL|Bytes|Pointer)')
 (cd backend && "$go_bin" test -tags unit ./internal/handler -run 'GrokPlaygroundImages|ReserveImageInflightBalance')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')
+(cd backend && "$go_bin" test -tags unit ./internal/pkg/apicompat ./internal/securityaudit ./internal/service ./internal/server/middleware -run 'AgentMessage|AutoRoutingPrepareRequestKey(ConcurrentModelsKeepGroupAndBillingRequestLocal|FailureDoesNotPoisonNextPlatform)|BindEffectiveGroupContextConcurrentRequestsKeepRoutingStateIsolated')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'ImageRateAlways|ImageCountOverridesChannelTokenPricing|ImageMultiplierIgnores|ChannelImageBillingUsesImageCount|ListPlazaGroups_GroupImagePrice|BatchImagePublicService_Submit|InflightEstimate_ImageUsesDedicatedGroupMultiplier|InflightEstimate_MediaKinds')
 (cd backend && "$go_bin" test -tags unit ./internal/payment/provider ./internal/pkg/ip)
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'EasyPay|PaymentRechargeRisk|PaymentRisk|AuthIPRisk|CanonicalizeReturnURL|PaymentReturnURLDrops|BuildPaymentReturnURL')

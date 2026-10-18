@@ -407,7 +407,8 @@ func autoModelCatalogEndpointAllowed(
 			}
 			return account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions)
 		}
-		return group.Platform == PlatformAnthropic
+		return group.Platform == PlatformAnthropic ||
+			group.Platform == PlatformAntigravity
 	case AutoModelEndpointMessages:
 		if domain.UsesOpenAIGateway(group.Platform) {
 			return account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilityChatCompletions)

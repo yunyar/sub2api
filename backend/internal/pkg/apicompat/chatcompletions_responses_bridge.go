@@ -580,17 +580,23 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			pendingReasoning = ""
 			continue
 		case "agent_message":
-			// Codex multi_agent_v2 用 agent_message 在父线程与子智能体之间传递任务和回复：
-			// input_text 是信封（消息类型、任务名、发送者），正文放在 encrypted_content 片段里
-			// （自定义 provider 下为明文）。chat 上游没有对应条目，按原顺序拼成一条 user 消息，
-			// 否则子智能体收不到任务却仍返回 200。
-			text := agentMessageText(item["content"])
-			if text == "" {
+			content, err := NormalizeAgentMessageContent(item["content"])
+			if err != nil {
+				return nil, nil, fmt.Errorf("normalize agent_message content: %w", err)
+			}
+			if len(content) == 0 {
 				pendingReasoning = ""
 				continue
 			}
-			content, _ := json.Marshal(text)
-			messages = append(messages, ChatMessage{Role: "user", Content: content})
+			var contentParts []json.RawMessage
+			if err := json.Unmarshal(content, &contentParts); err != nil {
+				return nil, nil, fmt.Errorf("parse normalized agent_message content: %w", err)
+			}
+			chatContent, err := responsesContentPartsToChatContentWithSeparator(contentParts, "user", "")
+			if err != nil {
+				return nil, nil, fmt.Errorf("convert agent_message content: %w", err)
+			}
+			messages = append(messages, ChatMessage{Role: "user", Content: chatContent})
 			pendingReasoning = ""
 			lastTurnReasoning = ""
 			continue
@@ -651,32 +657,6 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 	}
 
 	return messages, mediaByCallID, nil
-}
-
-// agentMessageText 按原顺序拼接 agent_message 里 input_text 与 encrypted_content 片段的文本。
-func agentMessageText(raw json.RawMessage) string {
-	raw = bytesTrimSpace(raw)
-	if len(raw) == 0 || string(raw) == "null" {
-		return ""
-	}
-	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
-		return text
-	}
-	var parts []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, part := range parts {
-		switch rawString(part["type"]) {
-		case "input_text", "text":
-			_, _ = b.WriteString(rawString(part["text"]))
-		case "encrypted_content":
-			_, _ = b.WriteString(rawString(part["encrypted_content"]))
-		}
-	}
-	return b.String()
 }
 
 // extractToolOutputMedia rewrites only recognized image nodes. Media-free
@@ -1022,6 +1002,10 @@ func responsesContentToChatContent(raw json.RawMessage, role string) (json.RawMe
 }
 
 func responsesContentPartsToChatContent(rawParts []json.RawMessage, role string) (json.RawMessage, error) {
+	return responsesContentPartsToChatContentWithSeparator(rawParts, role, "\n\n")
+}
+
+func responsesContentPartsToChatContentWithSeparator(rawParts []json.RawMessage, role, textSeparator string) (json.RawMessage, error) {
 	var textParts []string
 	var chatParts []ChatContentPart
 	hasNonText := false
@@ -1048,20 +1032,34 @@ func responsesContentPartsToChatContent(rawParts []json.RawMessage, role string)
 			if imageURL == "" {
 				continue
 			}
+			detail := rawString(part["detail"])
+			if detail == "" {
+				detail = rawNestedString(part["image_url"], "detail")
+			}
 			hasNonText = true
 			chatParts = append(chatParts, ChatContentPart{
 				Type:     "image_url",
-				ImageURL: &ChatImageURL{URL: imageURL},
+				ImageURL: &ChatImageURL{URL: imageURL, Detail: detail},
+			})
+		case "input_file":
+			hasNonText = true
+			chatParts = append(chatParts, ChatContentPart{
+				Type: "file",
+				File: &ChatFile{
+					Filename: rawString(part["filename"]),
+					FileData: rawString(part["file_data"]),
+					FileID:   rawString(part["file_id"]),
+				},
 			})
 		}
 	}
 
 	if !hasNonText {
-		joined, _ := json.Marshal(strings.Join(textParts, "\n\n"))
+		joined, _ := json.Marshal(strings.Join(textParts, textSeparator))
 		return joined, nil
 	}
 	if role != "user" {
-		joined, _ := json.Marshal(strings.Join(textParts, "\n\n"))
+		joined, _ := json.Marshal(strings.Join(textParts, textSeparator))
 		return joined, nil
 	}
 	if len(chatParts) == 0 {
@@ -1078,9 +1076,22 @@ func chatContentFromSingleResponsesPart(partType string, part map[string]json.Ra
 		if imageURL == "" {
 			imageURL = rawNestedString(part["image_url"], "url")
 		}
+		detail := rawString(part["detail"])
+		if detail == "" {
+			detail = rawNestedString(part["image_url"], "detail")
+		}
 		return json.Marshal([]ChatContentPart{{
 			Type:     "image_url",
-			ImageURL: &ChatImageURL{URL: imageURL},
+			ImageURL: &ChatImageURL{URL: imageURL, Detail: detail},
+		}})
+	case "input_file":
+		return json.Marshal([]ChatContentPart{{
+			Type: "file",
+			File: &ChatFile{
+				Filename: rawString(part["filename"]),
+				FileData: rawString(part["file_data"]),
+				FileID:   rawString(part["file_id"]),
+			},
 		}})
 	default:
 		return json.Marshal(rawString(part["text"]))

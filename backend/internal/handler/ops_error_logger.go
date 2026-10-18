@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	opsModelKey                  = "ops_model"
+	opsModelKey                  = service.OpsRequestModelKey
 	opsStreamKey                 = "ops_stream"
 	opsAccountIDKey              = "ops_account_id"
 	opsRoutingCapacityLimitedKey = "ops_routing_capacity_limited"
@@ -2111,6 +2111,9 @@ func resolveOpsPlatform(ctx context.Context, apiKey *service.APIKey, fallback st
 	}
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.Platform != "" {
 		return apiKey.Group.Platform
+	}
+	if apiKey != nil && apiKey.RoutingMode == service.AutoRoutingModeAuto {
+		return ""
 	}
 	return fallback
 }

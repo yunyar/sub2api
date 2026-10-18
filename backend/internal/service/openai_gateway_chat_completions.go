@@ -147,6 +147,13 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		}
 		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
 	}
+	if isResponsesShape {
+		normalizedBody, _, err := normalizeOpenAIResponsesAgentMessages(body)
+		if err != nil {
+			return nil, err
+		}
+		body = normalizedBody
+	}
 	// 上游为 Responses（含 adaptive 下 Responses 形状入站且供应商有原生
 	// Responses 端点）：走下方 Chat Completions ↔ Responses 转换链。
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)

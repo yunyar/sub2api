@@ -199,6 +199,62 @@
         </fieldset>
 
         <section class="space-y-3 border-t border-gray-100 pt-4 dark:border-dark-700">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ copy.modelCatalogFilter }}</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ copy.modelCatalogFilterScope }}</p>
+          </div>
+          <label class="flex items-center justify-between gap-4">
+            <span>
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">{{ copy.modelCatalogFilterEnabled }}</span>
+              <span class="block text-xs text-gray-500 dark:text-gray-400">{{ copy.modelCatalogFilterHint }}</span>
+            </span>
+            <input
+              v-model="form.model_catalog_filter_enabled"
+              data-testid="model-catalog-filter-toggle"
+              type="checkbox"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500 dark:bg-dark-700"
+            />
+          </label>
+          <div class="space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <label for="auto-profile-model-patterns" class="input-label mb-0">{{ copy.modelPatterns }}</label>
+              <button
+                type="button"
+                class="btn btn-secondary btn-sm"
+                data-testid="append-common-model-patterns"
+                @click="appendCommonModelPatterns"
+              >
+                {{ copy.appendCommonPatterns }}
+              </button>
+            </div>
+            <textarea
+              id="auto-profile-model-patterns"
+              v-model="form.model_catalog_filter_models"
+              data-testid="model-catalog-filter-models"
+              class="input min-h-40 resize-y font-mono leading-6"
+              :placeholder="copy.modelPatternsPlaceholder"
+              rows="7"
+              spellcheck="false"
+              :aria-describedby="form.model_catalog_filter_enabled && !parsedModelPatterns.length
+                ? 'auto-profile-model-patterns-error'
+                : 'auto-profile-model-patterns-hint'"
+            ></textarea>
+            <p id="auto-profile-model-patterns-hint" class="text-xs text-gray-500 dark:text-gray-400">
+              {{ copy.modelPatternsHint }}
+            </p>
+            <p
+              v-if="form.model_catalog_filter_enabled && !parsedModelPatterns.length"
+              id="auto-profile-model-patterns-error"
+              class="text-sm text-red-600 dark:text-red-400"
+              data-testid="model-catalog-filter-error"
+              role="alert"
+            >
+              {{ copy.modelPatternsRequired }}
+            </p>
+          </div>
+        </section>
+
+        <section class="space-y-3 border-t border-gray-100 pt-4 dark:border-dark-700">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
             <div>
               <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ copy.allowedGroupsOrder }}</h3>
@@ -332,6 +388,8 @@ interface ProfileForm {
   max_candidates: number
   allow_custom_order: boolean
   cross_group_retry_allowed: boolean
+  model_catalog_filter_enabled: boolean
+  model_catalog_filter_models: string
   group_ids: number[]
 }
 
@@ -384,6 +442,15 @@ const copy = computed(() => (locale.value ?? 'en').toLowerCase().startsWith('zh'
       allowCustomOrderHint: '用户可以从此配置中选择分组并调整顺序。',
       allowCrossGroupRetry: '允许跨组重试',
       crossGroupRetryHint: '请求确认未执行时，按候选分组顺序自动尝试下一个分组。',
+      modelCatalogFilter: '模型列表筛选',
+      modelCatalogFilterScope: '只控制客户端和游乐场拉取/展示的模型列表，不影响直接请求路由、分组选择或计费。',
+      modelCatalogFilterEnabled: '启用模型列表筛选',
+      modelCatalogFilterHint: '启用后，仅拉取匹配下方任一模式的模型；* 可匹配任意字符。',
+      modelPatterns: '模型名称或匹配模式',
+      modelPatternsPlaceholder: 'gpt-*\nclaude-*\ngemini-*',
+      modelPatternsHint: '每行一条，支持 * 通配符。快捷填入只会追加并去重，不会覆盖现有内容。',
+      appendCommonPatterns: '追加常见模型系列',
+      modelPatternsRequired: '启用筛选时至少需要填写一条模型名称或匹配模式。',
       allowedGroupsOrder: '允许的分组及默认顺序',
       groupEligibilityHint: '不包含组合分组。停用分组仍会显示，便于检查。',
       selectedGroups: (count: number) => `已选择 ${count} 个分组`,
@@ -438,6 +505,15 @@ const copy = computed(() => (locale.value ?? 'en').toLowerCase().startsWith('zh'
       allowCustomOrderHint: 'Users can choose and order groups from this profile.',
       allowCrossGroupRetry: 'Allow cross-group retry',
       crossGroupRetryHint: 'When a request is confirmed not to have executed, try the next candidate group in order.',
+      modelCatalogFilter: 'Model list filter',
+      modelCatalogFilterScope: 'Controls only the model list fetched or shown by clients and Playground. It does not affect direct-request routing, group selection, or billing.',
+      modelCatalogFilterEnabled: 'Enable model list filtering',
+      modelCatalogFilterHint: 'When enabled, only models matching at least one pattern below are listed. * matches any characters.',
+      modelPatterns: 'Model names or patterns',
+      modelPatternsPlaceholder: 'gpt-*\nclaude-*\ngemini-*',
+      modelPatternsHint: 'One entry per line; * is supported. The shortcut appends and deduplicates patterns without replacing existing entries.',
+      appendCommonPatterns: 'Append common model families',
+      modelPatternsRequired: 'Add at least one model name or pattern to enable filtering.',
       allowedGroupsOrder: 'Allowed groups and default order',
       groupEligibilityHint: 'Composite groups are excluded. Inactive groups remain visible for review.',
       selectedGroups: (count: number) => `${count} selected`,
@@ -470,9 +546,32 @@ function emptyForm(): ProfileForm {
     max_candidates: 1,
     allow_custom_order: false,
     cross_group_retry_allowed: false,
+    model_catalog_filter_enabled: false,
+    model_catalog_filter_models: '',
     group_ids: []
   }
 }
+
+const commonModelPatterns = [
+  'gpt-*',
+  'o1*',
+  'o3*',
+  'o4*',
+  'claude-*',
+  'gemini-*',
+  'grok-*',
+  'deepseek-*',
+  'kimi-*',
+  'qwen-*',
+  'glm-*'
+]
+
+const parsedModelPatterns = computed(() =>
+  [...new Set(form.model_catalog_filter_models
+    .split(/\r?\n/)
+    .map(pattern => pattern.trim())
+    .filter(Boolean))]
+)
 
 const orderedSelectedGroups = computed(() =>
   form.group_ids
@@ -497,6 +596,7 @@ const canSave = computed(() =>
   && Number.isSafeInteger(form.max_candidates)
   && form.max_candidates >= 1
   && invalidGroupIds.value.length === 0
+  && (!form.model_catalog_filter_enabled || parsedModelPatterns.value.length > 0)
   && (form.status === 'disabled' || form.group_ids.length > 0)
 )
 
@@ -507,8 +607,18 @@ function profileToForm(profile: AutoGroupProfile): ProfileForm {
     max_candidates: profile.max_candidates,
     allow_custom_order: profile.allow_custom_order,
     cross_group_retry_allowed: profile.cross_group_retry_allowed,
+    model_catalog_filter_enabled: profile.model_catalog_filter?.enabled === true,
+    model_catalog_filter_models: (profile.model_catalog_filter?.models ?? []).join('\n'),
     group_ids: [...profile.group_ids]
   }
+}
+
+function appendCommonModelPatterns() {
+  const existing = parsedModelPatterns.value
+  form.model_catalog_filter_models = [
+    ...existing,
+    ...commonModelPatterns.filter(pattern => !existing.includes(pattern))
+  ].join('\n')
 }
 
 function errorMessage(error: unknown): string {
@@ -619,6 +729,10 @@ async function saveProfile() {
     max_candidates: form.max_candidates,
     allow_custom_order: form.allow_custom_order,
     cross_group_retry_allowed: form.cross_group_retry_allowed,
+    model_catalog_filter: {
+      enabled: form.model_catalog_filter_enabled,
+      models: parsedModelPatterns.value
+    },
     group_ids: [...form.group_ids]
   }
 

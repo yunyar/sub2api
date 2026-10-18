@@ -40,14 +40,13 @@ func TestResponsesToChatCompletionsRequest_AgentMessageBecomesUserMessage(t *tes
 	require.JSONEq(t, `"Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/alpha_task\nPayload:\nALPHA"`, string(out.Messages[3].Content))
 }
 
-func TestResponsesToChatCompletionsRequest_AgentMessageWithoutTextIsSkipped(t *testing.T) {
+func TestResponsesToChatCompletionsRequest_AgentMessageEmptyContentIsSkipped(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "glm-5.3",
 		Input: json.RawMessage(`[
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
 			{"type":"agent_message","author":"/root","recipient":"/root/a","content":[]},
-			{"type":"agent_message","author":"/root","recipient":"/root/a"},
-			{"type":"agent_message","author":"/root","recipient":"/root/a","content":[{"type":"input_image","image_url":"data:image/png;base64,AA=="}]}
+			{"type":"agent_message","author":"/root","recipient":"/root/a"}
 		]`),
 	}
 
@@ -55,4 +54,68 @@ func TestResponsesToChatCompletionsRequest_AgentMessageWithoutTextIsSkipped(t *t
 	require.NoError(t, err)
 	require.Len(t, out.Messages, 1, "没有文本正文的 agent_message 不产生消息")
 	require.Equal(t, "user", out.Messages[0].Role)
+}
+
+func TestResponsesToChatCompletionsRequest_AgentMessagePreservesMediaOrder(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "glm-5.3",
+		Input: json.RawMessage(`[
+			{"type":"agent_message","content":[
+				{"type":"input_text","text":"Message Type: NEW_TASK\nPayload:\n"},
+				{"type":"input_image","image_url":"data:image/png;base64,AA==","detail":"low"},
+				{"type":"encrypted_content","encrypted_content":"Inspect this file."},
+				{"type":"input_file","filename":"notes.txt","file_data":"data:text/plain;base64,SGk="},
+				{"type":"input_image","image_url":{"url":"https://example.test/second.png","detail":"high"}}
+			]}
+		]`),
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Messages, 1)
+	require.Equal(t, "user", out.Messages[0].Role)
+
+	var parts []ChatContentPart
+	require.NoError(t, json.Unmarshal(out.Messages[0].Content, &parts))
+	require.Len(t, parts, 5)
+	require.Equal(t, "text", parts[0].Type)
+	require.Equal(t, "Message Type: NEW_TASK\nPayload:\n", parts[0].Text)
+	require.Equal(t, "image_url", parts[1].Type)
+	require.Equal(t, "data:image/png;base64,AA==", parts[1].ImageURL.URL)
+	require.Equal(t, "low", parts[1].ImageURL.Detail)
+	require.Equal(t, "text", parts[2].Type)
+	require.Equal(t, "Inspect this file.", parts[2].Text)
+	require.Equal(t, "file", parts[3].Type)
+	require.Equal(t, "notes.txt", parts[3].File.Filename)
+	require.Equal(t, "data:text/plain;base64,SGk=", parts[3].File.FileData)
+	require.Equal(t, "image_url", parts[4].Type)
+	require.Equal(t, "https://example.test/second.png", parts[4].ImageURL.URL)
+	require.Equal(t, "high", parts[4].ImageURL.Detail)
+}
+
+func TestResponsesToChatCompletionsRequest_AgentMessageOpaqueContentErrors(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "glm-5.3",
+		Input: json.RawMessage(`[
+			{"type":"agent_message","content":[
+				{"type":"input_text","text":"Message Type: NEW_TASK\nPayload:\n"},
+				{"type":"encrypted_content","encrypted_content":"gAAAAABopaque-payload"}
+			]}
+		]`),
+	}
+
+	_, err := ResponsesToChatCompletionsRequest(req)
+	require.ErrorIs(t, err, ErrOpaqueAgentMessageContent)
+}
+
+func TestResponsesToChatCompletionsRequest_AgentMessageUnsupportedContentErrors(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "glm-5.3",
+		Input: json.RawMessage(`[
+			{"type":"agent_message","content":[{"type":"input_audio","data":"opaque"}]}
+		]`),
+	}
+
+	_, err := ResponsesToChatCompletionsRequest(req)
+	require.ErrorIs(t, err, ErrUnsupportedAgentMessage)
 }

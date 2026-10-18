@@ -1460,6 +1460,12 @@ func normalizeOpenAIResponsesCompatibilityBodyWithOptions(body []byte, account *
 			return body, false, err
 		}
 	}
+	if next, agentMessagesChanged, err := normalizeOpenAIResponsesAgentMessages(normalized); err != nil {
+		return body, false, err
+	} else if agentMessagesChanged {
+		normalized = next
+		changed = true
+	}
 	if next, normalizedReasoningContent, err := normalizeOpenAIResponsesReasoningContentReplay(normalized); err != nil {
 		return body, false, err
 	} else if normalizedReasoningContent {

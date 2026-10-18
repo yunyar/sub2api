@@ -110,6 +110,12 @@ func (s *AntigravityGatewayService) ForwardAsResponses(
 		return nil, err
 	}
 
+	normalizedBody, _, err := normalizeOpenAIResponsesLegacyIngressWithConfig(settingServiceConfig(s.settingService), body)
+	if err != nil {
+		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+	}
+	body = normalizedBody
+
 	var request apicompat.ResponsesRequest
 	if json.Unmarshal(body, &request) != nil {
 		return nil, s.writeAntigravityCompatError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")

@@ -156,6 +156,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	originalModel := reqModel
 
 	if account.Platform == PlatformGrok {
+		normalizedBody, _, err := normalizeOpenAIResponsesAgentMessages(body)
+		if err != nil {
+			return nil, err
+		}
+		body = normalizedBody
 		return s.forwardGrokResponses(ctx, c, account, body, originalModel, reqStream, startTime)
 	}
 
@@ -191,6 +196,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, reqModel)
 	case APIProtocolChatCompletions:
 		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
+	}
+	if normalizedBody, changed, err := normalizeOpenAIResponsesAgentMessages(body); err != nil {
+		return nil, err
+	} else if changed {
+		body = normalizedBody
+		originalBody = normalizedBody
+		requestView = newOpenAIRequestView(body)
 	}
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {

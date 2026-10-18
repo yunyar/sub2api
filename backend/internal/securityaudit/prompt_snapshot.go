@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 )
 
 var (
@@ -273,6 +275,10 @@ func extractResponses(value any) []promptSegment {
 			case string:
 				result = append(result, promptSegment{text: entry, user: true, role: "user"})
 			case map[string]any:
+				if stringValue(entry["type"]) == "agent_message" {
+					result = append(result, extractAgentMessageSegments(entry["content"])...)
+					continue
+				}
 				role := strings.ToLower(stringValue(entry["role"]))
 				if role != "" && !isClientInstructionRole(role) {
 					continue
@@ -288,6 +294,9 @@ func extractResponses(value any) []promptSegment {
 		}
 		return result
 	case map[string]any:
+		if stringValue(typed["type"]) == "agent_message" {
+			return extractAgentMessageSegments(typed["content"])
+		}
 		role := strings.ToLower(stringValue(typed["role"]))
 		if role != "" && !isClientInstructionRole(role) {
 			return nil
@@ -296,6 +305,29 @@ func extractResponses(value any) []promptSegment {
 	default:
 		return nil
 	}
+}
+
+func extractAgentMessageSegments(content any) []promptSegment {
+	rawContent, marshalErr := json.Marshal(content)
+	if marshalErr == nil {
+		normalized, err := apicompat.NormalizeAgentMessageContent(rawContent)
+		if err == nil {
+			var normalizedContent any
+			if len(normalized) == 0 || json.Unmarshal(normalized, &normalizedContent) != nil {
+				return nil
+			}
+			return agentMessageUserSegment(contentTexts(normalizedContent))
+		}
+	}
+	return agentMessageUserSegment(contentTexts(content))
+}
+
+func agentMessageUserSegment(texts []string) []promptSegment {
+	text := strings.Join(texts, "")
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return []promptSegment{{text: text, user: true, role: "user"}}
 }
 
 func isClientInstructionRole(role string) bool {

@@ -47,6 +47,7 @@ type AutoRoutingProfile struct {
 	MaxCandidates          int
 	AllowCustomOrder       bool
 	CrossGroupRetryAllowed bool
+	ModelCatalogFilter     *GroupModelAllowlist
 	Members                []AutoRoutingProfileMember
 	CreatedAt              time.Time
 	UpdatedAt              time.Time

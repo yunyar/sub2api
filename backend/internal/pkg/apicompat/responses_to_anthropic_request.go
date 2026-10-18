@@ -265,6 +265,26 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 				messages = append(messages, AnthropicMessage{Role: "assistant", Content: content})
 			}
 
+		case item.Type == "agent_message":
+			normalizedContent, err := NormalizeAgentMessageContent(item.Content)
+			if err != nil {
+				return nil, nil, fmt.Errorf("normalize agent_message content: %w", err)
+			}
+			if len(normalizedContent) == 0 {
+				continue
+			}
+			if err := validateAnthropicAgentMessageMedia(normalizedContent); err != nil {
+				return nil, nil, err
+			}
+			content, err := convertResponsesUserToAnthropicContent(normalizedContent)
+			if err != nil {
+				return nil, nil, err
+			}
+			if anthropicContentIsEmpty(content) {
+				continue
+			}
+			messages = append(messages, AnthropicMessage{Role: "user", Content: content})
+
 		case item.Role == "user":
 			content, err := convertResponsesUserToAnthropicContent(item.Content)
 			if err != nil {
@@ -333,6 +353,37 @@ func convertResponsesInputToAnthropic(instructions string, inputRaw json.RawMess
 	}
 
 	return system, messages, nil
+}
+
+func validateAnthropicAgentMessageMedia(raw json.RawMessage) error {
+	var rawParts []json.RawMessage
+	if err := json.Unmarshal(raw, &rawParts); err != nil {
+		return fmt.Errorf("parse normalized agent_message content: %w", err)
+	}
+
+	for index, rawPart := range rawParts {
+		var part struct {
+			Type     string          `json:"type"`
+			ImageURL json.RawMessage `json:"image_url"`
+			FileData string          `json:"file_data"`
+		}
+		if err := json.Unmarshal(rawPart, &part); err != nil {
+			return fmt.Errorf("parse normalized agent_message part %d: %w", index, err)
+		}
+		switch part.Type {
+		case "input_image":
+			source := dataURIToAnthropicImageSource(agentMessageImageURL(part.ImageURL))
+			if source == nil || source.MediaType == "" || source.Data == "" {
+				return fmt.Errorf("%w: agent_message image part %d cannot be represented by Anthropic", ErrUnsupportedAgentMessage, index)
+			}
+		case "input_file":
+			source := dataURIToAnthropicFileSource(part.FileData)
+			if source == nil || source.MediaType == "" || source.Data == "" {
+				return fmt.Errorf("%w: agent_message file part %d requires inline file_data", ErrUnsupportedAgentMessage, index)
+			}
+		}
+	}
+	return nil
 }
 
 func responsesFunctionOutputToAnthropicContent(item ResponsesInputItem) json.RawMessage {
@@ -554,10 +605,23 @@ func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessag
 	}
 
 	// Array of content parts → Anthropic content blocks.
-	var parts []ResponsesContentPart
-	if err := json.Unmarshal(raw, &parts); err != nil {
+	var rawParts []json.RawMessage
+	if err := json.Unmarshal(raw, &rawParts); err != nil {
 		// Pass through as-is if we can't parse
 		return raw, nil
+	}
+
+	type userContentPart struct {
+		Type     string          `json:"type"`
+		Text     string          `json:"text"`
+		ImageURL json.RawMessage `json:"image_url"`
+		FileData string          `json:"file_data"`
+	}
+	parts := make([]userContentPart, len(rawParts))
+	for i, rawPart := range rawParts {
+		if err := json.Unmarshal(rawPart, &parts[i]); err != nil {
+			return raw, nil
+		}
 	}
 
 	var blocks []AnthropicContentBlock
@@ -571,7 +635,7 @@ func convertResponsesUserToAnthropicContent(raw json.RawMessage) (json.RawMessag
 				})
 			}
 		case "input_image":
-			src := dataURIToAnthropicImageSource(p.ImageURL)
+			src := dataURIToAnthropicImageSource(agentMessageImageURL(p.ImageURL))
 			if src != nil {
 				blocks = append(blocks, AnthropicContentBlock{
 					Type:   "image",

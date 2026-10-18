@@ -371,6 +371,73 @@ func TestAntigravityCompatResponsesCodexWebSearchMixedWithFunctionsDropsBuiltins
 	require.False(t, gjson.GetBytes(requestBody, "request.toolConfig.includeServerSideToolInvocations").Exists())
 }
 
+func TestAntigravityCompatResponsesCodexFunctionToolStreamCompletes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstreamBody := `data: {"response":{"responseId":"resp_codex_tool","candidates":[{"content":{"parts":[{"functionCall":{"name":"shell","args":{"command":"pwd"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":3}}}` + "\n\n"
+	upstream := &queuedHTTPUpstreamStub{
+		responses: []*http.Response{{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+		}},
+	}
+	svc := newAntigravityCompatService(config.GatewayConfig{MaxLineSize: defaultMaxLineSize}, upstream)
+	body := []byte(`{
+		"model":"gemini-3.1-pro-high",
+		"input":[{"role":"user","content":[{"type":"input_text","text":"Run pwd"}]}],
+		"stream":true,
+		"tools":[{"type":"function","name":"shell","description":"Run a shell command","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}]
+	}`)
+	c, recorder := newAntigravityCompatContext(http.MethodPost, "/v1/responses", body)
+
+	result, err := svc.ForwardAsResponses(context.Background(), c, newAntigravityCompatAccount(AccountTypeOAuth), body, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 8, result.Usage.InputTokens)
+	require.Equal(t, 3, result.Usage.OutputTokens)
+	require.Len(t, upstream.requestBodies, 1)
+	require.True(t, gjson.GetBytes(upstream.requestBodies[0], "request.tools.0.functionDeclarations.#(name==\"shell\")").Exists())
+
+	var eventTypes []string
+	var completedEvent gjson.Result
+	for _, frame := range strings.Split(strings.TrimSpace(recorder.Body.String()), "\n\n") {
+		var eventType string
+		var data string
+		for _, line := range strings.Split(frame, "\n") {
+			if strings.HasPrefix(line, "event: ") {
+				eventType = strings.TrimPrefix(line, "event: ")
+			}
+			if strings.HasPrefix(line, "data: ") {
+				data = strings.TrimPrefix(line, "data: ")
+			}
+		}
+		if eventType == "" || data == "" {
+			continue
+		}
+		eventTypes = append(eventTypes, eventType)
+		if eventType == "response.completed" {
+			completedEvent = gjson.Parse(data)
+		}
+	}
+
+	require.Equal(t, []string{
+		"response.created",
+		"response.output_item.added",
+		"response.function_call_arguments.delta",
+		"response.function_call_arguments.done",
+		"response.output_item.done",
+		"response.completed",
+	}, eventTypes)
+	require.True(t, completedEvent.Exists())
+	require.Equal(t, "completed", completedEvent.Get("response.status").String())
+	require.Equal(t, "function_call", completedEvent.Get("response.output.0.type").String())
+	require.Equal(t, "shell", completedEvent.Get("response.output.0.name").String())
+	require.JSONEq(t, `{"command":"pwd"}`, completedEvent.Get("response.output.0.arguments").String())
+	require.Equal(t, int64(8), completedEvent.Get("response.usage.input_tokens").Int())
+	require.Equal(t, int64(3), completedEvent.Get("response.usage.output_tokens").Int())
+}
+
 func TestAntigravityCompatPreservesChatTokenLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {

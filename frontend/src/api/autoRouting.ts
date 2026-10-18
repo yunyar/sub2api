@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import type { AutoGroupModelCatalogFilter } from './admin/autoGroups'
 
 export type KeyRoutingMode = 'fixed' | 'auto'
 export type AutoSelectionMode = 'inherit' | 'custom'
@@ -12,6 +13,7 @@ export interface AvailableAutoGroupProfile {
   allow_custom_order: boolean
   cross_group_retry_allowed: boolean
   group_ids: number[]
+  model_catalog_filter?: AutoGroupModelCatalogFilter
 }
 
 export interface KeyAutoRoutingConfig {

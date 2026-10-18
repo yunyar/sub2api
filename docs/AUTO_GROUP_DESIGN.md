@@ -14,7 +14,9 @@
 ### 第一阶段边界
 
 - 支持 HTTP Chat Completions、Responses、Messages、同步图片生成及编辑。Auto 不支持原生 Gemini 路由、WebSocket、Codex 模型清单、`previous_response_id`、异步图片资源和 Responses 内置生图工具；固定组原有能力保留。
+- Antigravity 分组可通过现有兼容转发链处理 HTTP `/v1/responses`；Gemini 分组暂不声明 Responses 能力，避免混合调度选中不支持该端点的原生 Gemini 账号。仍需满足用户授权、分组模型白名单和 Claude Code 限制。Auto 提前拒绝请求时也记录已解析的模型名；尚未选定分组时平台留空，不再根据 `/v1/responses` 等入站路径推断上游供应商。
 - 模型目录按当前授权候选合并模型、平台与端点能力；尚未提供按来源组展示的价格区间、部分目录失败降级。源目录读取失败会返回错误。
+- 管理员可在 Auto 配置中开启「模型列表筛选」，每行填写目录中的模型名或 `*` 通配模式，例如 `gpt-5.5`、`claude-*`、`gemini-*`。大小写不敏感，客户端 `/v1/models`、单模型目录与游乐场只显示真实授权目录中匹配的原始模型 ID；不会凭规则新增模型或展开目录中不存在的 `-thinking` 别名。规则按填写顺序输出并去重。该开关只影响目录展示，直接请求的权限、路由和实际组计费仍沿用原规则。
 - 实际组配置、用户倍率、账号倍率和定价时刻写入请求/派发快照；渠道映射与基础模型单价继续使用现有计费解析器，不承诺所有全局价格配置在整个请求期间冻结。
 - 执行防重基于服务端请求 ID，不能将客户端使用新请求 ID 再次提交视为同一次请求。已完成请求不缓存/重放输出。
 - 未提供结果不明预留款的专用核对界面；上线前应确认现有账务排查流程。当前没有在线生产验收结果。
@@ -75,7 +77,7 @@ UI 将 Auto 展示为“自动分组”，数据库用独立路由配置表示�
 
 下列是拟新增结构，不代表当前已有字段。
 
-- `auto_group_profiles`：id、name、status、revision、max_candidates、allow_custom_order、cross_group_retry_allowed。首期创建一个名为 Auto 的配置，结构允许以后创建多个。
+- `auto_group_profiles`：id、name、status、revision、max_candidates、allow_custom_order、cross_group_retry_allowed、model_catalog_filter。筛选字段为 JSONB `{enabled:false, models:[]}`，默认关闭；开启时列表不可为空。迁移 `248` 给旧配置补充关闭状态；旧客户端更新省略该字段时保留已存规则，修改仍受 revision 并发控制。结构允许创建多个 Auto 配置。
 - `auto_group_profile_members`：profile_id、group_id、sort_order。确定允许范围与默认顺序；唯一约束 `(profile_id, group_id)` 和 `(profile_id, sort_order)`，反查索引 group_id。
 - `api_keys`：routing_mode（默认 fixed）、auto_profile_id（可空）、auto_selection_mode（inherit/custom）、cross_group_retry（默认 false）、routing_revision。
 - `api_key_auto_groups`：api_key_id、group_id、sort_order；唯一约束 `(api_key_id, group_id)` 和 `(api_key_id, sort_order)`，反查索引 group_id。

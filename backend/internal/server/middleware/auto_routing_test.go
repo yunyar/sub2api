@@ -99,6 +99,40 @@ func TestPrepareAutoRoutingFailsClosedWhenAutoRoutingUnavailable(t *testing.T) {
 	}
 }
 
+func TestPrepareAutoRoutingRecordsModelBeforeCandidateResolution(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, modelID := range []string{"gemini-4-argon-high", "gpt-6-luna"} {
+		t.Run(modelID, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			body := []byte(`{"model":"` + modelID + `","input":"hello"}`)
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			ctx.Request = request.WithContext(context.WithValue(request.Context(), ctxkey.RequestID, "local-id"))
+			key := &service.APIKey{
+				ID: 9, UserID: 7, RoutingMode: service.AutoRoutingModeAuto,
+				User: &service.User{ID: 7},
+			}
+
+			got, handled := PrepareAutoRouting(ctx, key, &service.AutoRoutingService{}, nil)
+
+			if !handled || got != key || recorder.Code != http.StatusServiceUnavailable {
+				t.Fatalf("unavailable routing = (%p, %t, %d), want original key, handled, 503", got, handled, recorder.Code)
+			}
+			if model := ctx.GetString(service.OpsRequestModelKey); model != modelID {
+				t.Fatalf("Ops model = %q, want requested model even when routing fails", model)
+			}
+			if model, _ := ctx.Request.Context().Value(ctxkey.Model).(string); model != modelID {
+				t.Fatalf("request context model = %q, want requested model", model)
+			}
+			restored, err := io.ReadAll(ctx.Request.Body)
+			if err != nil || !bytes.Equal(restored, body) {
+				t.Fatalf("restored body = %q, error = %v", restored, err)
+			}
+		})
+	}
+}
+
 func TestDispatchAutoRoutingRejectsRepeatedDispatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

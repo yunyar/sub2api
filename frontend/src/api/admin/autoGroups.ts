@@ -2,6 +2,11 @@ import { apiClient } from '../client'
 
 export type AutoGroupProfileStatus = 'disabled' | 'active'
 
+export interface AutoGroupModelCatalogFilter {
+  enabled: boolean
+  models: string[]
+}
+
 export interface AutoGroupProfile {
   id: number
   name: string
@@ -11,6 +16,7 @@ export interface AutoGroupProfile {
   allow_custom_order: boolean
   cross_group_retry_allowed: boolean
   group_ids: number[]
+  model_catalog_filter?: AutoGroupModelCatalogFilter
 }
 
 export interface CreateAutoGroupProfileRequest {
@@ -20,6 +26,7 @@ export interface CreateAutoGroupProfileRequest {
   allow_custom_order: boolean
   cross_group_retry_allowed: boolean
   group_ids: number[]
+  model_catalog_filter: AutoGroupModelCatalogFilter
 }
 
 export interface UpdateAutoGroupProfileRequest extends CreateAutoGroupProfileRequest {

@@ -38,6 +38,14 @@ const migration = await readFile(new URL('../backend/migrations/246_auto_routing
 await database.exec(migration);
 await database.exec(migration);
 await database.exec(`INSERT INTO auto_group_profiles(id,name,status) VALUES (1,'Auto','active');`);
+const modelCatalogMigration = await readFile(new URL('../backend/migrations/248_auto_routing_model_catalog_filter.sql', import.meta.url), 'utf8');
+await database.exec(modelCatalogMigration);
+await database.exec(modelCatalogMigration);
+assert.deepEqual((await database.query(`SELECT model_catalog_filter FROM auto_group_profiles WHERE id=1`)).rows[0].model_catalog_filter, {enabled:false,models:[]});
+await database.exec(`INSERT INTO auto_group_profiles(id,name,status) VALUES (2,'New Auto','disabled');`);
+assert.deepEqual((await database.query(`SELECT model_catalog_filter FROM auto_group_profiles WHERE id=2`)).rows[0].model_catalog_filter, {enabled:false,models:[]});
+await database.query(`UPDATE auto_group_profiles SET model_catalog_filter=$1::jsonb WHERE id=1`, [JSON.stringify({enabled:true,models:['gpt-*','claude-*']})]);
+assert.deepEqual((await database.query(`SELECT model_catalog_filter FROM auto_group_profiles WHERE id=1`)).rows[0].model_catalog_filter, {enabled:true,models:['gpt-*','claude-*']});
 const keyState = async () => (await database.query(`SELECT group_id,routing_mode,routing_revision FROM api_keys WHERE id=1`)).rows[0];
 assert.deepEqual(await keyState(), {group_id:1,routing_mode:'fixed',routing_revision:0});
 await assert.rejects(database.exec(`UPDATE api_keys SET routing_mode='auto',group_id=NULL WHERE id=1`));
@@ -75,5 +83,5 @@ await database.exec(`INSERT INTO auto_route_attempts(execution_id,attempt_no,gro
 assert.equal((await database.query(`UPDATE auto_route_executions SET status='prepared',current_attempt=0 WHERE id=1 AND status='dispatching' AND settlement_status='pending' RETURNING id`)).rows.length,0);
 await database.exec(`INSERT INTO usage_logs(id,routing_mode,auto_profile_id,routing_revision,route_attempt_count) VALUES(1,'auto',1,5,1)`);
 await assert.rejects(database.exec(`INSERT INTO usage_logs(id,routing_mode) VALUES(2,'auto')`));
-console.log('PASS: PostgreSQL WASM migration repeatability, fixed/Auto transitions, monotonic revisions, route identity constraints, account failover snapshots, terminal snapshot protection, unsent claim release, audit constraints');
+console.log('PASS: PostgreSQL WASM migration repeatability, model catalog defaults and persistence, fixed/Auto transitions, monotonic revisions, route identity constraints, account failover snapshots, terminal snapshot protection, unsent claim release, audit constraints');
 await database.close();

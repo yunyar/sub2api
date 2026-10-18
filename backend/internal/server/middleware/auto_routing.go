@@ -174,6 +174,8 @@ func PrepareAutoRouting(
 		return apiKey, true
 	}
 
+	c.Set(service.OpsRequestModelKey, input.ModelID)
+	c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), ctxkey.Model, input.ModelID))
 	preparation, err := routing.PrepareRequestKey(c.Request.Context(), apiKey, service.AutoRoutingRequest{
 		Endpoint:  service.AutoModelEndpoint(input.Endpoint),
 		ModelID:   input.ModelID,

@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -19,7 +20,7 @@ func TestAutoRoutingRepository_ProfileUpdateUsesRevisionCAS(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("UPDATE auto_group_profiles").
-		WithArgs(int64(17), "Auto", service.AutoRoutingProfileStatusDisabled, 8, true, false, int64(3)).
+		WithArgs(int64(17), "Auto", service.AutoRoutingProfileStatusDisabled, 8, true, false, nil, int64(3)).
 		WillReturnRows(sqlmock.NewRows([]string{"revision", "updated_at"}))
 	mock.ExpectRollback()
 
@@ -32,6 +33,131 @@ func TestAutoRoutingRepository_ProfileUpdateUsesRevisionCAS(t *testing.T) {
 		AllowCustomOrder: true,
 	}, 3)
 	require.ErrorIs(t, err, service.ErrAutoRoutingRevisionConflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAutoRoutingRepository_CreateProfilePersistsModelCatalogFilter(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	now := time.Now().UTC()
+	mock.ExpectBegin()
+	mock.ExpectQuery("INSERT INTO auto_group_profiles").
+		WithArgs("Auto", service.AutoRoutingProfileStatusDisabled, 5, true, false,
+			[]byte(`{"enabled":true,"models":["gpt-5.5-*"]}`)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "revision", "created_at", "updated_at"}).
+			AddRow(int64(17), int64(1), now, now))
+	mock.ExpectExec("DELETE FROM auto_group_profile_members").
+		WithArgs(int64(17)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	profile := &service.AutoRoutingProfile{
+		Name: "Auto", Status: service.AutoRoutingProfileStatusDisabled,
+		MaxCandidates: 5, AllowCustomOrder: true,
+		ModelCatalogFilter: &service.GroupModelAllowlist{
+			Enabled: true, Models: []string{"gpt-5.5-*"},
+		},
+	}
+	err = (&autoRoutingRepository{db: database}).CreateAutoRoutingProfile(context.Background(), profile)
+	require.NoError(t, err)
+	require.Equal(t, int64(17), profile.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAutoRoutingRepository_GetAndListProfilesLoadModelCatalogFilter(t *testing.T) {
+	now := time.Now().UTC()
+	filterJSON := []byte(`{"enabled":true,"models":["gpt-5.5-*"]}`)
+	for _, testCase := range []struct {
+		name string
+		run  func(*testing.T, sqlmock.Sqlmock, *sql.DB)
+	}{
+		{
+			name: "get",
+			run: func(t *testing.T, mock sqlmock.Sqlmock, database *sql.DB) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT id, name, status, revision, max_candidates, allow_custom_order").
+					WithArgs(int64(17)).
+					WillReturnRows(sqlmock.NewRows([]string{
+						"id", "name", "status", "revision", "max_candidates", "allow_custom_order",
+						"cross_group_retry_allowed", "model_catalog_filter", "created_at", "updated_at",
+					}).AddRow(int64(17), "Auto", service.AutoRoutingProfileStatusActive, int64(3), 5, true, false, filterJSON, now, now))
+				mock.ExpectQuery("SELECT group_id, sort_order").
+					WithArgs(int64(17)).
+					WillReturnRows(sqlmock.NewRows([]string{"group_id", "sort_order"}).AddRow(int64(8), 0))
+				mock.ExpectCommit()
+
+				profile, err := (&autoRoutingRepository{db: database}).GetAutoRoutingProfile(context.Background(), 17)
+				require.NoError(t, err)
+				require.True(t, profile.ModelCatalogFilter.Enabled)
+				require.Equal(t, []string{"gpt-5.5-*"}, profile.ModelCatalogFilter.Models)
+				require.Equal(t, []service.AutoRoutingProfileMember{{GroupID: 8, SortOrder: 0}}, profile.Members)
+			},
+		},
+		{
+			name: "list",
+			run: func(t *testing.T, mock sqlmock.Sqlmock, database *sql.DB) {
+				mock.ExpectBegin()
+				mock.ExpectQuery("SELECT id, name, status, revision, max_candidates, allow_custom_order").
+					WillReturnRows(sqlmock.NewRows([]string{
+						"id", "name", "status", "revision", "max_candidates", "allow_custom_order",
+						"cross_group_retry_allowed", "model_catalog_filter", "created_at", "updated_at",
+					}).AddRow(int64(17), "Auto", service.AutoRoutingProfileStatusActive, int64(3), 5, true, false, filterJSON, now, now))
+				mock.ExpectQuery("SELECT profile_id, group_id, sort_order").
+					WillReturnRows(sqlmock.NewRows([]string{"profile_id", "group_id", "sort_order"}).AddRow(int64(17), int64(8), 0))
+				mock.ExpectCommit()
+
+				profiles, err := (&autoRoutingRepository{db: database}).ListAutoRoutingProfiles(context.Background())
+				require.NoError(t, err)
+				require.Len(t, profiles, 1)
+				require.True(t, profiles[0].ModelCatalogFilter.Enabled)
+				require.Equal(t, []string{"gpt-5.5-*"}, profiles[0].ModelCatalogFilter.Models)
+				require.Equal(t, []service.AutoRoutingProfileMember{{GroupID: 8, SortOrder: 0}}, profiles[0].Members)
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			database, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer func() { _ = database.Close() }()
+
+			testCase.run(t, mock, database)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestAutoRoutingRepository_ProfileUpdateWritesFilterWithRevisionCAS(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	now := time.Now().UTC()
+	mock.ExpectBegin()
+	mock.ExpectQuery("UPDATE auto_group_profiles").
+		WithArgs(int64(17), "Auto", service.AutoRoutingProfileStatusActive, 5, true, false,
+			[]byte(`{"enabled":true,"models":["gpt-5.5-*"]}`), int64(3)).
+		WillReturnRows(sqlmock.NewRows([]string{"revision", "updated_at"}).AddRow(int64(4), now))
+	mock.ExpectExec("DELETE FROM auto_group_profile_members").
+		WithArgs(int64(17)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO auto_group_profile_members").
+		WithArgs(int64(17), int64(8), 0).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	profile := &service.AutoRoutingProfile{
+		ID: 17, Name: "Auto", Status: service.AutoRoutingProfileStatusActive,
+		MaxCandidates: 5, AllowCustomOrder: true,
+		Members: []service.AutoRoutingProfileMember{{GroupID: 8, SortOrder: 0}},
+		ModelCatalogFilter: &service.GroupModelAllowlist{
+			Enabled: true, Models: []string{"gpt-5.5-*"},
+		},
+	}
+	err = (&autoRoutingRepository{db: database}).UpdateAutoRoutingProfile(context.Background(), profile, 3)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), profile.Revision)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

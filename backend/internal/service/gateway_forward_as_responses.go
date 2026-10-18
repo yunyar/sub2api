@@ -83,7 +83,10 @@ func (s *GatewayService) ForwardAsResponses(
 	responsesReq.Model = mappedModel
 	anthropicReq, err := apicompat.ResponsesToAnthropicRequest(&responsesReq)
 	if err != nil {
-		if isClaude55SignedThinkingModel(mappedModel) {
+		if isClaude55SignedThinkingModel(mappedModel) ||
+			errors.Is(err, apicompat.ErrOpaqueAgentMessageContent) ||
+			errors.Is(err, apicompat.ErrUnconfirmedAgentMessage) ||
+			errors.Is(err, apicompat.ErrUnsupportedAgentMessage) {
 			writeResponsesError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		}
 		return nil, fmt.Errorf("convert responses to anthropic: %w", err)
@@ -353,15 +356,67 @@ func normalizeAnthropicEventUsageForResponses(event *apicompat.AnthropicStreamEv
 	}
 }
 
-// parseAnthropicSSEField parses an SSE field line in the form "field:value" or "field: value".
-// According to the SSE spec (https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation),
-// the space after the colon is optional. This function handles both formats.
-func parseAnthropicSSEField(line, field string) (string, bool) {
-	prefix := field + ":"
-	if !strings.HasPrefix(line, prefix) {
-		return "", false
+func (s *GatewayService) readAnthropicResponsesEvents(
+	resp *http.Response,
+	processEvent func(*apicompat.AnthropicStreamEvent) bool,
+) error {
+	defer func() { _ = resp.Body.Close() }()
+	scanner := bufio.NewScanner(resp.Body)
+	maxLineSize := defaultMaxLineSize
+	var streamInterval time.Duration
+	if s.cfg != nil {
+		if s.cfg.Gateway.MaxLineSize > 0 {
+			maxLineSize = s.cfg.Gateway.MaxLineSize
+		}
+		if s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+			streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+		}
 	}
-	return strings.TrimSpace(strings.TrimPrefix(line, prefix)), true
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	pump := newAnthropicNativeLinePump(scanner, streamInterval)
+	defer pump.stop()
+
+	var parser openAICompatSSEFrameParser
+	terminalSeen := false
+	dispatch := func(frame openAICompatSSEFrame, present bool) (bool, error) {
+		if !present || strings.TrimSpace(frame.Data) == "[DONE]" {
+			return false, nil
+		}
+		var event apicompat.AnthropicStreamEvent
+		if err := json.Unmarshal([]byte(frame.Data), &event); err != nil {
+			return false, fmt.Errorf("parse upstream anthropic event: %w", err)
+		}
+		if event.Type == "" {
+			event.Type = frame.EventType
+		}
+		if event.Type == "error" {
+			message := sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage([]byte(frame.Data)))
+			return false, fmt.Errorf("upstream anthropic stream error: %s", message)
+		}
+		if event.Type == "message_stop" ||
+			(event.Type == "message_delta" && event.Delta != nil && event.Delta.StopReason != "") {
+			terminalSeen = true
+		}
+		disconnected := processEvent(&event)
+		return disconnected || event.Type == "message_stop", nil
+	}
+	for {
+		line, readErr := pump.next()
+		if errors.Is(readErr, io.EOF) {
+			_, err := dispatch(parser.Finish())
+			if err == nil && !terminalSeen {
+				return io.ErrUnexpectedEOF
+			}
+			return err
+		}
+		if readErr != nil {
+			return readErr
+		}
+		done, err := dispatch(parser.AddLine(line))
+		if err != nil || done {
+			return err
+		}
+	}
 }
 
 // handleResponsesBufferedStreamingResponse reads all Anthropic SSE events from
@@ -378,44 +433,11 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	scanner := bufio.NewScanner(resp.Body)
-	maxLineSize := defaultMaxLineSize
-	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
-		maxLineSize = s.cfg.Gateway.MaxLineSize
-	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
-
 	// Accumulate the final Anthropic response from streaming events
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		eventType, ok := parseAnthropicSSEField(line, "event")
-		if !ok {
-			continue
-		}
-
-		// Read the data line
-		if !scanner.Scan() {
-			break
-		}
-		dataLine := scanner.Text()
-		payload, ok := parseAnthropicSSEField(dataLine, "data")
-		if !ok {
-			continue
-		}
-
-		var event apicompat.AnthropicStreamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			logger.L().Warn("forward_as_responses buffered: failed to parse event",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-				zap.String("event_type", eventType),
-			)
-			continue
-		}
-
+	readErr := s.readAnthropicResponsesEvents(resp, func(event *apicompat.AnthropicStreamEvent) bool {
 		// message_start carries the initial response structure
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
@@ -451,15 +473,15 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 				}
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_responses buffered: read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
-		}
+		return false
+	})
+	if readErr != nil {
+		logger.L().Warn("forward_as_responses buffered: read error",
+			zap.Error(readErr),
+			zap.String("request_id", requestID),
+		)
+		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream failed before completion")
+		return nil, fmt.Errorf("read upstream anthropic stream: %w", readErr)
 	}
 
 	if finalResp == nil {
@@ -545,13 +567,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
-
-	scanner := bufio.NewScanner(resp.Body)
-	maxLineSize := defaultMaxLineSize
-	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
-		maxLineSize = s.cfg.Gateway.MaxLineSize
-	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	clientDisconnected := false
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
@@ -613,6 +629,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			for _, restored := range payloads {
 				eventType := gjson.GetBytes(restored, "type").String()
 				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
+					clientDisconnected = true
 					logger.L().Info("forward_as_responses stream: client disconnected",
 						zap.String("request_id", requestID),
 					)
@@ -641,46 +658,35 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		return resultWithUsage(), nil
 	}
 
-	// Read Anthropic SSE events
-	for scanner.Scan() {
-		line := scanner.Text()
-		eventType, ok := parseAnthropicSSEField(line, "event")
-		if !ok {
-			continue
+	readErr := s.readAnthropicResponsesEvents(resp, processEvent)
+	if readErr != nil {
+		logger.L().Warn("forward_as_responses stream: read error",
+			zap.Error(readErr),
+			zap.String("request_id", requestID),
+		)
+		inputTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+		failedEvent := apicompat.ResponsesStreamEvent{
+			Type: "response.failed", SequenceNumber: state.SequenceNumber,
+			Response: &apicompat.ResponsesResponse{
+				ID: state.ResponseID, Object: "response", CreatedAt: state.Created,
+				Model: originalModel, Status: "failed", Output: []apicompat.ResponsesOutput{},
+				Usage: &apicompat.ResponsesUsage{
+					InputTokens: inputTokens, OutputTokens: usage.OutputTokens,
+					TotalTokens: inputTokens + usage.OutputTokens,
+				},
+				Error: &apicompat.ResponsesError{
+					Code: "server_error", Message: "Upstream stream failed before completion",
+				},
+			},
 		}
-
-		// Read data line
-		if !scanner.Scan() {
-			break
+		if payload, err := apicompat.ResponsesEventToSSE(failedEvent); err == nil {
+			_, _ = io.WriteString(c.Writer, payload)
+			c.Writer.Flush()
 		}
-		dataLine := scanner.Text()
-		payload, ok := parseAnthropicSSEField(dataLine, "data")
-		if !ok {
-			continue
-		}
-
-		var event apicompat.AnthropicStreamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			logger.L().Warn("forward_as_responses stream: failed to parse event",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-				zap.String("event_type", eventType),
-			)
-			continue
-		}
-
-		if processEvent(&event) {
-			return resultWithUsage(), nil
-		}
+		return resultWithUsage(), fmt.Errorf("read upstream anthropic stream: %w", readErr)
 	}
-
-	if err := scanner.Err(); err != nil {
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_responses stream: read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
-		}
+	if clientDisconnected {
+		return resultWithUsage(), nil
 	}
 
 	return finalizeStream()

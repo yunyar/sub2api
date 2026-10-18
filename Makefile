@@ -4,6 +4,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/components/common/__tests__/VersionBadge.spec.ts \
 	src/stores/__tests__/app.spec.ts \
 	src/api/__tests__/admin.system.rollback.spec.ts \
+	src/api/__tests__/admin.autoGroups.spec.ts \
+	src/views/admin/__tests__/AutoGroupsView.spec.ts \
 	src/views/admin/__tests__/RiskControlView.spec.ts \
 	src/utils/__tests__/playgroundModel.spec.ts \
 	src/utils/__tests__/playgroundIntent.spec.ts \

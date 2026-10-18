@@ -25,6 +25,10 @@ func (r *autoRoutingRepository) CreateAutoRoutingProfile(ctx context.Context, pr
 	if profile == nil {
 		return errors.New("auto routing profile is nil")
 	}
+	modelCatalogFilter, err := marshalAutoRoutingProfileModelCatalogFilter(profile.ModelCatalogFilter)
+	if err != nil {
+		return fmt.Errorf("marshal auto routing profile model catalog filter: %w", err)
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -33,10 +37,12 @@ func (r *autoRoutingRepository) CreateAutoRoutingProfile(ctx context.Context, pr
 
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO auto_group_profiles (
-			name, status, max_candidates, allow_custom_order, cross_group_retry_allowed
-		) VALUES ($1, $2, $3, $4, $5)
+			name, status, max_candidates, allow_custom_order, cross_group_retry_allowed,
+			model_catalog_filter
+		) VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, revision, created_at, updated_at
-	`, profile.Name, profile.Status, profile.MaxCandidates, profile.AllowCustomOrder, profile.CrossGroupRetryAllowed).
+	`, profile.Name, profile.Status, profile.MaxCandidates, profile.AllowCustomOrder,
+		profile.CrossGroupRetryAllowed, modelCatalogFilter).
 		Scan(&profile.ID, &profile.Revision, &profile.CreatedAt, &profile.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create auto routing profile: %w", err)
@@ -55,9 +61,10 @@ func (r *autoRoutingRepository) GetAutoRoutingProfile(ctx context.Context, id in
 	defer func() { _ = tx.Rollback() }()
 
 	profile := &service.AutoRoutingProfile{}
+	var modelCatalogFilter []byte
 	err = tx.QueryRowContext(ctx, `
 		SELECT id, name, status, revision, max_candidates, allow_custom_order,
-		       cross_group_retry_allowed, created_at, updated_at
+		       cross_group_retry_allowed, model_catalog_filter, created_at, updated_at
 		FROM auto_group_profiles
 		WHERE id = $1
 		FOR SHARE
@@ -69,6 +76,7 @@ func (r *autoRoutingRepository) GetAutoRoutingProfile(ctx context.Context, id in
 		&profile.MaxCandidates,
 		&profile.AllowCustomOrder,
 		&profile.CrossGroupRetryAllowed,
+		&modelCatalogFilter,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
 	)
@@ -80,6 +88,9 @@ func (r *autoRoutingRepository) GetAutoRoutingProfile(ctx context.Context, id in
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get auto routing profile: %w", err)
+	}
+	if err := unmarshalAutoRoutingProfileModelCatalogFilter(modelCatalogFilter, profile); err != nil {
+		return nil, fmt.Errorf("decode auto routing profile model catalog filter: %w", err)
 	}
 	profile.Members, err = listProfileMembers(ctx, tx, id)
 	if err != nil {
@@ -100,7 +111,7 @@ func (r *autoRoutingRepository) ListAutoRoutingProfiles(ctx context.Context) ([]
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, name, status, revision, max_candidates, allow_custom_order,
-		       cross_group_retry_allowed, created_at, updated_at
+		       cross_group_retry_allowed, model_catalog_filter, created_at, updated_at
 		FROM auto_group_profiles
 		ORDER BY id
 	`)
@@ -113,6 +124,7 @@ func (r *autoRoutingRepository) ListAutoRoutingProfiles(ctx context.Context) ([]
 	profileIDs := make([]int64, 0)
 	for rows.Next() {
 		var profile service.AutoRoutingProfile
+		var modelCatalogFilter []byte
 		if err := rows.Scan(
 			&profile.ID,
 			&profile.Name,
@@ -121,10 +133,14 @@ func (r *autoRoutingRepository) ListAutoRoutingProfiles(ctx context.Context) ([]
 			&profile.MaxCandidates,
 			&profile.AllowCustomOrder,
 			&profile.CrossGroupRetryAllowed,
+			&modelCatalogFilter,
 			&profile.CreatedAt,
 			&profile.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan auto routing profile: %w", err)
+		}
+		if err := unmarshalAutoRoutingProfileModelCatalogFilter(modelCatalogFilter, &profile); err != nil {
+			return nil, fmt.Errorf("decode auto routing profile model catalog filter: %w", err)
 		}
 		profiles = append(profiles, profile)
 		profileIDs = append(profileIDs, profile.ID)
@@ -183,6 +199,14 @@ func (r *autoRoutingRepository) UpdateAutoRoutingProfile(ctx context.Context, pr
 	if profile == nil {
 		return errors.New("auto routing profile is nil")
 	}
+	var modelCatalogFilter any
+	if profile.ModelCatalogFilter != nil {
+		filterJSON, err := marshalAutoRoutingProfileModelCatalogFilter(profile.ModelCatalogFilter)
+		if err != nil {
+			return fmt.Errorf("marshal auto routing profile model catalog filter: %w", err)
+		}
+		modelCatalogFilter = filterJSON
+	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -196,11 +220,13 @@ func (r *autoRoutingRepository) UpdateAutoRoutingProfile(ctx context.Context, pr
 		    max_candidates = $4,
 		    allow_custom_order = $5,
 		    cross_group_retry_allowed = $6,
+		    model_catalog_filter = COALESCE($7::jsonb, model_catalog_filter),
 		    revision = revision + 1,
 		    updated_at = NOW()
-		WHERE id = $1 AND revision = $7
+		WHERE id = $1 AND revision = $8
 		RETURNING revision, updated_at
-	`, profile.ID, profile.Name, profile.Status, profile.MaxCandidates, profile.AllowCustomOrder, profile.CrossGroupRetryAllowed, expectedRevision).
+	`, profile.ID, profile.Name, profile.Status, profile.MaxCandidates, profile.AllowCustomOrder,
+		profile.CrossGroupRetryAllowed, modelCatalogFilter, expectedRevision).
 		Scan(&profile.Revision, &profile.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.ErrAutoRoutingRevisionConflict
@@ -212,6 +238,34 @@ func (r *autoRoutingRepository) UpdateAutoRoutingProfile(ctx context.Context, pr
 		return fmt.Errorf("replace auto routing profile members: %w", err)
 	}
 	return tx.Commit()
+}
+
+func marshalAutoRoutingProfileModelCatalogFilter(filter *service.GroupModelAllowlist) ([]byte, error) {
+	if filter == nil {
+		filter = &service.GroupModelAllowlist{Models: []string{}}
+	}
+	models := append([]string{}, filter.Models...)
+	return json.Marshal(struct {
+		Enabled bool     `json:"enabled"`
+		Models  []string `json:"models"`
+	}{
+		Enabled: filter.Enabled,
+		Models:  models,
+	})
+}
+
+func unmarshalAutoRoutingProfileModelCatalogFilter(raw []byte, profile *service.AutoRoutingProfile) error {
+	filter := &service.GroupModelAllowlist{Models: []string{}}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, filter); err != nil {
+			return err
+		}
+	}
+	if filter.Models == nil {
+		filter.Models = []string{}
+	}
+	profile.ModelCatalogFilter = filter
+	return nil
 }
 
 func replaceProfileMembers(ctx context.Context, tx *sql.Tx, profileID int64, members []service.AutoRoutingProfileMember) error {

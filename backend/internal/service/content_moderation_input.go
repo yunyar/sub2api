@@ -2,10 +2,12 @@ package service
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/tidwall/gjson"
 )
 
@@ -221,6 +223,10 @@ func (collector moderationTextCollector) collectLastResponsesInput(input gjson.R
 			return
 		}
 		last := array[len(array)-1]
+		if last.Get("type").String() == "agent_message" {
+			collector.collectResponsesAgentMessage(last.Get("content"), parts, images)
+			return
+		}
 		if !collector.isResponsesUserTextItem(last) {
 			return
 		}
@@ -229,6 +235,10 @@ func (collector moderationTextCollector) collectLastResponsesInput(input gjson.R
 			collector.collectContentValue(last, parts, images)
 		}
 	case input.IsObject():
+		if input.Get("type").String() == "agent_message" {
+			collector.collectResponsesAgentMessage(input.Get("content"), parts, images)
+			return
+		}
 		if collector.isResponsesUserTextItem(input) {
 			collector.collectContentValue(input.Get("content"), parts, images)
 			if input.Get("type").String() == "input_text" || input.Get("text").Exists() {
@@ -236,6 +246,15 @@ func (collector moderationTextCollector) collectLastResponsesInput(input gjson.R
 			}
 		}
 	}
+}
+
+func (collector moderationTextCollector) collectResponsesAgentMessage(content gjson.Result, parts *[]string, images *[]string) {
+	normalized, err := apicompat.NormalizeAgentMessageContent(json.RawMessage(content.Raw))
+	if err == nil && len(normalized) > 0 {
+		collector.collectContentValue(gjson.ParseBytes(normalized), parts, images)
+		return
+	}
+	collector.collectContentValue(content, parts, images)
 }
 
 func (collector moderationTextCollector) isResponsesUserTextItem(item gjson.Result) bool {

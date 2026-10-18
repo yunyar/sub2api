@@ -320,6 +320,188 @@ func TestAutoRoutingAcceptanceSelectsAuthorizedGroupAndFreezesItsBilling(t *test
 	require.Equal(t, 1, usage.RouteAttemptCount)
 }
 
+func TestAutoRoutingAcceptanceAntigravityGeminiEndpoints(t *testing.T) {
+	testCases := []struct {
+		name            string
+		groupID         int64
+		groupPlatform   string
+		modelID         string
+		accountType     string
+		mixedScheduling bool
+	}{
+		{
+			name:          "antigravity group",
+			groupID:       27,
+			groupPlatform: PlatformAntigravity,
+			modelID:       "gemini-3-flash",
+			accountType:   AccountTypeAPIKey,
+		},
+		{
+			name:          "antigravity group GPT OSS model",
+			groupID:       27,
+			groupPlatform: PlatformAntigravity,
+			modelID:       "gpt-oss-120b-medium",
+			accountType:   AccountTypeAPIKey,
+		},
+		{
+			name:            "gemini group mixed antigravity account",
+			groupID:         28,
+			groupPlatform:   PlatformGemini,
+			modelID:         "gemini-4-argon",
+			accountType:     AccountTypeOAuth,
+			mixedScheduling: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			for _, endpoint := range []AutoModelEndpoint{
+				AutoModelEndpointChat,
+				AutoModelEndpointResponses,
+			} {
+				t.Run(string(endpoint), func(t *testing.T) {
+					fixture := newAutoRoutingAcceptancePlatformFixture(
+						testCase.groupID,
+						testCase.groupPlatform,
+						acceptanceAntigravityAccount(
+							testCase.groupID+1000,
+							testCase.modelID,
+							testCase.mixedScheduling,
+							testCase.accountType,
+						),
+					)
+					fixture.rateRepo.rates[testCase.groupID] = 2.75
+					fixture.rateRepo.rpm[testCase.groupID] = 0
+
+					body := []byte(`{"model":"` + testCase.modelID + `","messages":[{"role":"user","content":"hello"}]}`)
+					if endpoint == AutoModelEndpointResponses {
+						body = []byte(`{"model":"` + testCase.modelID + `","input":"hello"}`)
+					}
+					preparation, err := fixture.routing.PrepareRequestKey(
+						context.Background(),
+						fixture.key,
+						AutoRoutingRequest{
+							Endpoint:  endpoint,
+							ModelID:   testCase.modelID,
+							RequestID: "acceptance:" + testCase.name + ":" + string(endpoint),
+							Body:      body,
+						},
+					)
+					if testCase.groupPlatform == PlatformGemini && endpoint == AutoModelEndpointResponses {
+						require.ErrorIs(t, err, ErrAutoRoutingCandidateUnavailable)
+						require.Nil(t, preparation)
+						require.Zero(t, fixture.repo.createCalls)
+						return
+					}
+					require.NoError(t, err)
+					require.NotNil(t, preparation)
+					require.Equal(t, endpoint, preparation.Plan.Endpoint)
+					require.Equal(t, testCase.modelID, preparation.Plan.ModelID)
+					require.Equal(t, []int64{testCase.groupID}, preparation.Plan.CandidateGroupIDs)
+					require.Equal(t, testCase.groupID, preparation.Plan.SelectedGroupID)
+					require.Equal(t, testCase.groupID, *preparation.Execution.ActualGroupID)
+					require.Equal(t, testCase.groupPlatform, preparation.EffectiveKey.Group.Platform)
+					require.Equal(t, testCase.groupID, *preparation.EffectiveKey.GroupID)
+					require.Equal(t, testCase.groupID, preparation.EffectiveKey.Group.ID)
+					require.Equal(t, 1.6, preparation.EffectiveKey.Group.RateMultiplier)
+					require.Equal(t, RoleUser, preparation.EffectiveKey.User.Role)
+					require.Equal(t, 2.75, *preparation.EffectiveKey.AutoRouting.RateMultiplier)
+					require.Equal(t, int64(2), preparation.EffectiveKey.AutoRouting.ProfileID)
+					require.Equal(t, int64(4), preparation.EffectiveKey.AutoRouting.RoutingRevision)
+					require.False(t, preparation.EffectiveKey.AutoRouting.PricingAt.IsZero())
+					multiplier, _, _ := (&GatewayService{}).recordUsageMultipliers(
+						context.Background(),
+						preparation.EffectiveKey,
+						preparation.EffectiveKey.User,
+						preparation.EffectiveKey.AutoRouting.PricingAt,
+					)
+					require.Equal(t, 2.75, multiplier)
+					require.Equal(t, []int64{testCase.groupID}, fixture.rateRepo.rateGroups)
+					require.Equal(t, []int64{testCase.groupID}, fixture.rateRepo.rpmGroups)
+					require.Equal(t, int64(411), fixture.key.ID)
+					require.Nil(t, fixture.key.GroupID)
+					require.Nil(t, fixture.key.Group)
+					require.Nil(t, fixture.key.AutoRouting)
+					require.Equal(t, 1, fixture.repo.createCalls)
+				})
+			}
+		})
+	}
+}
+
+func TestAutoRoutingAcceptanceGPTResponses(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		model         string
+		upstreamModel string
+		accountType   string
+	}{
+		{"GPT 5.4 API key", "gpt-5.4", "gpt-5.4", AccountTypeAPIKey},
+		{"GPT 5.5 API key", "gpt-5.5", "gpt-5.5", AccountTypeAPIKey},
+		{"GPT 6 API key", "gpt-6", "gpt-6", AccountTypeAPIKey},
+		{"GPT 6 Luna API key", "gpt-6-luna", "gpt-6-luna", AccountTypeAPIKey},
+		{"GPT 6 Luna OAuth", "gpt-6-luna", "gpt-6-luna", AccountTypeOAuth},
+		{"GPT 6 Astra API key", "gpt-6-astra", "gpt-6-astra", AccountTypeAPIKey},
+		{"mapped GPT alias API key", "gpt-5.6-luna", "gpt-5.6-terra", AccountTypeAPIKey},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			account := acceptanceOpenAIAccount(90, testCase.model)
+			account.Type = testCase.accountType
+			account.Credentials["model_mapping"] = map[string]any{testCase.model: testCase.upstreamModel}
+			fixture := newAutoRoutingAcceptancePlatformFixture(15, PlatformOpenAI, account)
+
+			preparation, err := fixture.routing.PrepareRequestKey(
+				context.Background(),
+				fixture.key,
+				AutoRoutingRequest{
+					Endpoint:  AutoModelEndpointResponses,
+					ModelID:   testCase.model,
+					RequestID: "acceptance:gpt:" + testCase.name,
+					Body:      []byte(`{"model":"` + testCase.model + `","input":"hello","stream":true}`),
+				},
+			)
+			require.NoError(t, err)
+			require.NotNil(t, preparation)
+			require.Equal(t, int64(15), preparation.Plan.SelectedGroupID)
+			require.Equal(t, testCase.model, preparation.Plan.ModelID)
+			require.Equal(t, RoleUser, preparation.EffectiveKey.User.Role)
+			require.Equal(t, PlatformOpenAI, preparation.EffectiveKey.Group.Platform)
+
+			capability, supported, err := fixture.catalog.ResolveGroupModelCapability(
+				context.Background(), fixture.groups[15], testCase.model, AutoModelEndpointResponses,
+			)
+			require.NoError(t, err)
+			require.True(t, supported)
+			require.Equal(t, []string{testCase.upstreamModel}, capability.UpstreamModels)
+		})
+	}
+}
+
+func TestAutoRoutingAcceptanceRestrictedAntigravityResponsesCannotUseUnlistedPublicGroup(t *testing.T) {
+	fixture := newAutoRoutingAcceptancePlatformFixture(
+		27, PlatformAntigravity, acceptanceAntigravityAccount(146, "gemini-4-argon", false, AccountTypeAPIKey),
+	)
+	fixture.userRepo.user.RestrictPublicGroups = true
+	fixture.userRepo.user.AllowedGroups = []int64{101}
+
+	_, err := fixture.routing.PrepareRequestKey(
+		context.Background(),
+		fixture.key,
+		AutoRoutingRequest{
+			Endpoint:  AutoModelEndpointResponses,
+			ModelID:   "gemini-4-argon",
+			RequestID: "acceptance:restricted-antigravity-responses",
+			Body:      []byte(`{"model":"gemini-4-argon","input":"hello"}`),
+		},
+	)
+	require.ErrorIs(t, err, ErrAutoRoutingCandidateUnavailable)
+	require.Zero(t, fixture.repo.createCalls)
+	require.Nil(t, fixture.repo.execution)
+	require.Nil(t, fixture.key.GroupID)
+	require.Nil(t, fixture.key.Group)
+	require.Nil(t, fixture.key.AutoRouting)
+}
+
 func TestAutoRoutingAcceptanceDispatchRPMDenialsMapToLimitErrors(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
@@ -528,6 +710,58 @@ func newAutoRoutingAcceptanceFixture() autoRoutingAcceptanceFixture {
 	return autoRoutingAcceptanceFixture{
 		user: user, key: key, userRepo: userRepo, groupRepo: groupRepo,
 		rateRepo: rateRepo, repo: repo, catalog: catalog, routing: routing, groups: groups,
+	}
+}
+
+func newAutoRoutingAcceptancePlatformFixture(
+	groupID int64,
+	groupPlatform string,
+	account Account,
+) autoRoutingAcceptanceFixture {
+	fixture := newAutoRoutingAcceptanceFixture()
+	group := fixture.groups[202]
+	group.ID = groupID
+	group.Name = groupPlatform + "-public"
+	group.Platform = groupPlatform
+	group.IsExclusive = false
+	fixture.groups = map[int64]*Group{groupID: group}
+	fixture.groupRepo.groups = fixture.groups
+	fixture.repo.config.APIKeyID = 411
+	fixture.repo.config.ProfileID = 2
+	fixture.repo.profile.ID = 2
+	fixture.repo.profile.Members = []AutoRoutingProfileMember{{GroupID: groupID}}
+	fixture.userRepo.user.ID = 70
+	fixture.userRepo.user.Role = RoleUser
+	fixture.userRepo.user.AllowedGroups = nil
+	fixture.userRepo.user.RestrictPublicGroups = false
+	fixture.key.ID = 411
+	fixture.key.UserID = 70
+	fixture.key.User = cloneAutoRoutingUser(fixture.userRepo.user)
+	fixture.rateRepo.rates = map[int64]float64{}
+	fixture.rateRepo.rpm = map[int64]int{}
+	fixture.catalog.accountRepo = &autoRoutingAcceptanceAccountRepo{
+		accounts: map[int64][]Account{
+			groupID: {account},
+		},
+	}
+	return fixture
+}
+
+func acceptanceAntigravityAccount(id int64, model string, mixedScheduling bool, accountType string) Account {
+	upstreamModel := model
+	if model == "gemini-4-argon" {
+		upstreamModel = "gemini-4-argon-high"
+	}
+	return Account{
+		ID:          id,
+		Platform:    PlatformAntigravity,
+		Type:        accountType,
+		Status:      StatusActive,
+		Schedulable: true,
+		Extra:       map[string]any{"mixed_scheduling": mixedScheduling},
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{model: upstreamModel},
+		},
 	}
 }
 

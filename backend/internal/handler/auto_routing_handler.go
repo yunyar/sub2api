@@ -19,16 +19,32 @@ func NewAutoRoutingHandler(routing *service.AutoRoutingService) *AutoRoutingHand
 }
 
 type autoRoutingProfileResponse struct {
-	ID                     int64     `json:"id"`
-	Name                   string    `json:"name"`
-	Status                 string    `json:"status"`
-	Revision               int64     `json:"revision"`
-	MaxCandidates          int       `json:"max_candidates"`
-	AllowCustomOrder       bool      `json:"allow_custom_order"`
-	CrossGroupRetryAllowed bool      `json:"cross_group_retry_allowed"`
-	GroupIDs               []int64   `json:"group_ids"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
+	ID                     int64                                 `json:"id"`
+	Name                   string                                `json:"name"`
+	Status                 string                                `json:"status"`
+	Revision               int64                                 `json:"revision"`
+	MaxCandidates          int                                   `json:"max_candidates"`
+	AllowCustomOrder       bool                                  `json:"allow_custom_order"`
+	CrossGroupRetryAllowed bool                                  `json:"cross_group_retry_allowed"`
+	ModelCatalogFilter     autoRoutingModelCatalogFilterResponse `json:"model_catalog_filter"`
+	GroupIDs               []int64                               `json:"group_ids"`
+	CreatedAt              time.Time                             `json:"created_at"`
+	UpdatedAt              time.Time                             `json:"updated_at"`
+}
+
+type autoRoutingModelCatalogFilterResponse struct {
+	Enabled bool     `json:"enabled"`
+	Models  []string `json:"models"`
+}
+
+func autoProfileModelCatalogFilter(profile *service.AutoRoutingProfile) autoRoutingModelCatalogFilterResponse {
+	filter := autoRoutingModelCatalogFilterResponse{Models: []string{}}
+	if profile == nil || profile.ModelCatalogFilter == nil {
+		return filter
+	}
+	filter.Enabled = profile.ModelCatalogFilter.Enabled
+	filter.Models = append(filter.Models, profile.ModelCatalogFilter.Models...)
+	return filter
 }
 
 func autoProfileResponse(profile *service.AutoRoutingProfile) autoRoutingProfileResponse {
@@ -39,8 +55,10 @@ func autoProfileResponse(profile *service.AutoRoutingProfile) autoRoutingProfile
 	return autoRoutingProfileResponse{
 		ID: profile.ID, Name: profile.Name, Status: profile.Status, Revision: profile.Revision,
 		MaxCandidates: profile.MaxCandidates, AllowCustomOrder: profile.AllowCustomOrder,
-		CrossGroupRetryAllowed: profile.CrossGroupRetryAllowed, GroupIDs: groupIDs,
-		CreatedAt: profile.CreatedAt, UpdatedAt: profile.UpdatedAt,
+		CrossGroupRetryAllowed: profile.CrossGroupRetryAllowed,
+		ModelCatalogFilter:     autoProfileModelCatalogFilter(profile),
+		GroupIDs:               groupIDs,
+		CreatedAt:              profile.CreatedAt, UpdatedAt: profile.UpdatedAt,
 	}
 }
 
@@ -54,13 +72,14 @@ func autoRoutingID(c *gin.Context, param string) (int64, bool) {
 }
 
 type autoProfileWriteRequest struct {
-	Name                   string  `json:"name"`
-	Status                 string  `json:"status"`
-	Revision               int64   `json:"revision"`
-	MaxCandidates          int     `json:"max_candidates"`
-	AllowCustomOrder       bool    `json:"allow_custom_order"`
-	CrossGroupRetryAllowed bool    `json:"cross_group_retry_allowed"`
-	GroupIDs               []int64 `json:"group_ids"`
+	Name                   string                       `json:"name"`
+	Status                 string                       `json:"status"`
+	Revision               int64                        `json:"revision"`
+	MaxCandidates          int                          `json:"max_candidates"`
+	AllowCustomOrder       bool                         `json:"allow_custom_order"`
+	CrossGroupRetryAllowed bool                         `json:"cross_group_retry_allowed"`
+	ModelCatalogFilter     *service.GroupModelAllowlist `json:"model_catalog_filter"`
+	GroupIDs               []int64                      `json:"group_ids"`
 }
 
 func (request autoProfileWriteRequest) profile(id int64) *service.AutoRoutingProfile {
@@ -70,7 +89,8 @@ func (request autoProfileWriteRequest) profile(id int64) *service.AutoRoutingPro
 	}
 	return &service.AutoRoutingProfile{ID: id, Name: request.Name, Status: request.Status,
 		Revision: request.Revision, MaxCandidates: request.MaxCandidates, AllowCustomOrder: request.AllowCustomOrder,
-		CrossGroupRetryAllowed: request.CrossGroupRetryAllowed, Members: members}
+		CrossGroupRetryAllowed: request.CrossGroupRetryAllowed,
+		ModelCatalogFilter:     request.ModelCatalogFilter, Members: members}
 }
 
 func (h *AutoRoutingHandler) ListProfiles(c *gin.Context) {
