@@ -9,12 +9,9 @@ package service
 // 发送/错误处理对齐 OpenAI 网关语义（模型映射、failover、transport error）。
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -160,71 +157,15 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
-	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
 
-	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
-	streamInterval := s.anthropicNativeStreamInterval()
-	pump := newAnthropicNativeLinePump(scanner, streamInterval)
-	defer pump.stop()
-
-	logReadErr := func(err error) {
-		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("openai responses via native anthropic buffered: read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
-		}
-	}
-	onIdle := func() (*OpenAIForwardResult, error) {
-		_ = resp.Body.Close()
-		logger.L().Warn("openai responses via native anthropic buffered: data interval timeout",
-			zap.String("request_id", requestID),
-			zap.Duration("interval", streamInterval),
-		)
-		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream data interval timeout")
-		return nil, fmt.Errorf("stream data interval timeout")
-	}
-
-	for {
-		line, rerr := pump.next()
-		if rerr != nil {
-			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
-				return onIdle()
-			}
-			logReadErr(rerr)
-			break
-		}
-		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等上游返回紧凑格式。
-		if _, ok := extractOpenAISSEEventLine(line); !ok {
-			continue
-		}
-
-		dataLine, rerr := pump.next()
-		if rerr != nil {
-			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
-				return onIdle()
-			}
-			logReadErr(rerr)
-			break
-		}
-		payload, ok := extractOpenAISSEDataLine(dataLine)
-		if !ok {
-			continue
-		}
-
-		var event apicompat.AnthropicStreamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			continue
-		}
-
+	readErr := readAnthropicResponsesEvents(resp, func(event *apicompat.AnthropicStreamEvent) bool {
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
 			mergeAnthropicUsage(&usage, event.Message.Usage)
@@ -255,11 +196,37 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 				}
 			}
 		}
+		return false
+	}, maxLineSize, s.anthropicNativeStreamInterval())
+
+	resultWithUsage := func() *OpenAIForwardResult {
+		return &OpenAIForwardResult{
+			RequestID:        requestID,
+			UpstreamHeaders:  resp.Header,
+			Usage:            claudeUsageToOpenAIUsage(&usage),
+			Model:            originalModel,
+			BillingModel:     billingModel,
+			UpstreamModel:    upstreamModel,
+			UpstreamEndpoint: "/v1/messages",
+			ReasoningEffort:  reasoningEffort,
+			Stream:           false,
+			Duration:         time.Since(startTime),
+		}
+	}
+
+	if readErr != nil {
+		logger.L().Warn("openai responses via native anthropic buffered: read error",
+			zap.Error(readErr),
+			zap.String("request_id", requestID),
+		)
+		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream failed before completion")
+		return resultWithUsage(), fmt.Errorf("read upstream anthropic stream: %w", readErr)
 	}
 
 	if finalResp == nil {
+		readErr = fmt.Errorf("upstream stream ended without a response")
 		writeResponsesError(c, http.StatusBadGateway, "server_error", "Upstream stream ended without a response")
-		return nil, fmt.Errorf("upstream stream ended without response")
+		return resultWithUsage(), readErr
 	}
 
 	if usage.InputTokens > 0 || usage.OutputTokens > 0 {
@@ -293,18 +260,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 		c.JSON(http.StatusOK, responsesResp)
 	}
 
-	return &OpenAIForwardResult{
-		RequestID:        requestID,
-		UpstreamHeaders:  resp.Header,
-		Usage:            claudeUsageToOpenAIUsage(&usage),
-		Model:            originalModel,
-		BillingModel:     billingModel,
-		UpstreamModel:    upstreamModel,
-		UpstreamEndpoint: "/v1/messages",
-		ReasoningEffort:  reasoningEffort,
-		Stream:           false,
-		Duration:         time.Since(startTime),
-	}, nil
+	return resultWithUsage(), nil
 }
 
 // handleResponsesStreamingFromNativeAnthropic reads Anthropic SSE events, converts
@@ -340,12 +296,10 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 	firstChunk := true
 	clientDisconnected := false
 
-	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
@@ -364,35 +318,48 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 		}
 	}
 
-	// 读间隔上限：上游挂住 SSE（不发数据也不断连）时结束转换循环。上游 ctx 为
-	// WithoutCancel 且 http.Client 无整体 Timeout，无此界限则 scanner.Scan()
-	// 永久阻塞（见 anthropic native pump 文件注释）。
-	streamInterval := s.anthropicNativeStreamInterval()
-	pump := newAnthropicNativeLinePump(scanner, streamInterval)
-	defer pump.stop()
-
-	logReadErr := func(err error) {
-		if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("openai responses via native anthropic stream: read error",
-				zap.Error(err),
-				zap.String("request_id", requestID),
-			)
+	writeEvents := func(events []apicompat.ResponsesStreamEvent) {
+		if clientDisconnected {
+			return
 		}
-	}
-	onIdle := func() (*OpenAIForwardResult, error) {
-		_ = resp.Body.Close()
-		logger.L().Warn("openai responses via native anthropic stream: data interval timeout",
-			zap.String("request_id", requestID),
-			zap.Duration("interval", streamInterval),
-		)
-		return resultWithUsage(), fmt.Errorf("stream data interval timeout")
+		wrote := false
+		for _, evt := range events {
+			payload, err := json.Marshal(evt)
+			if err != nil {
+				logger.L().Warn("openai responses via native anthropic stream: failed to marshal event",
+					zap.Error(err),
+					zap.String("request_id", requestID),
+				)
+				continue
+			}
+			payload = reverseToolNamesIfPresent(c, payload)
+			payloads, _, err := clientToolRestorer.RestoreEvent(payload)
+			if err != nil {
+				logger.L().Warn("openai responses via native anthropic stream: failed to restore client tools",
+					zap.Error(err),
+					zap.String("request_id", requestID),
+				)
+				continue
+			}
+			for _, restored := range payloads {
+				eventType := gjson.GetBytes(restored, "type").String()
+				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
+					clientDisconnected = true
+					return
+				}
+				wrote = true
+			}
+		}
+		if wrote {
+			c.Writer.Flush()
+		}
 	}
 
 	// 与 CC 姊妹路径（handleCCStreamingFromNativeAnthropic.writeChunk）同语义：
 	// 客户端断开后不再写出，但继续排水上游至流自然结束——Anthropic 的最终
 	// output_tokens 只在末尾 message_delta 携带，提前退出会把整段生成记成 ~1
 	// token，payg 上游照常计费而平台漏记。状态机照常推进以保证 finalize 一致。
-	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent) {
+	processAnthropicEvent := func(event *apicompat.AnthropicStreamEvent) bool {
 		if firstChunk {
 			firstChunk = false
 			ms := int(time.Since(startTime).Milliseconds())
@@ -413,97 +380,26 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 		normalizeAnthropicEventUsageForResponses(event, usage)
 
 		events := apicompat.AnthropicEventToResponsesEvents(event, state)
-		if clientDisconnected {
-			return
-		}
-		for _, evt := range events {
-			payload, err := json.Marshal(evt)
-			if err != nil {
-				continue
-			}
-			payload = reverseToolNamesIfPresent(c, payload)
-			payloads, _, err := clientToolRestorer.RestoreEvent(payload)
-			if err != nil {
-				continue
-			}
-			for _, restored := range payloads {
-				eventType := gjson.GetBytes(restored, "type").String()
-				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
-					clientDisconnected = true
-					return
-				}
-			}
-		}
-		if len(events) > 0 {
-			c.Writer.Flush()
-		}
+		writeEvents(events)
+		return false
 	}
 
-	for {
-		line, rerr := pump.next()
-		if rerr != nil {
-			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
-				return onIdle()
-			}
-			logReadErr(rerr)
-			break
-		}
-		if _, ok := extractOpenAISSEEventLine(line); !ok {
-			continue
-		}
-
-		dataLine, rerr := pump.next()
-		if rerr != nil {
-			if errors.Is(rerr, errAnthropicNativeStreamIdle) {
-				return onIdle()
-			}
-			logReadErr(rerr)
-			break
-		}
-		payload, ok := extractOpenAISSEDataLine(dataLine)
-		if !ok {
-			continue
-		}
-
-		var event apicompat.AnthropicStreamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			continue
-		}
-
-		processAnthropicEvent(&event)
+	readErr := readAnthropicResponsesEvents(
+		resp,
+		processAnthropicEvent,
+		maxLineSize,
+		s.anthropicNativeStreamInterval(),
+	)
+	if readErr != nil {
+		logger.L().Warn("openai responses via native anthropic stream: read error",
+			zap.Error(readErr),
+			zap.String("request_id", requestID),
+		)
+		failedEvents := apicompat.FailAnthropicResponsesStream(state, "Upstream stream failed before completion")
+		writeEvents(failedEvents)
+		return resultWithUsage(), fmt.Errorf("read upstream anthropic stream: %w", readErr)
 	}
 
-	// Finalize state machine（客户端已断开时仍推进，保证 usage 汇总完整；仅在
-	// 客户端仍连接时写出）。终态帧与逐事件路径一致过工具名反转与客户端工具还原，
-	// 避免流截断时终态帧携带改写后的工具名。
-	if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 && !clientDisconnected {
-		wrote := false
-		for _, evt := range finalEvents {
-			payload, err := json.Marshal(evt)
-			if err != nil {
-				continue
-			}
-			payload = reverseToolNamesIfPresent(c, payload)
-			payloads, _, err := clientToolRestorer.RestoreEvent(payload)
-			if err != nil {
-				continue
-			}
-			for _, restored := range payloads {
-				eventType := gjson.GetBytes(restored, "type").String()
-				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
-					clientDisconnected = true
-					break
-				}
-				wrote = true
-			}
-			if clientDisconnected {
-				break
-			}
-		}
-		if wrote {
-			c.Writer.Flush()
-		}
-	}
-
+	writeEvents(apicompat.FinalizeAnthropicResponsesStream(state))
 	return resultWithUsage(), nil
 }

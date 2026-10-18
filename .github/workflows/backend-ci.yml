@@ -55,11 +55,11 @@ jobs:
       - name: Unit tests
         working-directory: backend
         run: make test-unit
-      - name: Playground image balance transactions
+      - name: Playground image and Auto routing transactions
         working-directory: backend
         env:
           PLAYGROUND_BILLING_POSTGRES_DSN: postgres://playground_test:playground_test@127.0.0.1:5432/playground_test?sslmode=disable
-        run: go test -v ./internal/repository -run '^TestPlaygroundImageBalanceWithPostgres$' -count=1
+        run: go test -v ./internal/repository -run '^(TestPlaygroundImageBalanceWithPostgres|TestAutoRoutingFinalizationWithPostgres)$' -count=1
       - name: Integration tests
         working-directory: backend
         run: make test-integration

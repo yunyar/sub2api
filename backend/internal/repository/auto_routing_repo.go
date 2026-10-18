@@ -893,7 +893,7 @@ func (r *autoRoutingRepository) finishAttempt(
 		SET status = $2, result_reference = NULLIF($3, ''),
 		    evidence_code = NULLIF($4, ''), completed_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND status = 'dispatching' AND current_attempt = $5
-		  AND settlement_status = 'pending'
+		  AND settlement_status IN ('pending', 'settled')
 	`, executionID, executionStatus, resultReference, evidenceCode, attemptNo)
 	if err != nil {
 		return false, fmt.Errorf("transition Auto routing execution: %w", err)

@@ -259,6 +259,9 @@ func FinalizeAnthropicResponsesStream(state *AnthropicEventToResponsesState) []R
 	if !state.CreatedSent || state.CompletedSent {
 		return nil
 	}
+	if state.StopReason == "" {
+		return FailAnthropicResponsesStream(state, "Upstream stream ended before completion")
+	}
 
 	var events []ResponsesStreamEvent
 
@@ -269,6 +272,18 @@ func FinalizeAnthropicResponsesStream(state *AnthropicEventToResponsesState) []R
 	events = append(events, makeResponsesCompletedEvent(state, status, incompleteDetails))
 	state.CompletedSent = true
 	return events
+}
+
+func FailAnthropicResponsesStream(state *AnthropicEventToResponsesState, message string) []ResponsesStreamEvent {
+	if state.CompletedSent {
+		return nil
+	}
+	event := makeResponsesCompletedEvent(state, "failed", nil)
+	event.Type = "response.failed"
+	event.Response.Output = []ResponsesOutput{}
+	event.Response.Error = &ResponsesError{Code: "server_error", Message: message}
+	state.CompletedSent = true
+	return []ResponsesStreamEvent{event}
 }
 
 // ResponsesEventToSSE formats a ResponsesStreamEvent as an SSE data line.

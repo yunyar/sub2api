@@ -360,8 +360,6 @@ func (s *GatewayService) readAnthropicResponsesEvents(
 	resp *http.Response,
 	processEvent func(*apicompat.AnthropicStreamEvent) bool,
 ) error {
-	defer func() { _ = resp.Body.Close() }()
-	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
 	var streamInterval time.Duration
 	if s.cfg != nil {
@@ -372,6 +370,17 @@ func (s *GatewayService) readAnthropicResponsesEvents(
 			streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 		}
 	}
+	return readAnthropicResponsesEvents(resp, processEvent, maxLineSize, streamInterval)
+}
+
+func readAnthropicResponsesEvents(
+	resp *http.Response,
+	processEvent func(*apicompat.AnthropicStreamEvent) bool,
+	maxLineSize int,
+	streamInterval time.Duration,
+) error {
+	defer func() { _ = resp.Body.Close() }()
+	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
 	pump := newAnthropicNativeLinePump(scanner, streamInterval)
 	defer pump.stop()
@@ -664,24 +673,11 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			zap.Error(readErr),
 			zap.String("request_id", requestID),
 		)
-		inputTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-		failedEvent := apicompat.ResponsesStreamEvent{
-			Type: "response.failed", SequenceNumber: state.SequenceNumber,
-			Response: &apicompat.ResponsesResponse{
-				ID: state.ResponseID, Object: "response", CreatedAt: state.Created,
-				Model: originalModel, Status: "failed", Output: []apicompat.ResponsesOutput{},
-				Usage: &apicompat.ResponsesUsage{
-					InputTokens: inputTokens, OutputTokens: usage.OutputTokens,
-					TotalTokens: inputTokens + usage.OutputTokens,
-				},
-				Error: &apicompat.ResponsesError{
-					Code: "server_error", Message: "Upstream stream failed before completion",
-				},
-			},
-		}
-		if payload, err := apicompat.ResponsesEventToSSE(failedEvent); err == nil {
-			_, _ = io.WriteString(c.Writer, payload)
-			c.Writer.Flush()
+		for _, event := range apicompat.FailAnthropicResponsesStream(state, "Upstream stream failed before completion") {
+			if payload, err := apicompat.ResponsesEventToSSE(event); err == nil {
+				_, _ = io.WriteString(c.Writer, payload)
+				c.Writer.Flush()
+			}
 		}
 		return resultWithUsage(), fmt.Errorf("read upstream anthropic stream: %w", readErr)
 	}

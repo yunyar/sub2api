@@ -272,6 +272,7 @@ type ResponsesInputItem struct {
 	// Role-based messages (developer/system/user/assistant)
 	Role    string          `json:"role,omitempty"`
 	Content json.RawMessage `json:"content,omitempty"` // string or []ResponsesContentPart
+	Phase   string          `json:"phase,omitempty"`
 
 	// type=reasoning (multi-turn replay of encrypted reasoning)
 	EncryptedContent string `json:"encrypted_content,omitempty"`
@@ -406,6 +407,7 @@ type ResponsesOutput struct {
 	Role    string                 `json:"role,omitempty"`
 	Content []ResponsesContentPart `json:"content,omitempty"`
 	Status  string                 `json:"status,omitempty"`
+	Phase   string                 `json:"phase,omitempty"`
 
 	// type=reasoning
 	EncryptedContent string             `json:"encrypted_content,omitempty"`

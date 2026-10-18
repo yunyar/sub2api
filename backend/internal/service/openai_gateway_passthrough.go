@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
@@ -26,6 +27,26 @@ import (
 )
 
 const openAIResponsesClientToolMappingContextKey = "openai_responses_client_tool_mapping"
+
+var errOpenAIPassthroughStreamTimeout = errors.New("OpenAI passthrough stream timeout")
+
+type openAIPassthroughScanEvent struct {
+	line string
+	err  error
+}
+
+type openAIPassthroughActivityReader struct {
+	reader     io.Reader
+	lastReadAt *int64
+}
+
+func (r *openAIPassthroughActivityReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		atomic.StoreInt64(r.lastReadAt, time.Now().UnixNano())
+	}
+	return n, err
+}
 
 func hasOpenAIResponsesClientToolMapping(mapping apicompat.ResponsesClientToolMapping) bool {
 	return len(mapping.CustomTools) > 0 || mapping.ToolSearch || len(mapping.NamespaceTools) > 0
@@ -360,6 +381,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 	rejectedFieldRetryState := openAIResponsesRejectedFieldRetryStateForRequest(c, body)
 	var resp *http.Response
 	var usage *OpenAIUsage
+	var forwardErr error
 	var firstTokenMs *int
 	responseID := ""
 	imageCount := 0
@@ -467,8 +489,11 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 					}
 					return nil, s.handleErrorResponsePassthrough(ctx, compactResp, c, account, body, compactBody)
 				}
-				_ = resp.Body.Close()
-				return nil, handleErr
+				if result == nil || !errors.Is(handleErr, errOpenAIPassthroughStreamTimeout) || GetOpsCyberPolicy(c) != nil {
+					_ = resp.Body.Close()
+					return nil, handleErr
+				}
+				forwardErr = handleErr
 			}
 			usage = result.usage
 			firstTokenMs = result.firstTokenMs
@@ -545,7 +570,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		forwardResult.ImageOutputSizes = imageOutputSizes
 		forwardResult.BillingModel = imageBillingModel
 	}
-	return forwardResult, nil
+	return forwardResult, forwardErr
 }
 
 func logOpenAIPassthroughInstructionsRejected(
@@ -1959,10 +1984,51 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		flushPending = false
 	}
 	defer flushPendingOutput()
+	streamInterval := time.Duration(0)
+	if s.cfg != nil && s.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+		streamInterval = time.Duration(s.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
+	}
+	var lastReadAt int64
+	atomic.StoreInt64(&lastReadAt, time.Now().UnixNano())
+	var idleTimer *time.Timer
+	var idleTimeoutCh <-chan time.Time
+	if streamInterval > 0 {
+		idleTimer = time.NewTimer(streamInterval)
+		idleTimeoutCh = idleTimer.C
+		defer idleTimer.Stop()
+	}
+	var drainTimer *time.Timer
+	var drainTimeoutCh <-chan time.Time
+	defer func() {
+		if drainTimer != nil {
+			drainTimer.Stop()
+		}
+	}()
+	markClientDisconnected := func() {
+		if clientDisconnected {
+			return
+		}
+		clientDisconnected = true
+		if streamInterval > 0 {
+			drainTimer = time.NewTimer(streamInterval)
+			drainTimeoutCh = drainTimer.C
+		}
+	}
+	resetIdleTimerIfActive := func() bool {
+		if idleTimer == nil {
+			return false
+		}
+		remaining := streamInterval - time.Since(time.Unix(0, atomic.LoadInt64(&lastReadAt)))
+		if remaining <= 0 {
+			return false
+		}
+		idleTimer.Reset(remaining)
+		return true
+	}
 	writePendingLines := func() bool {
 		for _, pending := range pendingLines {
 			if _, err := fmt.Fprintln(w, pending); err != nil {
-				clientDisconnected = true
+				markClientDisconnected()
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 				return false
 			}
@@ -1982,7 +2048,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			return
 		}
 		if _, err := fmt.Fprint(w, buildOpenAIResponseFailedSSE(responseID, originalModel, createdAtTracker.Value(), bareErrorPayload, failedMessage)); err != nil {
-			clientDisconnected = true
+			markClientDisconnected()
 			return
 		}
 		clientOutputStarted = true
@@ -1991,7 +2057,10 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		flushPendingOutput()
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(&openAIPassthroughActivityReader{
+		reader:     resp.Body,
+		lastReadAt: &lastReadAt,
+	})
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
@@ -2000,6 +2069,37 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	defer putSSEScannerBuf64K(scanBuf)
 	documentScanner := newOpenAISSEJSONDocumentScanner(scanner)
+	scanEvents := make(chan openAIPassthroughScanEvent, 1)
+	readerStop := make(chan struct{})
+	readerDone := make(chan struct{})
+	readerStopped := false
+	stopReader := func() {
+		if !readerStopped {
+			readerStopped = true
+			close(readerStop)
+			_ = resp.Body.Close()
+		}
+		<-readerDone
+	}
+	go func() {
+		defer close(readerDone)
+		defer close(scanEvents)
+		for documentScanner.Scan() {
+			event := openAIPassthroughScanEvent{line: documentScanner.Text()}
+			select {
+			case scanEvents <- event:
+			case <-readerStop:
+				return
+			}
+		}
+		if err := documentScanner.Err(); err != nil {
+			select {
+			case scanEvents <- openAIPassthroughScanEvent{err: err}:
+			case <-readerStop:
+			}
+		}
+	}()
+	defer stopReader()
 
 	needModelReplace := strings.TrimSpace(originalModel) != "" && strings.TrimSpace(mappedModel) != "" && strings.TrimSpace(originalModel) != strings.TrimSpace(mappedModel)
 	resultWithUsage := func() *openaiStreamingResultPassthrough {
@@ -2012,8 +2112,68 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		}
 	}
 
-	for documentScanner.Scan() {
-		line := documentScanner.Text()
+	var pendingScanEvent *openAIPassthroughScanEvent
+	var scanErr error
+	var streamTimeoutErr error
+	idleTimeoutExpired := false
+	drainTimeoutExpired := false
+streamLoop:
+	for {
+		var line string
+		if pendingScanEvent != nil {
+			event := *pendingScanEvent
+			pendingScanEvent = nil
+			if event.err != nil {
+				scanErr = event.err
+				break streamLoop
+			}
+			line = event.line
+		} else if drainTimeoutExpired {
+			streamTimeoutErr = fmt.Errorf("stream usage incomplete after client disconnect: missing terminal event within %s: %w", streamInterval, errOpenAIPassthroughStreamTimeout)
+			stopReader()
+			break streamLoop
+		} else {
+			select {
+			case event, ok := <-scanEvents:
+				if !ok {
+					if idleTimeoutExpired {
+						streamTimeoutErr = fmt.Errorf("stream usage incomplete: missing terminal event after %s data interval timeout: %w", streamInterval, errOpenAIPassthroughStreamTimeout)
+					}
+					break streamLoop
+				}
+				if event.err != nil {
+					if idleTimeoutExpired {
+						streamTimeoutErr = fmt.Errorf("stream usage incomplete: missing terminal event after %s data interval timeout: %w", streamInterval, errOpenAIPassthroughStreamTimeout)
+					} else {
+						scanErr = event.err
+					}
+					break streamLoop
+				}
+				line = event.line
+			case <-idleTimeoutCh:
+				if resetIdleTimerIfActive() {
+					continue streamLoop
+				}
+				idleTimeoutExpired = true
+				idleTimeoutCh = nil
+				_ = resp.Body.Close()
+				continue streamLoop
+			case <-drainTimeoutCh:
+				drainTimeoutExpired = true
+				select {
+				case event, ok := <-scanEvents:
+					if !ok {
+						break streamLoop
+					}
+					pendingScanEvent = &event
+					continue streamLoop
+				default:
+					streamTimeoutErr = fmt.Errorf("stream usage incomplete after client disconnect: missing terminal event within %s: %w", streamInterval, errOpenAIPassthroughStreamTimeout)
+					stopReader()
+					break streamLoop
+				}
+			}
+		}
 		if eventType, ok := extractOpenAISSEEventLine(line); ok {
 			pendingSSEEventType = eventType
 			eventType = strings.TrimSpace(eventType)
@@ -2217,7 +2377,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				}
 			}
 			if _, err := fmt.Fprintln(w, line); err != nil {
-				clientDisconnected = true
+				markClientDisconnected()
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 			} else {
 				clientOutputStarted = true
@@ -2237,11 +2397,25 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		// Codex bare error 序列（error 后可能跟 response.failed 或翻盘的 completed）
 		// 必须继续读取，不适用提前结束。
 		if (sawDone || sawTerminalEvent) && line == "" && (!codexFailureTerminal || !sawBareError) {
+			stopReader()
+			break
+		}
+		if drainTimeoutExpired {
+			streamTimeoutErr = fmt.Errorf("stream usage incomplete after client disconnect: missing terminal event within %s: %w", streamInterval, errOpenAIPassthroughStreamTimeout)
+			stopReader()
 			break
 		}
 	}
 	ensureResponseFailedTerminal()
-	if err := documentScanner.Err(); err != nil {
+	if streamTimeoutErr != nil && (sawDone || sawTerminalEvent) && !sawFailedEvent {
+		s.clearOpenAIProxyStreamDisconnect(account)
+		streamTimeoutErr = nil
+	}
+	if streamTimeoutErr != nil {
+		return resultWithUsage(), streamTimeoutErr
+	}
+	if scanErr != nil {
+		err := scanErr
 		if (sawDone || sawTerminalEvent) && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 			return resultWithUsage(), nil
