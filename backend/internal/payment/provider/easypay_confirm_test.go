@@ -24,7 +24,7 @@ func newConfirmTestEasyPay(t *testing.T, body string, status int) (*EasyPay, *at
 			t.Errorf("ParseForm: %v", err)
 		}
 		q := r.URL.Query()
-		if r.URL.Path != "/api.php" || q.Get("act") != "order" || q.Get("pid") != "1001" || q.Get("key") != "pkey-1" || q.Get("out_trade_no") != "sub2_ORDER1" ||
+		if r.URL.Path != "/api/easypay/order-status" || len(q) != 0 ||
 			r.PostForm.Get("act") != "order" || r.PostForm.Get("pid") != "1001" || r.PostForm.Get("key") != "pkey-1" || r.PostForm.Get("out_trade_no") != "sub2_ORDER1" {
 			t.Errorf("unexpected query request: path=%s query=%v", r.URL.Path, q)
 		}
@@ -215,8 +215,8 @@ func TestEasyPayConfirmNotificationUsesRSA2QueryVerification(t *testing.T) {
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		queryNonce := request.URL.Query().Get("query_nonce")
-		if queryNonce == "" || request.PostForm.Get("query_nonce") != queryNonce ||
+		queryNonce := request.PostForm.Get("query_nonce")
+		if request.URL.RawQuery != "" || queryNonce == "" ||
 			request.PostForm.Get("gateway_sign_type") != signTypeRSA2 ||
 			request.PostForm.Get("gateway_key_id") != "test-key-1" {
 			t.Errorf("RSA2 query parameters missing or inconsistent: query=%v form=%v", request.URL.Query(), request.PostForm)

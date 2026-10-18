@@ -197,8 +197,8 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 				if r.Method != http.MethodPost {
 					t.Errorf("method = %q, want %q", r.Method, http.MethodPost)
 				}
-				if r.URL.Path != "/api.php" {
-					t.Errorf("path = %q, want /api.php", r.URL.Path)
+				if r.URL.Path != "/api/easypay/order-status" {
+					t.Errorf("path = %q, want /api/easypay/order-status", r.URL.Path)
 				}
 				if err := r.ParseForm(); err != nil {
 					t.Errorf("ParseForm: %v", err)
@@ -253,8 +253,8 @@ func TestEasyPayQueryOrderStatusMapping(t *testing.T) {
 				if got := gotForm.Get(key); got != want {
 					t.Fatalf("form[%s] = %q, want %q (form=%v)", key, got, want, gotForm)
 				}
-				if got := gotQuery.Get(key); got != want {
-					t.Fatalf("query[%s] = %q, want %q (query=%v)", key, got, want, gotQuery)
+				if got := gotQuery.Get(key); got != "" {
+					t.Fatalf("query[%s] = %q, want empty (query=%v)", key, got, gotQuery)
 				}
 			}
 		})

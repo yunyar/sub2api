@@ -393,11 +393,7 @@ func (e *EasyPay) QueryOrder(ctx context.Context, tradeNo string) (*payment.Quer
 		params["gateway_key_id"] = e.gatewayKeyID
 		params["query_nonce"] = nonce
 	}
-	query := url.Values{}
-	for key, value := range params {
-		query.Set(key, value)
-	}
-	body, httpStatus, err := e.postRaw(ctx, e.apiBase()+"/api.php?"+query.Encode(), params)
+	body, httpStatus, err := e.postRaw(ctx, e.apiBase()+"/api/easypay/order-status", params)
 	if err != nil {
 		var urlErr *url.Error
 		if errors.As(err, &urlErr) {
