@@ -134,6 +134,40 @@ func TestForwardAsResponsesAntigravityAPIKeyUsesMessagesBridge(t *testing.T) {
 	}
 }
 
+func TestForwardAsResponsesAntigravityAPIKey503ReturnsFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gemini-4-argon","input":"hello","stream":true}`)
+	upstream := &anthropicHTTPUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Header:     http.Header{"X-Request-Id": []string{"antigravity-503"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"overloaded_error","message":"No available accounts; rate limit exceeded"}}`)),
+	}}
+	service := &GatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID: 146, Platform: PlatformAntigravity, Type: AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key": "fixture-key", "base_url": "https://antigravity.example.test",
+			"model_mapping": map[string]any{"gemini-4-argon": "gemini-4-argon-high"},
+		},
+	}
+	recorder := httptest.NewRecorder()
+	ginContext, _ := gin.CreateTestContext(recorder)
+	ginContext.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(string(body)))
+
+	result, err := service.ForwardAsResponses(ginContext.Request.Context(), ginContext, account, body, nil)
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
+	require.Contains(t, string(failoverErr.ResponseBody), "No available accounts")
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "/antigravity/v1/messages", upstream.lastReq.URL.Path)
+	require.Contains(t, string(upstream.lastBody), `"model":"gemini-4-argon-high"`)
+	require.Empty(t, recorder.Body.String())
+	require.Empty(t, recorder.Header().Get("Content-Type"))
+}
+
 func TestResponsesBridgeReturnsAtMessageStopBeforeUpstreamEOF(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, stream := range []bool{false, true} {
@@ -166,6 +200,71 @@ func TestResponsesBridgeReturnsAtMessageStopBeforeUpstreamEOF(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, 7, result.Usage.OutputTokens)
+			writeResult := make(chan error, 1)
+			go func() {
+				_, writeErr := writer.Write([]byte(": heartbeat\n\n"))
+				writeResult <- writeErr
+			}()
+			select {
+			case writeErr := <-writeResult:
+				require.ErrorIs(t, writeErr, io.ErrClosedPipe)
+			case <-time.After(time.Second):
+				_ = reader.Close()
+				<-writeResult
+				t.Fatal("finishing the response must close the upstream body")
+			}
+		})
+	}
+}
+
+func TestResponsesBridgeReturnsAtMessageDeltaBeforeUpstreamEOF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payload := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_terminal_delta","content":[],"usage":{"input_tokens":12}}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}`,
+		``,
+	}, "\n") + "\n"
+
+	for _, stream := range []bool{false, true} {
+		mode := "buffered"
+		if stream {
+			mode = "stream"
+		}
+		t.Run(mode, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			body := struct {
+				io.Reader
+				io.Closer
+			}{Reader: io.MultiReader(strings.NewReader(payload), reader), Closer: reader}
+			resp := &http.Response{Body: body}
+			done := make(chan struct{})
+			var result *ForwardResult
+			var recorder *httptest.ResponseRecorder
+			var err error
+			go func() {
+				result, recorder, err = runResponsesBridgeSSETest(&GatewayService{}, resp, stream)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				_ = writer.Close()
+				<-done
+				t.Fatal("message_delta with stop_reason must finish without waiting for upstream EOF")
+			}
+			require.NoError(t, err)
+			require.Equal(t, 7, result.Usage.OutputTokens)
+			if stream {
+				require.Contains(t, recorder.Body.String(), "event: response.completed")
+			} else {
+				require.Equal(t, "application/json; charset=utf-8", recorder.Header().Get("Content-Type"))
+				require.Contains(t, recorder.Body.String(), `"status":"completed"`)
+			}
 			writeResult := make(chan error, 1)
 			go func() {
 				_, writeErr := writer.Write([]byte(": heartbeat\n\n"))

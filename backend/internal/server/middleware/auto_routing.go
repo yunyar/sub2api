@@ -30,11 +30,12 @@ const (
 )
 
 type AutoRoutingRequestInput struct {
-	Kind      AutoRoutingRequestKind
-	Endpoint  string
-	ModelID   string
-	RequestID string
-	Body      []byte
+	Kind          AutoRoutingRequestKind
+	Endpoint      string
+	ModelID       string
+	RequestID     string
+	Body          []byte
+	CodexManifest bool
 }
 
 type AutoRoutingRequestError struct {
@@ -88,7 +89,6 @@ const (
 	autoRoutingStatefulResponseCode      = "AUTO_ROUTING_STATEFUL_RESPONSE_UNSUPPORTED"
 	autoRoutingAmbiguousModelCode        = "AUTO_ROUTING_AMBIGUOUS_MODEL"
 	autoRoutingModelRequiredCode         = "AUTO_ROUTING_MODEL_REQUIRED"
-	autoRoutingUnsupportedManifestCode   = "AUTO_ROUTING_CODEX_MANIFEST_UNSUPPORTED"
 	autoRoutingDirectoryEndpointCode     = "AUTO_ROUTING_MODEL_DIRECTORY"
 	autoRoutingEffectiveGroupInvalidCode = "AUTO_ROUTING_EFFECTIVE_GROUP_INVALID"
 	autoRoutingFinishTimeout             = 5 * time.Second
@@ -170,7 +170,11 @@ func PrepareAutoRouting(
 			writeAutoRoutingFailure(c, prepareErr, "")
 			return apiKey, true
 		}
-		writeAutoModelDirectory(c, preparation, input.ModelID)
+		if input.CodexManifest {
+			writeAutoCodexModelsManifest(c, preparation, input.ModelID)
+		} else {
+			writeAutoModelDirectory(c, preparation, input.ModelID)
+		}
 		return apiKey, true
 	}
 
@@ -397,7 +401,7 @@ func ClassifyAutoRoutingRequest(c *gin.Context) (AutoRoutingRequestKind, string,
 	path := autoRoutingRoutePath(c)
 	method := c.Request.Method
 	if isCodexManifestRequest(c, path) {
-		return 0, "", autoRoutingError(http.StatusNotFound, autoRoutingUnsupportedManifestCode, "Codex model manifests are not supported with Auto routing")
+		return AutoRoutingModelDirectoryRequest, autoRoutingDirectoryEndpoint, nil
 	}
 
 	if method == http.MethodGet {
@@ -407,8 +411,7 @@ func ClassifyAutoRoutingRequest(c *gin.Context) (AutoRoutingRequestKind, string,
 		case "/v1/models/:model", "/models/:model":
 			return AutoRoutingModelDirectoryRequest, autoRoutingDirectoryEndpoint, nil
 		}
-		if model := strings.TrimSpace(c.Param("model")); model != "" &&
-			(path == "/v1/models/"+model || path == "/models/"+model) {
+		if model := autoRoutingRequestedModel(c, path); model != "" {
 			return AutoRoutingModelDirectoryRequest, autoRoutingDirectoryEndpoint, nil
 		}
 	}
@@ -442,10 +445,11 @@ func BuildAutoRoutingRequest(c *gin.Context) (AutoRoutingRequestInput, error) {
 	}
 	if kind == AutoRoutingModelDirectoryRequest {
 		return AutoRoutingRequestInput{
-			Kind:      kind,
-			Endpoint:  endpoint,
-			ModelID:   strings.TrimSpace(c.Param("model")),
-			RequestID: autoRoutingBillingRequestID(c),
+			Kind:          kind,
+			Endpoint:      endpoint,
+			ModelID:       autoRoutingRequestedModel(c, autoRoutingRoutePath(c)),
+			RequestID:     autoRoutingBillingRequestID(c),
+			CodexManifest: isCodexManifestRequest(c, autoRoutingRoutePath(c)),
 		}, nil
 	}
 
@@ -484,6 +488,22 @@ func BuildAutoRoutingRequest(c *gin.Context) (AutoRoutingRequestInput, error) {
 		RequestID: requestID,
 		Body:      rawBody,
 	}, nil
+}
+
+func autoRoutingRequestedModel(c *gin.Context, routePath string) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	if model := strings.TrimSpace(c.Param("model")); model != "" {
+		return model
+	}
+	requestPath := c.Request.URL.Path
+	for _, prefix := range []string{"/v1/models/", "/models/"} {
+		if routePath == prefix+strings.TrimPrefix(requestPath, prefix) && strings.HasPrefix(requestPath, prefix) {
+			return strings.Trim(strings.TrimPrefix(requestPath, prefix), "/")
+		}
+	}
+	return ""
 }
 
 // BindEffectiveGroupContext installs a service-prepared key clone without
@@ -614,11 +634,51 @@ func writeAutoModelDirectory(c *gin.Context, preparation *service.AutoRoutingPre
 			writeAutoRoutingRequestError(c, autoRoutingError(http.StatusNotFound, "model_not_found", "The requested model is not available for Auto routing"), "")
 			return
 		}
-		c.JSON(http.StatusOK, entries[0])
+		writeAutoCatalogResponse(c, entries[0])
+		return
+	}
+	writeAutoCatalogResponse(c, autoModelDirectoryResponse{Object: "list", Data: entries})
+}
+
+func writeAutoCodexModelsManifest(c *gin.Context, preparation *service.AutoRoutingPreparation, requestedModel string) {
+	if requestedModel != "" {
+		writeAutoModelDirectory(c, preparation, requestedModel)
+		return
+	}
+	if preparation == nil {
+		writeAutoRoutingFailure(c, service.ErrAutoRoutingUnavailable, "")
+		return
+	}
+	body, err := service.BuildAutoCodexModelsManifest(preparation.Capabilities)
+	if err != nil {
+		writeAutoRoutingFailure(c, err, "")
+		return
+	}
+	writeAutoCatalogBody(c, body)
+}
+
+func writeAutoCatalogResponse(c *gin.Context, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		writeAutoRoutingFailure(c, service.ErrAutoRoutingUnavailable, "")
+		return
+	}
+	writeAutoCatalogBody(c, body)
+}
+
+func writeAutoCatalogBody(c *gin.Context, body []byte) {
+	etag := service.CodexModelsManifestETag(body)
+	c.Header("Cache-Control", "private, no-cache")
+	c.Writer.Header().Add("Vary", "Authorization")
+	c.Writer.Header().Add("Vary", "X-Api-Key")
+	c.Header("ETag", etag)
+	if service.CodexModelsManifestETagMatches(c.GetHeader("If-None-Match"), etag) {
+		c.Status(http.StatusNotModified)
+		c.Writer.WriteHeaderNow()
 		c.Abort()
 		return
 	}
-	c.JSON(http.StatusOK, autoModelDirectoryResponse{Object: "list", Data: entries})
+	c.Data(http.StatusOK, "application/json", body)
 	c.Abort()
 }
 
@@ -1002,14 +1062,28 @@ func autoRoutingRoutePath(c *gin.Context) string {
 }
 
 func isCodexManifestRequest(c *gin.Context, path string) bool {
-	if path == "/backend-api/codex/models" || path == "/backend-api/codex/models/:model" {
-		return true
-	}
-	if c == nil || c.Request == nil {
+	if c == nil || c.Request == nil || c.Request.Method != http.MethodGet {
 		return false
 	}
-	_, hasClientVersion := c.Request.URL.Query()["client_version"]
-	return hasClientVersion && (path == "/v1/models" || path == "/models" || path == "/v1/models/:model" || path == "/models/:model")
+	requestPath := c.Request.URL.Path
+	if path == "/backend-api/codex/models" || requestPath == "/backend-api/codex/models" {
+		return true
+	}
+	if path == "/backend-api/codex/models/:model" || path == "/v1/models/:model" || path == "/models/:model" ||
+		isAutoModelDetailPath(requestPath) {
+		return false
+	}
+	clientVersion := c.Query("client_version")
+	return clientVersion != "" && (path == "/v1/models" || path == "/models" || requestPath == "/v1/models" || requestPath == "/models")
+}
+
+func isAutoModelDetailPath(path string) bool {
+	for _, prefix := range []string{"/backend-api/codex/models/", "/v1/models/", "/models/"} {
+		if strings.HasPrefix(path, prefix) && strings.Trim(strings.TrimPrefix(path, prefix), "/") != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func unsupportedAutoEndpoint() error {

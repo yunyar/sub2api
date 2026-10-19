@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClassifyAutoRoutingRequest(t *testing.T) {
@@ -28,8 +29,11 @@ func TestClassifyAutoRoutingRequest(t *testing.T) {
 		{name: "chat generation", method: http.MethodPost, path: "/v1/chat/completions", wantKind: AutoRoutingGenerationRequest, wantTarget: autoRouteEndpointChat},
 		{name: "model directory", method: http.MethodGet, path: "/v1/models", wantKind: AutoRoutingModelDirectoryRequest, wantTarget: autoRoutingDirectoryEndpoint},
 		{name: "native google models", method: http.MethodGet, path: "/v1beta/models", wantCode: autoRoutingUnsupportedEndpointCode},
-		{name: "codex manifest", method: http.MethodGet, path: "/backend-api/codex/models", wantCode: autoRoutingUnsupportedManifestCode},
-		{name: "codex client manifest", method: http.MethodGet, path: "/models?client_version=0.1", wantCode: autoRoutingUnsupportedManifestCode},
+		{name: "codex manifest", method: http.MethodGet, path: "/backend-api/codex/models", wantKind: AutoRoutingModelDirectoryRequest, wantTarget: autoRoutingDirectoryEndpoint},
+		{name: "codex client manifest", method: http.MethodGet, path: "/models?client_version=0.1", wantKind: AutoRoutingModelDirectoryRequest, wantTarget: autoRoutingDirectoryEndpoint},
+		{name: "codex v1 client manifest", method: http.MethodGet, path: "/v1/models?client_version=0.1", wantKind: AutoRoutingModelDirectoryRequest, wantTarget: autoRoutingDirectoryEndpoint},
+		{name: "codex model detail", method: http.MethodGet, path: "/v1/models/gpt-6-luna?client_version=0.1", wantKind: AutoRoutingModelDirectoryRequest, wantTarget: autoRoutingDirectoryEndpoint},
+		{name: "codex post is not a manifest", method: http.MethodPost, path: "/models?client_version=0.1", wantCode: autoRoutingUnsupportedEndpointCode},
 		{name: "embeddings", method: http.MethodPost, path: "/v1/embeddings", wantCode: autoRoutingUnsupportedEndpointCode},
 	}
 
@@ -57,6 +61,93 @@ func TestClassifyAutoRoutingRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsCodexManifestRequestOnlyMatchesCollectionGET(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodGet, "/v1/models?client_version=0.1", true},
+		{http.MethodGet, "/models?client_version=0.1", true},
+		{http.MethodGet, "/v1/models?client_version=", false},
+		{http.MethodGet, "/backend-api/codex/models", true},
+		{http.MethodGet, "/v1/models/gpt-6-luna?client_version=0.1", false},
+		{http.MethodGet, "/backend-api/codex/models/gpt-6-luna", false},
+		{http.MethodPost, "/models?client_version=0.1", false},
+	} {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(test.method, test.path, nil)
+		if got := isCodexManifestRequest(ctx, ctx.Request.URL.Path); got != test.want {
+			t.Fatalf("isCodexManifestRequest(%s %s) = %t, want %t", test.method, test.path, got, test.want)
+		}
+	}
+}
+
+func TestWriteAutoCodexModelsManifestRevalidatesFinalDirectory(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	capability := func(modelID string) service.AutoModelCapability {
+		return service.AutoModelCapability{
+			ModelID: modelID, Platform: service.PlatformOpenAI,
+			SupportedEndpoints: []service.AutoModelEndpoint{service.AutoModelEndpointResponses},
+		}
+	}
+	first := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(first)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.1", nil)
+	writeAutoCodexModelsManifest(ctx, &service.AutoRoutingPreparation{
+		Capabilities: []service.AutoModelCapability{capability("first-model")},
+	}, "")
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Contains(t, first.Body.String(), `"slug":"first-model"`)
+	firstETag := first.Header().Get("ETag")
+	require.NotEmpty(t, firstETag)
+	require.Equal(t, "private, no-cache", first.Header().Get("Cache-Control"))
+	require.Contains(t, first.Header().Values("Vary"), "Authorization")
+	require.Contains(t, first.Header().Values("Vary"), "X-Api-Key")
+
+	unchanged := httptest.NewRecorder()
+	unchangedContext, _ := gin.CreateTestContext(unchanged)
+	unchangedContext.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.1", nil)
+	unchangedContext.Request.Header.Set("If-None-Match", firstETag)
+	writeAutoCodexModelsManifest(unchangedContext, &service.AutoRoutingPreparation{
+		Capabilities: []service.AutoModelCapability{capability("first-model")},
+	}, "")
+	require.Equal(t, http.StatusNotModified, unchanged.Code)
+	require.Empty(t, unchanged.Body.String())
+	require.Equal(t, firstETag, unchanged.Header().Get("ETag"))
+
+	changed := httptest.NewRecorder()
+	changedContext, _ := gin.CreateTestContext(changed)
+	changedContext.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.1", nil)
+	changedContext.Request.Header.Set("If-None-Match", firstETag)
+	writeAutoCodexModelsManifest(changedContext, &service.AutoRoutingPreparation{
+		Capabilities: []service.AutoModelCapability{capability("second-model")},
+	}, "")
+	require.Equal(t, http.StatusOK, changed.Code)
+	require.Contains(t, changed.Body.String(), `"slug":"second-model"`)
+	require.NotEqual(t, firstETag, changed.Header().Get("ETag"))
+
+	empty := httptest.NewRecorder()
+	emptyContext, _ := gin.CreateTestContext(empty)
+	emptyContext.Request = httptest.NewRequest(http.MethodGet, "/backend-api/codex/models", nil)
+	writeAutoCodexModelsManifest(emptyContext, &service.AutoRoutingPreparation{}, "")
+	require.Equal(t, http.StatusOK, empty.Code)
+	require.JSONEq(t, `{"models":[]}`, empty.Body.String())
+}
+
+func TestWriteAutoModelDirectoryKeepsModelDetailShapeForCodexQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models/model?client_version=0.1", nil)
+	writeAutoModelDirectory(ctx, &service.AutoRoutingPreparation{
+		Capabilities: []service.AutoModelCapability{{ModelID: "model", Platform: service.PlatformOpenAI}},
+	}, "model")
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.JSONEq(t, `{"model_id":"model","platform":"openai","account_schedulable":false,"id":"model","object":"model","created":1704067200,"owned_by":"openai","type":"model","display_name":"model"}`, recorder.Body.String())
 }
 
 func TestPrepareAutoRoutingSkipsFixedAndLegacyKeys(t *testing.T) {

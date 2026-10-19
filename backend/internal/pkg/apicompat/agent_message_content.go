@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -158,7 +160,7 @@ func agentMessageImageURL(raw json.RawMessage) string {
 
 func agentMessageLooksOpaqueCiphertext(value string) bool {
 	value = strings.TrimSpace(value)
-	if strings.HasPrefix(value, "gAAAA") || strings.HasPrefix(value, "anthropic-thinking-v1:") {
+	if strings.HasPrefix(value, "anthropic-thinking-v1:") || strings.HasPrefix(value, "gAAAA") || agentMessageLooksLikeFernetToken(value) {
 		return true
 	}
 	if len(value) < 40 || strings.ContainsAny(value, " \t\r\n") {
@@ -171,9 +173,37 @@ func agentMessageLooksOpaqueCiphertext(value string) bool {
 		base64.URLEncoding,
 	} {
 		decoded, err := encoding.DecodeString(value)
-		if err == nil && len(decoded) >= 24 {
+		if err == nil && len(decoded) >= 24 && !agentMessageDecodedContentLooksText(decoded) {
 			return true
 		}
 	}
 	return false
+}
+
+func agentMessageLooksLikeFernetToken(value string) bool {
+	for _, encoding := range []*base64.Encoding{
+		base64.RawURLEncoding,
+		base64.URLEncoding,
+	} {
+		decoded, err := encoding.DecodeString(value)
+		if err == nil && len(decoded) >= 73 && decoded[0] == 0x80 && (len(decoded)-57)%16 == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func agentMessageDecodedContentLooksText(value []byte) bool {
+	if !utf8.Valid(value) {
+		return false
+	}
+	for _, character := range string(value) {
+		if character == '\n' || character == '\r' || character == '\t' {
+			continue
+		}
+		if !unicode.IsPrint(character) {
+			return false
+		}
+	}
+	return true
 }

@@ -407,7 +407,7 @@ func readAnthropicResponsesEvents(
 			terminalSeen = true
 		}
 		disconnected := processEvent(&event)
-		return disconnected || event.Type == "message_stop", nil
+		return disconnected || terminalSeen, nil
 	}
 	for {
 		line, readErr := pump.next()
@@ -577,6 +577,36 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	var firstTokenMs *int
 	firstChunk := true
 	clientDisconnected := false
+	writeResponsesEvent := func(evt apicompat.ResponsesStreamEvent) bool {
+		payload, err := json.Marshal(evt)
+		if err != nil {
+			logger.L().Warn("forward_as_responses stream: failed to marshal event",
+				zap.Error(err),
+				zap.String("request_id", requestID),
+			)
+			return false
+		}
+		payload = reverseToolNamesIfPresent(c, payload)
+		payloads, _, err := clientToolRestorer.RestoreEvent(payload)
+		if err != nil {
+			logger.L().Warn("forward_as_responses stream: failed to restore client tools",
+				zap.Error(err),
+				zap.String("request_id", requestID),
+			)
+			return false
+		}
+		for _, restored := range payloads {
+			eventType := gjson.GetBytes(restored, "type").String()
+			if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
+				clientDisconnected = true
+				logger.L().Info("forward_as_responses stream: client disconnected",
+					zap.String("request_id", requestID),
+				)
+				return true
+			}
+		}
+		return false
+	}
 
 	resultWithUsage := func() *ForwardResult {
 		return &ForwardResult{
@@ -618,32 +648,8 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		// Convert to Responses events
 		events := apicompat.AnthropicEventToResponsesEvents(event, state)
 		for _, evt := range events {
-			payload, err := json.Marshal(evt)
-			if err != nil {
-				logger.L().Warn("forward_as_responses stream: failed to marshal event",
-					zap.Error(err),
-					zap.String("request_id", requestID),
-				)
-				continue
-			}
-			payload = reverseToolNamesIfPresent(c, payload)
-			payloads, _, err := clientToolRestorer.RestoreEvent(payload)
-			if err != nil {
-				logger.L().Warn("forward_as_responses stream: failed to restore client tools",
-					zap.Error(err),
-					zap.String("request_id", requestID),
-				)
-				continue
-			}
-			for _, restored := range payloads {
-				eventType := gjson.GetBytes(restored, "type").String()
-				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
-					clientDisconnected = true
-					logger.L().Info("forward_as_responses stream: client disconnected",
-						zap.String("request_id", requestID),
-					)
-					return true // client disconnected
-				}
+			if writeResponsesEvent(evt) {
+				return true
 			}
 		}
 		if len(events) > 0 {
@@ -655,12 +661,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	finalizeStream := func() (*ForwardResult, error) {
 		if finalEvents := apicompat.FinalizeAnthropicResponsesStream(state); len(finalEvents) > 0 {
 			for _, evt := range finalEvents {
-				sse, err := apicompat.ResponsesEventToSSE(evt)
-				if err != nil {
-					continue
+				if writeResponsesEvent(evt) {
+					break
 				}
-				out := string(reverseToolNamesIfPresent(c, []byte(sse)))
-				fmt.Fprint(c.Writer, out) //nolint:errcheck
 			}
 			c.Writer.Flush()
 		}

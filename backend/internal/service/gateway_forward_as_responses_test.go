@@ -215,6 +215,74 @@ func TestHandleResponsesStreamingResponse_RestoresNamespaceTool(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), `"name":"codex_app__read_thread"`)
 }
 
+func TestHandleResponsesStreamingResponse_RestoresClientToolsInTerminalDeltaResponse(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_client_tools","type":"message","role":"assistant","content":[],"model":"gemini-test","stop_reason":"","usage":{"input_tokens":10}}}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_namespace","name":"codex_app__read_thread","input":{"thread_id":"123"}}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":0}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_custom","name":"exec","input":{"input":"pwd"}}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":1}`,
+		``,
+		`event: content_block_start`,
+		`data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_search","name":"tool_search","input":{"query":"git","limit":2}}}`,
+		``,
+		`event: content_block_stop`,
+		`data: {"type":"content_block_stop","index":2}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}`,
+		``,
+	}, "\n")
+	mapping := apicompat.ResponsesClientToolMapping{
+		CustomTools: map[string]bool{"exec": true},
+		ToolSearch:  true,
+		NamespaceTools: map[string]apicompat.ResponsesNamespaceName{
+			"codex_app__read_thread": {Namespace: "codex_app", Name: "read_thread"},
+		},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(stream))}
+
+	_, err := (&GatewayService{}).handleResponsesStreamingResponse(resp, c, "gemini-test", "gemini-test", nil, time.Now(), mapping)
+	require.NoError(t, err)
+
+	var completed json.RawMessage
+	for _, frame := range strings.Split(rec.Body.String(), "\n\n") {
+		for _, line := range strings.Split(frame, "\n") {
+			if strings.HasPrefix(line, "data: ") && gjson.Get(line[len("data: "):], "type").String() == "response.completed" {
+				completed = json.RawMessage(line[len("data: "):])
+			}
+		}
+	}
+	require.NotEmpty(t, completed, "terminal response.completed event must be present")
+	output := gjson.GetBytes(completed, "response.output")
+	require.Len(t, output.Array(), 3)
+	require.Equal(t, "function_call", output.Get("0.type").String())
+	require.Equal(t, "read_thread", output.Get("0.name").String())
+	require.Equal(t, "codex_app", output.Get("0.namespace").String())
+	require.JSONEq(t, `{"thread_id":"123"}`, output.Get("0.arguments").String())
+	require.Equal(t, "custom_tool_call", output.Get("1.type").String())
+	require.Equal(t, "pwd", output.Get("1.input").String())
+	require.False(t, output.Get("1.arguments").Exists())
+	require.Equal(t, "tool_search_call", output.Get("2.type").String())
+	require.Equal(t, "client", output.Get("2.execution").String())
+	require.JSONEq(t, `{"query":"git","limit":2}`, output.Get("2.arguments").Raw)
+	require.False(t, output.Get("2.name").Exists())
+}
+
 func TestExtractResponsesReasoningEffortFromBody(t *testing.T) {
 	t.Parallel()
 

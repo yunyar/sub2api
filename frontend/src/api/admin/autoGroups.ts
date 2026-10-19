@@ -43,6 +43,14 @@ export async function getById(id: number): Promise<AutoGroupProfile> {
   return data
 }
 
+export async function getModelCatalog(groupIDs: number[]): Promise<string[]> {
+  const { data } = await apiClient.post<{ models: string[] }>(
+    '/admin/auto-group-profiles/model-catalog',
+    { group_ids: groupIDs }
+  )
+  return data.models
+}
+
 export async function create(
   profile: CreateAutoGroupProfileRequest
 ): Promise<AutoGroupProfile> {
@@ -68,6 +76,7 @@ export async function deleteProfile(id: number, revision: number): Promise<void>
 export const autoGroupsAPI = {
   list,
   getById,
+  getModelCatalog,
   create,
   update,
   delete: deleteProfile

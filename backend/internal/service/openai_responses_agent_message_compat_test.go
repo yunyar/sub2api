@@ -146,8 +146,19 @@ func TestNormalizeOpenAIResponsesAgentMessages_PreservesLongBase64(t *testing.T)
 
 	normalized, changed, err := normalizeOpenAIResponsesAgentMessages(body)
 	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "message", gjson.GetBytes(normalized, "input.0.type").String())
+	require.Equal(t, encoded, gjson.GetBytes(normalized, "input.0.content.1.text").String())
+}
+
+func TestNormalizeOpenAIResponsesAgentMessages_PreservesOpaqueContentForNativeValidation(t *testing.T) {
+	body := []byte(`{"input":[{"type":"agent_message","content":[{"type":"input_text","text":"Message Type: NEW_TASK\nPayload:\nPortable task body."},{"type":"encrypted_content","encrypted_content":"gAAAAABsynthetic-ciphertext"}]}]}`)
+	original := bytes.Clone(body)
+
+	normalized, changed, err := normalizeOpenAIResponsesAgentMessages(body)
+	require.NoError(t, err)
 	require.False(t, changed)
-	require.Equal(t, body, normalized)
+	require.Equal(t, original, normalized)
 }
 
 func TestNormalizeOpenAIResponsesAgentMessages_OutputIsValidJSON(t *testing.T) {

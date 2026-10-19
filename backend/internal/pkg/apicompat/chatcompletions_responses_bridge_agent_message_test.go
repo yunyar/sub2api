@@ -93,6 +93,48 @@ func TestResponsesToChatCompletionsRequest_AgentMessagePreservesMediaOrder(t *te
 	require.Equal(t, "high", parts[4].ImageURL.Detail)
 }
 
+func TestResponsesToChatCompletionsRequest_AgentNotificationsPreservePlaintextParts(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "gpt-6-luna",
+		Input: json.RawMessage(`[
+			{"type":"agent_message","content":[
+				{"type":"input_text","text":"Message Type: STATUS_UPDATE\nPayload:\n"},
+				{"type":"encrypted_content","encrypted_content":"Child is still running."}
+			]},
+			{"type":"agent_message","content":[
+				{"type":"input_text","text":"Message Type: FINAL_ANSWER\nPayload:\n"},
+				{"type":"encrypted_content","encrypted_content":"Child completed its task."}
+			]}
+		]`),
+	}
+
+	out, err := ResponsesToChatCompletionsRequest(req)
+	require.NoError(t, err)
+	require.Len(t, out.Messages, 2)
+	for index, expected := range []string{
+		"Message Type: STATUS_UPDATE\nPayload:\nChild is still running.",
+		"Message Type: FINAL_ANSWER\nPayload:\nChild completed its task.",
+	} {
+		require.Equal(t, "user", out.Messages[index].Role)
+		assertChatMessageText(t, out.Messages[index].Content, expected)
+	}
+}
+
+func assertChatMessageText(t *testing.T, content json.RawMessage, expected string) {
+	t.Helper()
+	var text string
+	if err := json.Unmarshal(content, &text); err == nil {
+		require.Equal(t, expected, text)
+		return
+	}
+
+	var parts []ChatContentPart
+	require.NoError(t, json.Unmarshal(content, &parts))
+	require.Len(t, parts, 1)
+	require.Equal(t, "text", parts[0].Type)
+	require.Equal(t, expected, parts[0].Text)
+}
+
 func TestResponsesToChatCompletionsRequest_AgentMessageOpaqueContentErrors(t *testing.T) {
 	req := &ResponsesRequest{
 		Model: "glm-5.3",

@@ -221,10 +221,12 @@
               <button
                 type="button"
                 class="btn btn-secondary btn-sm"
-                data-testid="append-common-model-patterns"
-                @click="appendCommonModelPatterns"
+                data-testid="fetch-group-models"
+                :disabled="saving || loadingLatest || loadingModelCatalog || !form.group_ids.length || invalidGroupIds.length > 0"
+                :aria-busy="loadingModelCatalog"
+                @click="fetchGroupModels"
               >
-                {{ copy.appendCommonPatterns }}
+                {{ loadingModelCatalog ? copy.loadingModelCatalog : copy.fetchGroupModels }}
               </button>
             </div>
             <textarea
@@ -242,6 +244,13 @@
             <p id="auto-profile-model-patterns-hint" class="text-xs text-gray-500 dark:text-gray-400">
               {{ copy.modelPatternsHint }}
             </p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ copy.modelCatalogSourceHint }}</p>
+            <p
+              v-if="modelCatalogMessage"
+              data-testid="model-catalog-load-status"
+              class="text-xs text-gray-600 dark:text-gray-300"
+              role="status"
+            >{{ modelCatalogMessage }}</p>
             <p
               v-if="form.model_catalog_filter_enabled && !parsedModelPatterns.length"
               id="auto-profile-model-patterns-error"
@@ -407,6 +416,9 @@ const openingProfileId = ref<number | null>(null)
 const deletingProfileId = ref<number | null>(null)
 const loadingLatest = ref(false)
 const saving = ref(false)
+const loadingModelCatalog = ref(false)
+const modelCatalogMessage = ref('')
+let modelCatalogRequest = 0
 const revisionConflict = ref(false)
 const groupSearch = ref('')
 const form = reactive<ProfileForm>(emptyForm())
@@ -448,8 +460,14 @@ const copy = computed(() => (locale.value ?? 'en').toLowerCase().startsWith('zh'
       modelCatalogFilterHint: '启用后，仅拉取匹配下方任一模式的模型；* 可匹配任意字符。',
       modelPatterns: '模型名称或匹配模式',
       modelPatternsPlaceholder: 'gpt-*\nclaude-*\ngemini-*',
-      modelPatternsHint: '每行一条，支持 * 通配符。快捷填入只会追加并去重，不会覆盖现有内容。',
-      appendCommonPatterns: '追加常见模型系列',
+      modelPatternsHint: '每行一条，支持 * 通配符。获取模型后会替换列表内容，可自行删减和调整展示顺序。',
+      fetchGroupModels: '获取并填入所选分组模型',
+      loadingModelCatalog: '正在获取模型…',
+      modelCatalogSourceHint: '从所选分组的账号模型配置和原生协议清单读取，不追加常见模型。API Key 账号未配置模型映射时，请先在账号中拉取并保存支持的模型。',
+      modelCatalogEmpty: '所选分组没有可列出的模型。请检查分组状态、账号绑定和模型映射；当前草稿已保留。',
+      modelCatalogChanged: '所选分组已改变，请重新获取模型；当前草稿已保留。',
+      modelCatalogDraftChanged: '模型列表已编辑，请重新获取模型；当前草稿已保留。',
+      modelCatalogLoaded: (count: number) => `已填入 ${count} 个模型，按所选分组顺序合并去重。`,
       modelPatternsRequired: '启用筛选时至少需要填写一条模型名称或匹配模式。',
       allowedGroupsOrder: '允许的分组及默认顺序',
       groupEligibilityHint: '不包含组合分组。停用分组仍会显示，便于检查。',
@@ -511,8 +529,14 @@ const copy = computed(() => (locale.value ?? 'en').toLowerCase().startsWith('zh'
       modelCatalogFilterHint: 'When enabled, only models matching at least one pattern below are listed. * matches any characters.',
       modelPatterns: 'Model names or patterns',
       modelPatternsPlaceholder: 'gpt-*\nclaude-*\ngemini-*',
-      modelPatternsHint: 'One entry per line; * is supported. The shortcut appends and deduplicates patterns without replacing existing entries.',
-      appendCommonPatterns: 'Append common model families',
+      modelPatternsHint: 'One entry per line; * is supported. Fetching replaces these entries. Remove or reorder models to customize their display.',
+      fetchGroupModels: 'Fetch and fill selected group models',
+      loadingModelCatalog: 'Fetching models…',
+      modelCatalogSourceHint: 'Reads selected groups’ account model configuration and native protocol catalogs without adding common models. For API key accounts without model mappings, fetch and save supported models in the account first.',
+      modelCatalogEmpty: 'No models are listed for these groups. Check group status, account bindings, and model mappings. Your draft is preserved.',
+      modelCatalogChanged: 'The selected groups changed. Fetch models again. Your draft is preserved.',
+      modelCatalogDraftChanged: 'The model list was edited. Fetch models again. Your draft is preserved.',
+      modelCatalogLoaded: (count: number) => `Filled ${count} models, deduplicated in selected group order.`,
       modelPatternsRequired: 'Add at least one model name or pattern to enable filtering.',
       allowedGroupsOrder: 'Allowed groups and default order',
       groupEligibilityHint: 'Composite groups are excluded. Inactive groups remain visible for review.',
@@ -552,20 +576,6 @@ function emptyForm(): ProfileForm {
   }
 }
 
-const commonModelPatterns = [
-  'gpt-*',
-  'o1*',
-  'o3*',
-  'o4*',
-  'claude-*',
-  'gemini-*',
-  'grok-*',
-  'deepseek-*',
-  'kimi-*',
-  'qwen-*',
-  'glm-*'
-]
-
 const parsedModelPatterns = computed(() =>
   [...new Set(form.model_catalog_filter_models
     .split(/\r?\n/)
@@ -593,6 +603,7 @@ const filteredGroups = computed(() => {
 
 const canSave = computed(() =>
   form.name.trim().length > 0
+  && !loadingModelCatalog.value
   && Number.isSafeInteger(form.max_candidates)
   && form.max_candidates >= 1
   && invalidGroupIds.value.length === 0
@@ -613,12 +624,36 @@ function profileToForm(profile: AutoGroupProfile): ProfileForm {
   }
 }
 
-function appendCommonModelPatterns() {
-  const existing = parsedModelPatterns.value
-  form.model_catalog_filter_models = [
-    ...existing,
-    ...commonModelPatterns.filter(pattern => !existing.includes(pattern))
-  ].join('\n')
+async function fetchGroupModels() {
+  if (loadingModelCatalog.value || !form.group_ids.length || invalidGroupIds.value.length) return
+  const request = ++modelCatalogRequest
+  const groupIDs = [...form.group_ids]
+  const previousPatterns = form.model_catalog_filter_models
+  loadingModelCatalog.value = true
+  modelCatalogMessage.value = ''
+  try {
+    const models = await autoGroupsAPI.getModelCatalog(groupIDs)
+    if (request !== modelCatalogRequest || !editorOpen.value) return
+    if (groupIDs.join(',') !== form.group_ids.join(',')) {
+      modelCatalogMessage.value = copy.value.modelCatalogChanged
+      return
+    }
+    if (form.model_catalog_filter_models !== previousPatterns) {
+      modelCatalogMessage.value = copy.value.modelCatalogDraftChanged
+      return
+    }
+    const uniqueModels = [...new Set(models.map(model => model.trim()).filter(Boolean))]
+    if (!uniqueModels.length) {
+      modelCatalogMessage.value = copy.value.modelCatalogEmpty
+      return
+    }
+    form.model_catalog_filter_models = uniqueModels.join('\n')
+    modelCatalogMessage.value = copy.value.modelCatalogLoaded(uniqueModels.length)
+  } catch (error) {
+    if (request === modelCatalogRequest && editorOpen.value) appStore.showError(errorMessage(error))
+  } finally {
+    if (request === modelCatalogRequest) loadingModelCatalog.value = false
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -664,6 +699,9 @@ async function loadData() {
 }
 
 function resetEditor() {
+  modelCatalogRequest++
+  loadingModelCatalog.value = false
+  modelCatalogMessage.value = ''
   editingId.value = null
   baseRevision.value = null
   revisionConflict.value = false
@@ -701,6 +739,7 @@ function closeEditor() {
 }
 
 function toggleGroup(id: number, selected: boolean) {
+  modelCatalogMessage.value = ''
   if (selected && !form.group_ids.includes(id)) {
     form.group_ids.push(id)
   } else if (!selected) {
@@ -709,10 +748,12 @@ function toggleGroup(id: number, selected: boolean) {
 }
 
 function removeGroup(id: number) {
+  modelCatalogMessage.value = ''
   form.group_ids = form.group_ids.filter(groupId => groupId !== id)
 }
 
 function moveGroup(index: number, direction: -1 | 1) {
+  modelCatalogMessage.value = ''
   const target = index + direction
   if (target < 0 || target >= form.group_ids.length) return
   const next = [...form.group_ids]

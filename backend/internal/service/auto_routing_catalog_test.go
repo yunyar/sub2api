@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 type autoModelCatalogAccountRepoStub struct {
@@ -102,6 +104,98 @@ func TestAutoModelCatalogListsMappedModelsAndIgnoresTransientAccountState(t *tes
 		repo.includeGrouped {
 		t.Fatalf("unexpected account lookup: group=%d platforms=%v includeGrouped=%v", repo.groupID, repo.platforms, repo.includeGrouped)
 	}
+}
+
+func TestAutoModelCatalogDoesNotInventModelsForUnmappedAPIKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform string
+		mapping  map[string]any
+		want     []string
+	}{
+		{name: "OpenAI API key without mapping", platform: PlatformOpenAI},
+		{name: "OpenAI wildcard-only mapping", platform: PlatformOpenAI, mapping: map[string]any{"gpt-*": "upstream-*"}},
+		{name: "Grok API key without mapping", platform: PlatformGrok},
+		{name: "multi-protocol API key without mapping", platform: PlatformDeepseek},
+		{
+			name:     "explicit aliases only",
+			platform: PlatformOpenAI,
+			mapping: map[string]any{
+				"public-alias": "upstream-model",
+				"another-*":    "wildcard-target",
+				"empty-target": " ",
+			},
+			want: []string{"public-alias"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			group := &Group{ID: 18, Platform: test.platform, Status: StatusActive}
+			accounts := []Account{{
+				ID: 18, Platform: test.platform, Type: AccountTypeAPIKey,
+				Status: StatusActive, Schedulable: true,
+				Credentials: map[string]any{"model_mapping": test.mapping},
+			}}
+			repo := &autoModelCatalogAccountRepoStub{accounts: accounts}
+			got, err := NewAutoModelCatalog(repo).ListGroupModelCapabilities(context.Background(), group)
+			require.NoError(t, err)
+			if len(test.want) == 0 {
+				require.Empty(t, got)
+				return
+			}
+			require.Equal(t, test.want, autoModelCapabilityIDs(got))
+		})
+	}
+}
+
+func TestAutoModelCatalogKeepsNativeOAuthAndAntigravityMappings(t *testing.T) {
+	t.Run("OpenAI OAuth native defaults", func(t *testing.T) {
+		group := &Group{ID: 19, Platform: PlatformOpenAI, Status: StatusActive}
+		repo := &autoModelCatalogAccountRepoStub{accounts: []Account{{
+			ID: 19, Platform: PlatformOpenAI, Type: AccountTypeOAuth,
+			Status: StatusActive, Schedulable: true,
+		}}}
+		got, err := NewAutoModelCatalog(repo).ListGroupModelCapabilities(context.Background(), group)
+		require.NoError(t, err)
+		require.Contains(t, autoModelCapabilityIDs(got), "gpt-5.4")
+	})
+
+	t.Run("Antigravity OAuth native mapping", func(t *testing.T) {
+		group := &Group{ID: 20, Platform: PlatformAntigravity, Status: StatusActive}
+		repo := &autoModelCatalogAccountRepoStub{accounts: []Account{{
+			ID: 20, Platform: PlatformAntigravity, Type: AccountTypeOAuth,
+			Status: StatusActive, Schedulable: true,
+		}}}
+		got, err := NewAutoModelCatalog(repo).ListGroupModelCapabilities(context.Background(), group)
+		require.NoError(t, err)
+		require.Contains(t, autoModelCapabilityIDs(got), "gemini-4-argon")
+	})
+
+	t.Run("Antigravity API key requires an explicit mapping", func(t *testing.T) {
+		group := &Group{ID: 21, Platform: PlatformAntigravity, Status: StatusActive}
+		repo := &autoModelCatalogAccountRepoStub{accounts: []Account{{
+			ID: 21, Platform: PlatformAntigravity, Type: AccountTypeAPIKey,
+			Status: StatusActive, Schedulable: true,
+		}}}
+		got, err := NewAutoModelCatalog(repo).ListGroupModelCapabilities(context.Background(), group)
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+}
+
+func TestBuildAutoCodexModelsManifestUsesOnlyResponsesCapabilities(t *testing.T) {
+	body, err := BuildAutoCodexModelsManifest([]AutoModelCapability{
+		{ModelID: "responses-model", SupportedEndpoints: []AutoModelEndpoint{AutoModelEndpointResponses}},
+		{ModelID: "chat-only-model", SupportedEndpoints: []AutoModelEndpoint{AutoModelEndpointChat}},
+		{ModelID: "gpt-image-2", SupportedEndpoints: []AutoModelEndpoint{AutoModelEndpointResponses}},
+		{ModelID: "wildcard-*", SupportedEndpoints: []AutoModelEndpoint{AutoModelEndpointResponses}},
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"slug":"responses-model"`)
+	require.NotContains(t, string(body), "chat-only-model")
+	require.NotContains(t, string(body), "gpt-image-2")
+	require.NotContains(t, string(body), "wildcard-*")
 }
 
 func TestAutoModelCatalogResolveSeparatesSupportFromCurrentSchedulability(t *testing.T) {

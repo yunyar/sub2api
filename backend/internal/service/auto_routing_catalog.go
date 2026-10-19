@@ -115,6 +115,19 @@ func (c *AutoModelCatalog) ResolveGroupModelCapability(
 	return capability, ok, nil
 }
 
+func BuildAutoCodexModelsManifest(capabilities []AutoModelCapability) ([]byte, error) {
+	modelIDs := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		for _, endpoint := range capability.SupportedEndpoints {
+			if endpoint == AutoModelEndpointResponses {
+				modelIDs = append(modelIDs, capability.ModelID)
+				break
+			}
+		}
+	}
+	return BuildCodexModelsManifest(FilterCodexModelIDsForGroup(modelIDs, nil))
+}
+
 func (c *AutoModelCatalog) listEligibleAccounts(ctx context.Context, group *Group) ([]Account, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("%w: context is nil", ErrAutoModelCatalogInvalidGroup)
@@ -172,22 +185,15 @@ func autoModelEndpointSupported(endpoint AutoModelEndpoint) bool {
 
 func autoModelCatalogModelIDs(group *Group, accounts []Account) []string {
 	modelSet := make(map[string]struct{})
-	hasModelMappings := false
-	hasUnmappedOpenAI := false
 	for i := range accounts {
 		account := &accounts[i]
-		mapping := account.GetModelMapping()
+		for _, modelID := range autoModelCatalogNativeOAuthModelIDs(account) {
+			modelSet[modelID] = struct{}{}
+		}
 		if account.Platform == PlatformOpenAI && account.IsOpenAIPassthroughEnabled() {
-			hasUnmappedOpenAI = true
 			continue
 		}
-		if len(mapping) == 0 {
-			if account.Platform == PlatformOpenAI {
-				hasUnmappedOpenAI = true
-			}
-			continue
-		}
-		hasModelMappings = true
+		mapping := autoModelCatalogAccountMapping(account)
 		for modelID, upstreamModel := range mapping {
 			modelID = strings.TrimSpace(modelID)
 			if modelID == "" || strings.Contains(modelID, "*") || strings.TrimSpace(upstreamModel) == "" {
@@ -202,22 +208,6 @@ func autoModelCatalogModelIDs(group *Group, accounts []Account) []string {
 		}
 	}
 
-	if !hasModelMappings {
-		for _, modelID := range autoModelCatalogDefaultModelIDs(group.Platform) {
-			modelSet[modelID] = struct{}{}
-		}
-	} else if group.Platform == PlatformOpenAI && hasUnmappedOpenAI {
-		for _, modelID := range openai.DefaultModelIDs() {
-			modelSet[modelID] = struct{}{}
-		}
-	}
-
-	if group.Platform == PlatformOpenAI || group.Platform == PlatformGrok || IsMultiProtocolAPIKeyProvider(group.Platform) {
-		for _, modelID := range claude.DefaultModelIDs() {
-			modelSet[modelID] = struct{}{}
-		}
-	}
-
 	modelIDs := make([]string, 0, len(modelSet))
 	for modelID := range modelSet {
 		modelIDs = append(modelIDs, modelID)
@@ -226,8 +216,34 @@ func autoModelCatalogModelIDs(group *Group, accounts []Account) []string {
 	return modelIDs
 }
 
-func autoModelCatalogDefaultModelIDs(platform string) []string {
-	switch platform {
+func autoModelCatalogAccountMapping(account *Account) map[string]string {
+	if account == nil {
+		return nil
+	}
+	if account.IsAPIKeyOrBedrock() {
+		mapping := make(map[string]string)
+		switch configured := account.Credentials["model_mapping"].(type) {
+		case map[string]any:
+			for modelID, upstreamModel := range configured {
+				if mappedModel, ok := upstreamModel.(string); ok {
+					mapping[modelID] = mappedModel
+				}
+			}
+		case map[string]string:
+			for modelID, upstreamModel := range configured {
+				mapping[modelID] = upstreamModel
+			}
+		}
+		return mapping
+	}
+	return account.GetModelMapping()
+}
+
+func autoModelCatalogNativeOAuthModelIDs(account *Account) []string {
+	if account == nil || account.Type != AccountTypeOAuth && account.Type != AccountTypeSetupToken {
+		return nil
+	}
+	switch account.Platform {
 	case PlatformOpenAI:
 		return openai.DefaultModelIDs()
 	case PlatformAnthropic:
@@ -238,28 +254,18 @@ func autoModelCatalogDefaultModelIDs(platform string) []string {
 			modelIDs = append(modelIDs, model.ID)
 		}
 		return modelIDs
-	case PlatformGrok:
-		return autoModelCatalogMappedModelIDs(PlatformGrok)
-	case PlatformAntigravity:
-		return autoModelCatalogMappedModelIDs(PlatformAntigravity)
-	case PlatformOpenCodeGo:
-		return DefaultOpenCodeGoModelIDs()
+	case PlatformGrok, PlatformAntigravity:
+		modelIDs := make([]string, 0, len(account.GetModelMapping()))
+		for modelID, upstreamModel := range account.GetModelMapping() {
+			if strings.TrimSpace(modelID) != "" && strings.TrimSpace(upstreamModel) != "" && !strings.Contains(modelID, "*") {
+				modelIDs = append(modelIDs, modelID)
+			}
+		}
+		sort.Strings(modelIDs)
+		return modelIDs
 	default:
 		return nil
 	}
-}
-
-func autoModelCatalogMappedModelIDs(platform string) []string {
-	var account Account
-	account.Platform = platform
-	modelIDs := make([]string, 0, len(account.GetModelMapping()))
-	for modelID, upstreamModel := range account.GetModelMapping() {
-		if strings.TrimSpace(modelID) != "" && strings.TrimSpace(upstreamModel) != "" {
-			modelIDs = append(modelIDs, modelID)
-		}
-	}
-	sort.Strings(modelIDs)
-	return modelIDs
 }
 
 func autoModelCatalogResolveFromAccounts(

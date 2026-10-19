@@ -105,6 +105,9 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 				flatChild[key] = value
 			}
 			flatChild["name"] = flat
+			if namespaceDescription := stringValue(tool["description"]); strings.TrimSpace(namespaceDescription) != "" {
+				flatChild["description"] = namespaceToolDescription(namespaceDescription, stringValue(child["description"]))
+			}
 			flattened = append(flattened, flatChild)
 		}
 	}
@@ -119,6 +122,16 @@ func FlattenResponsesNamespacesExcept(req map[string]any, preserved map[string]b
 		}
 	}
 	return names, true, nil
+}
+
+func namespaceToolDescription(namespaceDescription, toolDescription string) string {
+	if strings.TrimSpace(namespaceDescription) == "" {
+		return toolDescription
+	}
+	if strings.TrimSpace(toolDescription) == "" {
+		return namespaceDescription
+	}
+	return namespaceDescription + "\n\n" + toolDescription
 }
 
 // RestoreResponsesNamespaceCalls restores flattened function calls in a JSON

@@ -95,6 +95,21 @@ func TestResponsesToAnthropicRequest_AgentMessagePreservesTextAndMediaOrder(t *t
 	require.Equal(t, " End task.", blocks[4].Text)
 }
 
+func TestResponsesToAnthropicRequest_AgentMessageRejectsOpaqueDespitePlaintextPayload(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "claude-opus-5-5",
+		Input: json.RawMessage(`[
+			{"type":"agent_message","content":[
+				{"type":"input_text","text":"Message Type: NEW_TASK\nPayload:\nPortable delegated task."},
+				{"type":"encrypted_content","encrypted_content":"gAAAAABopaque-payload"}
+			]}
+		]`),
+	}
+
+	_, err := ResponsesToAnthropicRequest(req)
+	require.ErrorIs(t, err, ErrOpaqueAgentMessageContent)
+}
+
 func TestResponsesToAnthropicRequest_AgentMessageRejectsUnrecoverableContent(t *testing.T) {
 	tests := []struct {
 		name  string

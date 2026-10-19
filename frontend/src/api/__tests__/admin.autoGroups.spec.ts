@@ -64,4 +64,13 @@ describe('admin Auto Groups API', () => {
       revision: 1
     })
   })
+
+  it('fetches models for the selected groups without requiring a saved profile', async () => {
+    mocks.post.mockResolvedValueOnce({ data: { models: ['private-model', 'claude-local'] } })
+
+    expect(await autoGroupsAPI.getModelCatalog([12, 11])).toEqual(['private-model', 'claude-local'])
+    expect(mocks.post).toHaveBeenCalledWith('/admin/auto-group-profiles/model-catalog', {
+      group_ids: [12, 11]
+    })
+  })
 })

@@ -1229,7 +1229,7 @@ func namespaceChildrenToChatTools(tool ResponsesTool, topLevel map[string]bool, 
 			Type: "function",
 			Function: &ChatFunction{
 				Name:        flat,
-				Description: child.Description,
+				Description: namespaceToolDescription(tool.Description, child.Description),
 				Parameters:  child.Parameters,
 				Strict:      child.Strict,
 			},

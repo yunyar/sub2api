@@ -35,6 +35,7 @@ func RegisterAdminRoutes(
 		profiles.GET("", h.AutoRouting.ListProfiles)
 		profiles.GET("/:id", h.AutoRouting.GetProfile)
 		profiles.POST("", h.AutoRouting.CreateProfile)
+		profiles.POST("/model-catalog", h.AutoRouting.PreviewModelCatalog)
 		profiles.PUT("/:id", h.AutoRouting.UpdateProfile)
 		profiles.DELETE("/:id", h.AutoRouting.DisableProfile)
 	}

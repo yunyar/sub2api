@@ -5,6 +5,7 @@ import AutoGroupsView from '../AutoGroupsView.vue'
 const mocks = vi.hoisted(() => ({
   listProfiles: vi.fn(),
   getProfile: vi.fn(),
+  getModelCatalog: vi.fn(),
   createProfile: vi.fn(),
   updateProfile: vi.fn(),
   deleteProfile: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('@/api/admin/autoGroups', () => ({
   autoGroupsAPI: {
     list: mocks.listProfiles,
     getById: mocks.getProfile,
+    getModelCatalog: mocks.getModelCatalog,
     create: mocks.createProfile,
     update: mocks.updateProfile,
     delete: mocks.deleteProfile
@@ -85,6 +87,7 @@ describe('AutoGroupsView', () => {
     vi.clearAllMocks()
     mocks.listProfiles.mockResolvedValue([])
     mocks.getProfile.mockResolvedValue(profile)
+    mocks.getModelCatalog.mockResolvedValue([])
     mocks.createProfile.mockResolvedValue({ ...profile, id: 9, name: 'New Auto', status: 'disabled', revision: 1 })
     mocks.updateProfile.mockResolvedValue({ ...profile, revision: 5 })
     mocks.deleteProfile.mockResolvedValue(undefined)
@@ -166,19 +169,122 @@ describe('AutoGroupsView', () => {
     expect(mocks.createProfile).not.toHaveBeenCalled()
   })
 
-  it('appends common model family patterns without replacing existing entries', async () => {
+  it('fills actual selected group models without appending common families', async () => {
+    mocks.getModelCatalog.mockResolvedValue(['private-model', 'gemini-4-argon-high', 'private-model'])
     const wrapper = mountView()
     await flushPromises()
     await wrapper.findAll('button').find(button => button.text().includes('New profile'))!.trigger('click')
+    const fetchButton = wrapper.get('[data-testid="fetch-group-models"]')
+    expect(fetchButton.attributes('disabled')).toBeDefined()
+    await wrapper.findAll('label')
+      .find(label => label.text().includes('OpenAI Main'))!
+      .get('input[type="checkbox"]')
+      .setValue(true)
     await wrapper.get('[data-testid="model-catalog-filter-models"]').setValue('custom-*\ngpt-*')
-    await wrapper.get('[data-testid="append-common-model-patterns"]').trigger('click')
+    await fetchButton.trigger('click')
+    await flushPromises()
 
     const patterns = (wrapper.get('[data-testid="model-catalog-filter-models"]').element as HTMLTextAreaElement)
       .value.split('\n')
-    expect(patterns.slice(0, 2)).toEqual(['custom-*', 'gpt-*'])
-    expect(patterns.filter(pattern => pattern === 'gpt-*')).toHaveLength(1)
-    expect(patterns).toContain('claude-*')
-    expect(patterns).toContain('gemini-*')
+    expect(mocks.getModelCatalog).toHaveBeenCalledWith([11])
+    expect(patterns).toEqual(['private-model', 'gemini-4-argon-high'])
+    expect(wrapper.find('[data-testid="append-common-model-patterns"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="model-catalog-load-status"]').text()).toContain('Filled 2 models')
+    expect((wrapper.get('[data-testid="model-catalog-filter-toggle"]').element as HTMLInputElement).checked)
+      .toBe(false)
+  })
+
+  it('preserves the draft when the selected groups have no models or fetching fails', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('New profile'))!.trigger('click')
+    await wrapper.findAll('label')
+      .find(label => label.text().includes('OpenAI Main'))!
+      .get('input[type="checkbox"]')
+      .setValue(true)
+    const patterns = wrapper.get('[data-testid="model-catalog-filter-models"]')
+    await patterns.setValue('draft-model')
+    await wrapper.get('[data-testid="fetch-group-models"]').trigger('click')
+    await flushPromises()
+    expect((patterns.element as HTMLTextAreaElement).value).toBe('draft-model')
+    expect(wrapper.get('[data-testid="model-catalog-load-status"]').text()).toContain('No models are listed')
+
+    mocks.getModelCatalog.mockRejectedValueOnce(new Error('model lookup failed'))
+    await wrapper.get('[data-testid="fetch-group-models"]').trigger('click')
+    await flushPromises()
+    expect((patterns.element as HTMLTextAreaElement).value).toBe('draft-model')
+    expect(mocks.showError).toHaveBeenCalledWith('model lookup failed')
+  })
+
+  it('ignores a model response if the group selection changes while fetching', async () => {
+    let resolveCatalog!: (models: string[]) => void
+    mocks.getModelCatalog.mockImplementationOnce(() => new Promise<string[]>(resolve => {
+      resolveCatalog = resolve
+    }))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('New profile'))!.trigger('click')
+    const selection = wrapper.findAll('label')
+      .find(label => label.text().includes('OpenAI Main'))!
+      .get('input[type="checkbox"]')
+    await selection.setValue(true)
+    const patterns = wrapper.get('[data-testid="model-catalog-filter-models"]')
+    await patterns.setValue('draft-model')
+    await wrapper.get('[data-testid="fetch-group-models"]').trigger('click')
+    expect(wrapper.get('[data-testid="fetch-group-models"]').attributes('disabled')).toBeDefined()
+    await selection.setValue(false)
+    resolveCatalog(['stale-model'])
+    await flushPromises()
+    expect((patterns.element as HTMLTextAreaElement).value).toBe('draft-model')
+    expect(wrapper.get('[data-testid="model-catalog-load-status"]').text()).toContain('selected groups changed')
+  })
+
+  it('ignores model responses belonging to a closed editor', async () => {
+    let resolveCatalog!: (models: string[]) => void
+    mocks.getModelCatalog.mockImplementationOnce(() => new Promise<string[]>(resolve => {
+      resolveCatalog = resolve
+    }))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('New profile'))!.trigger('click')
+    await wrapper.findAll('label')
+      .find(label => label.text().includes('OpenAI Main'))!
+      .get('input[type="checkbox"]')
+      .setValue(true)
+    await wrapper.get('[data-testid="fetch-group-models"]').trigger('click')
+    await wrapper.get('[data-testid="dialog"]').findAll('button')
+      .find(button => button.text() === 'Cancel')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('New profile'))!.trigger('click')
+    await wrapper.get('[data-testid="model-catalog-filter-models"]').setValue('new-draft')
+    resolveCatalog(['stale-model'])
+    await flushPromises()
+    expect((wrapper.get('[data-testid="model-catalog-filter-models"]').element as HTMLTextAreaElement).value)
+      .toBe('new-draft')
+    expect(wrapper.find('[data-testid="model-catalog-load-status"]').exists()).toBe(false)
+  })
+
+  it('preserves text edited while fetching and waits before saving the profile', async () => {
+    let resolveCatalog!: (models: string[]) => void
+    mocks.getModelCatalog.mockImplementationOnce(() => new Promise<string[]>(resolve => {
+      resolveCatalog = resolve
+    }))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text().includes('New profile'))!.trigger('click')
+    await wrapper.get('#auto-profile-name').setValue('Current draft')
+    await wrapper.findAll('label')
+      .find(label => label.text().includes('OpenAI Main'))!
+      .get('input[type="checkbox"]')
+      .setValue(true)
+    await wrapper.get('[data-testid="fetch-group-models"]').trigger('click')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="model-catalog-filter-models"]').setValue('edited-draft')
+    resolveCatalog(['stale-model'])
+    await flushPromises()
+    expect((wrapper.get('[data-testid="model-catalog-filter-models"]').element as HTMLTextAreaElement).value)
+      .toBe('edited-draft')
+    expect(wrapper.get('[data-testid="model-catalog-load-status"]').text()).toContain('model list was edited')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
   })
 
   it('shows the model list scope explanation in Chinese', async () => {
