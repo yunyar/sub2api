@@ -137,6 +137,27 @@ func NormalizeAgentMessageContent(content json.RawMessage) (json.RawMessage, err
 	return json.Marshal(normalized)
 }
 
+func NormalizeAgentFunctionOutputContent(content json.RawMessage) (json.RawMessage, bool, error) {
+	var parts []json.RawMessage
+	if err := json.Unmarshal(content, &parts); err != nil {
+		return content, false, nil
+	}
+	for _, rawPart := range parts {
+		var part struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(rawPart, &part); err != nil || part.Type != "encrypted_content" {
+			continue
+		}
+		normalized, err := NormalizeAgentMessageContent(content)
+		if err != nil {
+			return content, false, err
+		}
+		return normalized, true, nil
+	}
+	return content, false, nil
+}
+
 func agentMessageImagePart(raw json.RawMessage) (string, map[string]json.RawMessage, error) {
 	var imageURL string
 	if err := json.Unmarshal(raw, &imageURL); err == nil {

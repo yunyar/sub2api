@@ -169,3 +169,34 @@ func TestNormalizeOpenAIResponsesAgentMessages_OutputIsValidJSON(t *testing.T) {
 	require.True(t, changed)
 	require.True(t, json.Valid(normalized))
 }
+
+func TestNormalizeOpenAIResponsesAgentMessages_RestoresPortableFunctionOutput(t *testing.T) {
+	body := []byte(`{"model":"gpt-6-luna","input":[
+		{"type":"function_call","call_id":"fc_wait","name":"wait_agent","arguments":"{}"},
+		{"type":"function_call_output","id":"out_keep","call_id":"fc_wait","status":"completed","output":[
+			{"type":"input_text","text":"Message Type: FINAL_ANSWER\nPayload:\n"},
+			{"type":"encrypted_content","encrypted_content":"The child completed the investigation."}
+		],"metadata":{"keep":9007199254740993}}
+	]}`)
+	normalized, changed, err := normalizeOpenAIResponsesAgentMessages(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "The child completed the investigation.", gjson.GetBytes(normalized, "input.1.output.1.text").String())
+	require.Equal(t, "input_text", gjson.GetBytes(normalized, "input.1.output.1.type").String())
+	require.False(t, gjson.GetBytes(normalized, "input.1.output.1.encrypted_content").Exists())
+	require.Equal(t, "fc_wait", gjson.GetBytes(normalized, "input.1.call_id").String())
+	require.Equal(t, "out_keep", gjson.GetBytes(normalized, "input.1.id").String())
+	require.Equal(t, "9007199254740993", gjson.GetBytes(normalized, "input.1.metadata.keep").Raw)
+	require.Equal(t, "wait_agent", gjson.GetBytes(normalized, "input.0.name").String())
+}
+
+func TestNormalizeOpenAIResponsesAgentMessages_PreservesOpaqueFunctionOutput(t *testing.T) {
+	body := []byte(`{"model":"gpt-6-luna","input":[{"type":"function_call_output","call_id":"fc_wait","output":[
+		{"type":"input_text","text":"Message Type: FINAL_ANSWER\nPayload:\n"},
+		{"type":"encrypted_content","encrypted_content":"gAAAAABopaque-payload"}
+	]}]}`)
+	normalized, changed, err := normalizeOpenAIResponsesAgentMessages(body)
+	require.NoError(t, err)
+	require.False(t, changed)
+	require.Equal(t, string(body), string(normalized))
+}

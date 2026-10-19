@@ -80,7 +80,20 @@ func normalizeOpenAIResponsesAgentMessages(body []byte) ([]byte, bool, error) {
 }
 
 func normalizeOpenAIResponsesAgentMessage(itemRaw []byte) ([]byte, bool, error) {
-	if gjson.GetBytes(itemRaw, "type").String() != "agent_message" {
+	itemType := gjson.GetBytes(itemRaw, "type").String()
+	if itemType == "function_call_output" || itemType == "custom_tool_call_output" {
+		outputRaw := gjson.GetBytes(itemRaw, "output")
+		content, changed, err := apicompat.NormalizeAgentFunctionOutputContent(json.RawMessage(outputRaw.Raw))
+		if err != nil || !changed {
+			return itemRaw, false, nil
+		}
+		normalized, err := sjson.SetRawBytes(itemRaw, "output", content)
+		if err != nil {
+			return itemRaw, false, fmt.Errorf("normalize OpenAI agent function output: %w", err)
+		}
+		return normalized, true, nil
+	}
+	if itemType != "agent_message" {
 		return itemRaw, false, nil
 	}
 

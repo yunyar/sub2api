@@ -205,6 +205,66 @@ func TestOpenAIResponsesAgentMessageIntegration_ForwardOAuthAndPassthrough(t *te
 	}
 }
 
+func TestOpenAIResponsesAgentFunctionOutputIntegration_ForwardOAuthAndPassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, passthrough := range []bool{false, true} {
+		t.Run(fmt.Sprintf("passthrough=%t", passthrough), func(t *testing.T) {
+			body := []byte(`{"model":"gpt-5.2","stream":true,"input":[
+				{"type":"function_call","call_id":"call_wait","name":"wait_agent","arguments":"{}"},
+				{"type":"function_call_output","call_id":"call_wait","output":[
+					{"type":"input_text","text":"Message Type: FINAL_ANSWER\nPayload:\n"},
+					{"type":"encrypted_content","encrypted_content":"The child completed its task."}
+				]}
+			]}`)
+			c, _ := agentMessageIntegrationContext("/v1/responses", body)
+			upstream := &httpUpstreamRecorder{resp: agentMessageIntegrationOpenAIResponsesSSE()}
+			svc := &OpenAIGatewayService{
+				cfg:          &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
+				httpUpstream: upstream,
+			}
+			result, err := svc.Forward(context.Background(), c, agentMessageIntegrationOpenAIOAuthAccount(passthrough), body)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.NotNil(t, upstream.lastReq)
+			require.Equal(t, "function_call_output", gjson.GetBytes(upstream.lastBody, "input.1.type").String())
+			require.NotEmpty(t, gjson.GetBytes(upstream.lastBody, "input.0.call_id").String())
+			require.Equal(t, gjson.GetBytes(upstream.lastBody, "input.0.call_id").String(), gjson.GetBytes(upstream.lastBody, "input.1.call_id").String())
+			require.Equal(t, "input_text", gjson.GetBytes(upstream.lastBody, "input.1.output.1.type").String())
+			require.Equal(t, "The child completed its task.", gjson.GetBytes(upstream.lastBody, "input.1.output.1.text").String())
+			require.False(t, gjson.GetBytes(upstream.lastBody, "input.1.output.1.encrypted_content").Exists())
+		})
+	}
+}
+
+func TestOpenAIResponsesAgentFunctionOutputIntegration_AnthropicFinalBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"claude-sonnet-4-20250514","stream":false,"input":[
+		{"type":"function_call","call_id":"call_wait","name":"wait_agent","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_wait","output":[
+			{"type":"input_text","text":"Message Type: FINAL_ANSWER\nPayload:\n"},
+			{"type":"encrypted_content","encrypted_content":"The child completed its task."}
+		]}
+	]}`)
+	c, _ := agentMessageIntegrationContext("/v1/responses", body)
+	upstream := &httpUpstreamRecorder{resp: agentMessageIntegrationSSE(responsesBridgeSSEPayload("data_only"))}
+	svc := &GatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	account := &Account{
+		ID:          93104,
+		Name:        "agent-function-output-anthropic",
+		Platform:    PlatformAnthropic,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{"api_key": "anthropic-integration", "base_url": "https://api.anthropic.com"},
+	}
+	result, err := svc.ForwardAsResponses(context.Background(), c, account, body, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "tool_result", gjson.GetBytes(upstream.lastBody, "messages.1.content.0.type").String())
+	require.Equal(t, "Message Type: FINAL_ANSWER\nPayload:\n", gjson.GetBytes(upstream.lastBody, "messages.1.content.0.content.0.text").String())
+	require.Equal(t, "The child completed its task.", gjson.GetBytes(upstream.lastBody, "messages.1.content.0.content.1.text").String())
+}
+
 func TestOpenAIResponsesAgentMessageIntegration_ForwardAPIKeyPreservesOpaqueNativeItem(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

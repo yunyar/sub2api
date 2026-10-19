@@ -28,6 +28,8 @@ Codex 的 `agent_message` 与普通 `reasoning` 不同。部分自定义 provide
 - 未出现任务消息的请求不因这层转换重新序列化；原始请求字节不被原地修改。
 - 内容审查和旧版 moderation 使用相同任务内容规则提取明文，按用户任务检查；管理员审查记录保留任务正文。不会将普通 reasoning 密文加入审查正文。
 
+相同规则也应用于 `function_call_output` 和 `custom_tool_call_output` 的内容数组：只有带任务信封、可确认是明文的 `encrypted_content` 片段才转换为 `input_text`，保留工具调用 ID、其余字段及内容顺序。原生 Responses 路径保留无法确认的原项；Anthropic / Chat 跨协议路径明确拒绝无法表达的密文，不再仅转发工具结果头部或把密文 JSON 字符串化后当作有效结果。普通字符串、业务 JSON、未携带此类片段的工具输出保持原处理。
+
 入口覆盖 OpenAI 原生 Responses（含 API Key、OAuth、透传和 WebSocket）、Grok Responses、Responses 经 Chat Completions 降级、原生 Anthropic 和 Antigravity Responses。请求是否能执行，仍取决于所选账号实际支持的协议和模型。
 
 ## 加密内容与附件边界

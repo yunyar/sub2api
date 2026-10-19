@@ -559,6 +559,13 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 			}
 			delete(mediaByCallID, callID)
 
+			if itemType != "tool_search_output" {
+				normalized, _, err := NormalizeAgentFunctionOutputContent(outputRaw)
+				if err != nil {
+					return nil, nil, fmt.Errorf("normalize agent function output: %w", err)
+				}
+				outputRaw = normalized
+			}
 			outputText, media, rewritten := extractToolOutputMedia(outputRaw)
 			if rewritten {
 				if callID != "" {
