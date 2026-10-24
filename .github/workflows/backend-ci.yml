@@ -51,7 +51,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.2'
+          go version | grep -q 'go1.27.3'
       - name: Unit tests
         working-directory: backend
         run: make test-unit
@@ -59,7 +59,7 @@ jobs:
         working-directory: backend
         env:
           PLAYGROUND_BILLING_POSTGRES_DSN: postgres://playground_test:playground_test@127.0.0.1:5432/playground_test?sslmode=disable
-        run: go test -v ./internal/repository -run '^(TestPlaygroundImageBalanceWithPostgres|TestAutoRoutingFinalizationWithPostgres)$' -count=1
+        run: go test -v ./internal/repository -run '^(TestPlaygroundImageBalanceWithPostgres|TestAutoRoutingFinalizationWithPostgres|TestCustomUpstreamMigrationUpgradeWithPostgres)$' -count=1
       - name: Integration tests
         working-directory: backend
         run: make test-integration
@@ -96,7 +96,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.2'
+          go version | grep -q 'go1.27.3'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:

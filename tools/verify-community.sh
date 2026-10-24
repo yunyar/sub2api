@@ -47,7 +47,7 @@ else
 fi
 
 (cd backend && "$go_bin" test ./internal/server/routes -run Playground)
-(cd backend && "$go_bin" test ./internal/repository -run TestPlaygroundImageBalanceWithPostgres)
+(cd backend && "$go_bin" test ./internal/repository -run 'Test(PlaygroundImageBalance|CustomUpstreamMigrationUpgrade)WithPostgres')
 (cd backend && "$go_bin" test ./internal/service -run 'PlaygroundImage|PlaygroundHoldSettlesResolvedOutputPrice|OpenAIImage.*(Attachment|DownloadURL|Bytes|Pointer)')
 (cd backend && "$go_bin" test -tags unit ./internal/handler -run 'GrokPlaygroundImages|ReserveImageInflightBalance')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')

@@ -288,12 +288,16 @@ func TestResponsesBridgeRejectsUpstreamErrorEvents(t *testing.T) {
 		resp := &http.Response{Body: io.NopCloser(strings.NewReader(
 			"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"No available accounts\"}}\n\n",
 		))}
-		_, recorder, err := runResponsesBridgeSSETest(&GatewayService{}, resp, stream)
-		require.ErrorContains(t, err, "No available accounts")
+		result, recorder, err := runResponsesBridgeSSETest(&GatewayService{}, resp, stream)
 		require.NotContains(t, recorder.Body.String(), "response.completed")
 		if stream {
-			require.Contains(t, recorder.Body.String(), "response.failed")
+			var upstreamError *sseStreamErrorEventError
+			require.ErrorAs(t, err, &upstreamError)
+			require.Contains(t, upstreamError.RawData, "No available accounts")
+			require.Nil(t, result)
+			require.Zero(t, recorder.Body.Len())
 		} else {
+			require.ErrorContains(t, err, "No available accounts")
 			require.Equal(t, http.StatusBadGateway, recorder.Code)
 		}
 	}
@@ -336,7 +340,12 @@ func TestResponsesBridgeRejectsEOFWithoutTerminalEvent(t *testing.T) {
 			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 			require.NotContains(t, recorder.Body.String(), "response.completed")
 			if stream {
-				require.NotNil(t, result)
+				if payload == "" {
+					require.Nil(t, result)
+				} else {
+					require.NotNil(t, result)
+					require.Equal(t, 12, result.Usage.InputTokens)
+				}
 				require.Contains(t, recorder.Body.String(), "response.failed")
 			} else {
 				require.Equal(t, http.StatusBadGateway, recorder.Code)
@@ -357,7 +366,7 @@ func TestResponsesBridgeTimesOutIdleUpstream(t *testing.T) {
 		_, writeErr := writer.Write([]byte("data: ignored\n\n"))
 		require.True(t, errors.Is(writeErr, io.ErrClosedPipe))
 		if stream {
-			require.NotNil(t, result)
+			require.Nil(t, result)
 			require.Contains(t, recorder.Body.String(), "response.failed")
 		} else {
 			require.Equal(t, http.StatusBadGateway, recorder.Code)

@@ -197,7 +197,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 			}
 		}
 		return false
-	}, maxLineSize, s.anthropicNativeStreamInterval())
+	}, maxLineSize, anthropicNativeStreamInterval(s.cfg))
 
 	resultWithUsage := func() *OpenAIForwardResult {
 		return &OpenAIForwardResult{
@@ -388,7 +388,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 		resp,
 		processAnthropicEvent,
 		maxLineSize,
-		s.anthropicNativeStreamInterval(),
+		anthropicNativeStreamInterval(s.cfg),
 	)
 	if readErr != nil {
 		logger.L().Warn("openai responses via native anthropic stream: read error",
