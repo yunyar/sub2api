@@ -1110,7 +1110,12 @@ export default {
         description: '匹配模型后覆盖渠道和内置价格。长上下文阶梯沿用官方/预设价卡，无需再手填区间。音频可用按次层级配置 realtime、tts、stt。',
         longContext: '启用长上下文阶梯定价',
         longContextHint: '勾选后按渠道区间或官方预设阶梯计费；关闭后默认按第一档，账号显式开启时除外。',
-        add: '添加模型价格'
+        add: '添加模型价格',
+        domesticAutomaticPricingDescription: 'Token 单价单位为美元/百万 Token。仅移除已获取官方价格的国产模型手动覆盖价；未覆盖型号、通配符和查询失败的模型保留原价。官方源暂不可用时沿用上次成功价格，其他模型继续使用现有价格目录。保存后生效，分组倍率保持不变。',
+        domesticAutomaticPricingCount: '将检查 {count} 个国产模型的 Token 覆盖价，仅切换已核验官方价的模型。',
+        noVerifiedOfficialPrices: '尚未获取这些模型的官方价格，已保留原有定价。',
+        officialPricesRestored: '已为 {count} 个模型恢复自动官方定价，其他模型保留原价；保存后生效。',
+        restoreDomesticAutomaticPricing: '恢复国产模型自动定价'
       },
       voicePricing: {
         title: 'Grok Voice 定价',

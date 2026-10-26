@@ -621,6 +621,7 @@ func (h *ChannelHandler) GetModelDefaultPricing(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"found":                        true,
+		"official_pricing":             pricing.OfficialPricing,
 		"input_price":                  pricing.InputPricePerToken,
 		"output_price":                 pricing.OutputPricePerToken,
 		"cache_write_price":            cacheWritePrice,

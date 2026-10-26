@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<body>
+<!-- Test fixture only; the live document could not be captured from this environment. -->
+<p>All prices are USD per 1M tokens.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Price item</th>
+      <th>Time period</th>
+      <th>deepseek-flash</th>
+      <th>deepseek-v4-pro</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>1M Input Tokens (Cache Hit)</td><td>Off-Peak</td><td>$0.003</td><td>$0.022</td></tr>
+    <tr><td>1M Input Tokens (Cache Hit)</td><td>Peak</td><td>$0.006</td><td>$0.044</td></tr>
+    <tr><td>1M Input Tokens (Cache Miss)</td><td>Off-Peak</td><td>$0.15</td><td>$0.66</td></tr>
+    <tr><td>1M Input Tokens (Cache Miss)</td><td>Peak</td><td>$0.30</td><td>$1.32</td></tr>
+    <tr><td>1M Output Tokens</td><td>Off-Peak</td><td>$0.60</td><td>$1.98</td></tr>
+    <tr><td>1M Output Tokens</td><td>Peak</td><td>$1.20</td><td>$3.96</td></tr>
+  </tbody>
+</table>
+</body>
+</html>

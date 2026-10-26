@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -72,6 +73,45 @@ func (c *pricingRemoteClient) FetchPricingJSON(ctx context.Context, url string) 
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+func (c *pricingRemoteClient) FetchOfficialPricingDocument(ctx context.Context, sourceURL string) ([]byte, error) {
+	origin, err := url.Parse(sourceURL)
+	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil {
+		return nil, fmt.Errorf("official pricing requires an HTTPS source")
+	}
+	client := *c.httpClient
+	previousRedirect := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, origin.Host) || req.URL.User != nil {
+			return fmt.Errorf("official pricing redirect outside source origin")
+		}
+		if previousRedirect != nil {
+			return previousRedirect(req, via)
+		}
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("official pricing HTTP %d", resp.StatusCode)
+	}
+	const limit = 8 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > limit {
+		return nil, fmt.Errorf("official pricing document exceeds 8 MiB")
+	}
+	return body, nil
 }
 
 func (c *pricingRemoteClient) FetchHashText(ctx context.Context, url string) (string, error) {

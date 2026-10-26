@@ -1113,7 +1113,12 @@ export default {
         description: 'Overrides channel and built-in prices for matching models. Long-context tiers come from official presets — do not enter custom intervals. Use per-request tiers such as realtime, tts, and stt for audio.',
         longContext: 'Enable long-context tier pricing',
         longContextHint: 'When checked, channel intervals or official preset tiers apply. Otherwise the first tier is used unless the account explicitly enables long-context billing.',
-        add: 'Add model price'
+        add: 'Add model price',
+        domesticAutomaticPricingDescription: 'Token prices are USD per 1M tokens. Only models with verified official prices have their manual group overrides removed. Unsupported models, wildcards and failed lookups keep their prices. Official feeds retain the last successful prices on failure; other models use the existing catalog. Save to apply. The group multiplier is unchanged.',
+        domesticAutomaticPricingCount: 'Check {count} domestic token model override(s); switch only models with verified official prices.',
+        noVerifiedOfficialPrices: 'Official prices are not available for these models. Existing prices were retained.',
+        officialPricesRestored: 'Restored automatic official prices for {count} model(s); other prices were retained. Save to apply.',
+        restoreDomesticAutomaticPricing: 'Restore domestic models to automatic pricing'
       },
       voicePricing: {
         title: 'Grok Voice Pricing',

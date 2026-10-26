@@ -682,7 +682,9 @@ type PricingConfig struct {
 	// 更新间隔（小时）
 	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
 	// 哈希校验间隔（分钟）
-	HashCheckIntervalMinutes int `mapstructure:"hash_check_interval_minutes"`
+	HashCheckIntervalMinutes      int  `mapstructure:"hash_check_interval_minutes"`
+	CNOfficialEnabled             bool `mapstructure:"cn_official_enabled"`
+	CNOfficialUpdateIntervalHours int  `mapstructure:"cn_official_update_interval_hours"`
 }
 
 type ServerConfig struct {
@@ -2127,6 +2129,10 @@ func setDefaults() {
 	})
 	viper.SetDefault("security.url_allowlist.pricing_hosts", []string{
 		"raw.githubusercontent.com",
+		"platform.kimi.ai",
+		"api-docs.deepseek.com",
+		"platform.minimax.io",
+		"docs.z.ai",
 	})
 	viper.SetDefault("security.url_allowlist.crs_hosts", []string{})
 	viper.SetDefault("security.url_allowlist.allow_private_hosts", true)
@@ -2371,6 +2377,8 @@ func setDefaults() {
 	viper.SetDefault("pricing.override_file", "")
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
+	viper.SetDefault("pricing.cn_official_enabled", true)
+	viper.SetDefault("pricing.cn_official_update_interval_hours", 6)
 
 	// 本地进程插件。插件必须由管理员手动上传，项目默认不携带任何插件能力。
 	viper.SetDefault("plugins.data_dir", "")

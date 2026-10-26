@@ -13,6 +13,7 @@ const (
 	PricingSourceChannel  = "channel"
 	PricingSourceLiteLLM  = "litellm"
 	PricingSourceFallback = "fallback"
+	PricingSourceOfficial = "official"
 )
 
 // ResolvedPricing 统一定价解析结果
@@ -174,6 +175,9 @@ func (r *ModelPricingResolver) resolveBasePricing(model string) (*ModelPricing, 
 		slog.Debug("failed to get model pricing from LiteLLM, using fallback",
 			"model", model, "error", err)
 		return nil, PricingSourceFallback
+	}
+	if pricing.OfficialPricing {
+		return pricing, PricingSourceOfficial
 	}
 	return pricing, PricingSourceLiteLLM
 }

@@ -1486,6 +1486,24 @@
               <Icon name="plus" size="sm" class="mr-1" />{{ t("admin.groups.modelPricing.add") }}
             </button>
           </div>
+          <div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+            <p class="text-xs text-amber-900 dark:text-amber-200">
+              {{ t("admin.groups.modelPricing.domesticAutomaticPricingDescription") }}
+            </p>
+            <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <p role="status" class="text-xs text-amber-800 dark:text-amber-300">
+                {{ t("admin.groups.modelPricing.domesticAutomaticPricingCount", { count: countDomesticTokenModelOverrides(createForm.model_pricing) }) }}
+              </p>
+              <button
+                type="button"
+                class="btn btn-secondary shrink-0"
+                :disabled="restoringOfficialPricing || countDomesticTokenModelOverrides(createForm.model_pricing) === 0"
+                @click="restoreDomesticAutomaticPricing(createForm.model_pricing)"
+              >
+                {{ t("admin.groups.modelPricing.restoreDomesticAutomaticPricing") }}
+              </button>
+            </div>
+          </div>
           <label class="mt-3 flex items-start gap-2">
             <input v-model="createForm.long_context_pricing_enabled" type="checkbox" class="mt-0.5" />
             <span><span class="block text-sm text-gray-700 dark:text-gray-300">{{ t("admin.groups.modelPricing.longContext") }}</span><span class="block text-xs text-gray-500">{{ t("admin.groups.modelPricing.longContextHint") }}</span></span>
@@ -3136,6 +3154,24 @@
               <Icon name="plus" size="sm" class="mr-1" />{{ t("admin.groups.modelPricing.add") }}
             </button>
           </div>
+          <div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+            <p class="text-xs text-amber-900 dark:text-amber-200">
+              {{ t("admin.groups.modelPricing.domesticAutomaticPricingDescription") }}
+            </p>
+            <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <p role="status" class="text-xs text-amber-800 dark:text-amber-300">
+                {{ t("admin.groups.modelPricing.domesticAutomaticPricingCount", { count: countDomesticTokenModelOverrides(editForm.model_pricing) }) }}
+              </p>
+              <button
+                type="button"
+                class="btn btn-secondary shrink-0"
+                :disabled="restoringOfficialPricing || countDomesticTokenModelOverrides(editForm.model_pricing) === 0"
+                @click="restoreDomesticAutomaticPricing(editForm.model_pricing)"
+              >
+                {{ t("admin.groups.modelPricing.restoreDomesticAutomaticPricing") }}
+              </button>
+            </div>
+          </div>
           <label class="mt-3 flex items-start gap-2">
             <input v-model="editForm.long_context_pricing_enabled" type="checkbox" class="mt-0.5" />
             <span><span class="block text-sm text-gray-700 dark:text-gray-300">{{ t("admin.groups.modelPricing.longContext") }}</span><span class="block text-xs text-gray-500">{{ t("admin.groups.modelPricing.longContextHint") }}</span></span>
@@ -4271,6 +4307,7 @@ import { useAppStore } from "@/stores/app";
 import { useAuthStore } from "@/stores/auth";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
+import { getModelDefaultPricing } from "@/api/admin/channels";
 import type {
   AdminGroup,
   CodexModelsManifestConfig,
@@ -4380,6 +4417,10 @@ import {
   serializeVideoModelPrices,
   videoModelPriceFamilyRows,
 } from "./groupsVideoModelPricing";
+import {
+  countDomesticTokenModelOverrides,
+  restoreVerifiedDomesticTokenModelOverrides,
+} from "./groupsOfficialPricing";
 
 const supportsLivePlatform = (platform: string): boolean =>
   platform === "openai" || platform === "composite";
@@ -5383,6 +5424,25 @@ const editForm = reactive({
   max_reasoning_effort_over_limit: reasoningEffortOverLimitDowngrade,
   reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
 });
+
+const restoringOfficialPricing = ref(false);
+const restoreDomesticAutomaticPricing = async (
+  entries: PricingFormEntry[],
+): Promise<void> => {
+  if (restoringOfficialPricing.value) return;
+  restoringOfficialPricing.value = true;
+  try {
+    const result = await restoreVerifiedDomesticTokenModelOverrides(entries, getModelDefaultPricing);
+    if (result.removedCount === 0) {
+      appStore.showError(t("admin.groups.modelPricing.noVerifiedOfficialPrices"));
+      return;
+    }
+    entries.splice(0, entries.length, ...result.entries);
+    appStore.showSuccess(t("admin.groups.modelPricing.officialPricesRestored", { count: result.removedCount }));
+  } finally {
+    restoringOfficialPricing.value = false;
+  }
+};
 
 type ImagePricingFormState = {
   platform: GroupPlatform;

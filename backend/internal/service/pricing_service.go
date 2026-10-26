@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -210,6 +211,7 @@ var (
 // LiteLLMModelPricing LiteLLM价格数据结构
 // 只保留我们需要的字段，使用指针来处理可能缺失的值
 type LiteLLMModelPricing struct {
+	OfficialPricing                     bool    `json:"-"`
 	CacheCreationInputTokenCostExplicit bool    `json:"-"`
 	InputCostPerToken                   float64 `json:"input_cost_per_token"`
 	InputCostPerTokenPriority           float64 `json:"input_cost_per_token_priority"`
@@ -282,7 +284,11 @@ type PricingService struct {
 	localHash    string
 	// fallback/override 文件在最近一次成功重建时的内容指纹，定时器据此判断是否
 	// 需要从本地目录缓存重建叠加层。
-	customFilesHash string
+	customFilesHash     string
+	cnOfficialMu        sync.Mutex
+	cnOfficialSnapshots map[string]cnOfficialPricingSnapshot
+	cnOfficialData      map[string]*LiteLLMModelPricing
+	cnOfficialStatus    map[string]cnOfficialPricingStatus
 
 	// 停止信号
 	stopCh chan struct{}
@@ -315,6 +321,11 @@ func (s *PricingService) Initialize() error {
 		}
 	}
 
+	if s.cfg.Pricing.CNOfficialEnabled {
+		s.loadCNOfficialPricingCache()
+		s.refreshCNOfficialPricing(false)
+	}
+
 	// 启动定时更新
 	s.startUpdateScheduler()
 
@@ -337,10 +348,11 @@ func (s *PricingService) startUpdateScheduler() {
 	}
 	remoteEnabled := strings.TrimSpace(s.cfg.Pricing.RemoteURL) != ""
 	watchCustom := s.hasCustomPricingFiles()
+	officialEnabled := s.cfg.Pricing.CNOfficialEnabled
 	if !remoteEnabled {
 		logger.LegacyPrintf("service.pricing", "%s", "[Pricing] Remote sync disabled: pricing remote URL is empty")
 	}
-	if !remoteEnabled && !watchCustom {
+	if !remoteEnabled && !watchCustom && !officialEnabled {
 		return
 	}
 
@@ -365,6 +377,9 @@ func (s *PricingService) startUpdateScheduler() {
 				}
 				if watchCustom {
 					s.reloadIfCustomFilesChanged()
+				}
+				if officialEnabled {
+					s.refreshCNOfficialPricing(false)
 				}
 			case <-s.stopCh:
 				return
@@ -580,6 +595,7 @@ func (s *PricingService) reloadCustomPricingLayers() error {
 	s.pricingData = data
 	s.customFilesHash = fingerprint
 	s.mu.Unlock()
+	s.rebuildCNOfficialPricing()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Custom pricing files changed, reloaded %d models from %s", len(data), pricingFile)
 	return nil
@@ -649,6 +665,7 @@ func (s *PricingService) downloadPricingData() error {
 	s.localHash = syncHash
 	s.customFilesHash = customFilesHash
 	s.mu.Unlock()
+	s.rebuildCNOfficialPricing()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Downloaded %d models successfully", len(data))
 	return nil
@@ -1083,6 +1100,7 @@ func (s *PricingService) loadPricingData(filePath string) error {
 		s.lastUpdated = time.Now()
 	}
 	s.mu.Unlock()
+	s.rebuildCNOfficialPricing()
 
 	logger.LegacyPrintf("service.pricing", "[Pricing] Loaded %d models from %s", len(pricingData), filePath)
 	return nil
@@ -1245,6 +1263,11 @@ func (s *PricingService) GetModelPricing(modelName string) *LiteLLMModelPricing 
 func (s *PricingService) lookupIdentifiedModelPricingLocked(lookupCandidates []string) *LiteLLMModelPricing {
 	if len(lookupCandidates) == 0 {
 		return nil
+	}
+	for _, candidate := range lookupCandidates {
+		if pricing := s.cnOfficialData[canonicalCNOfficialModel(candidate)]; pricing != nil {
+			return pricing
+		}
 	}
 
 	// 1. 精确匹配
@@ -1735,12 +1758,22 @@ func (s *PricingService) GetStatus() map[string]any {
 		"model_count":  len(s.pricingData),
 		"last_updated": s.lastUpdated,
 		"local_hash":   s.localHash[:min(8, len(s.localHash))],
+		"cn_official":  s.cnOfficialPricingStatusLocked(),
 	}
 }
 
 // ForceUpdate 强制更新
 func (s *PricingService) ForceUpdate() error {
-	return s.downloadPricingData()
+	var catalogErr error
+	if strings.TrimSpace(s.cfg.Pricing.RemoteURL) != "" {
+		catalogErr = s.downloadPricingData()
+	} else if !s.cfg.Pricing.CNOfficialEnabled {
+		return s.downloadPricingData()
+	}
+	if s.cfg.Pricing.CNOfficialEnabled {
+		return errors.Join(catalogErr, s.refreshCNOfficialPricing(true))
+	}
+	return catalogErr
 }
 
 // getPricingFilePath 获取价格文件路径
@@ -1761,11 +1794,20 @@ func (s *PricingService) ListModelNamesByProvider(provider string) []string {
 	defer s.mu.RUnlock()
 
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	names := make([]string, 0)
+	matching := make(map[string]struct{})
 	for name, p := range s.pricingData {
 		if strings.ToLower(p.LiteLLMProvider) == provider {
-			names = append(names, name)
+			matching[name] = struct{}{}
 		}
+	}
+	for name, p := range s.cnOfficialData {
+		if strings.EqualFold(p.LiteLLMProvider, provider) {
+			matching[name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(matching))
+	for name := range matching {
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names

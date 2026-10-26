@@ -96,6 +96,7 @@ type BillingCache interface {
 
 // ModelPricing 模型价格配置（per-token价格，与LiteLLM格式一致）
 type ModelPricing struct {
+	OfficialPricing bool
 	// UltrafastMultiplier is model-owned and independent of operator Fast pricing.
 	UltrafastMultiplier                float64
 	InputPricePerToken                 float64            // 每token输入价格 (USD)
@@ -849,6 +850,22 @@ func (s *BillingService) initFallbackPricing() {
 	// Kimi K3 国际站 USD 价目：https://platform.kimi.ai/docs/pricing/chat-k3.md
 	// Kimi Code bare aliases（k3 / k3-256k）官方无按 token 价目；复用 API Platform
 	// kimi-k3 档位作代理计费 fallback（同 kimi-for-coding 对 K2.6 的处理口径）。
+	s.fallbackPrices["kimi-k3.1-pro"] = &ModelPricing{
+		InputPricePerToken: 2e-6, OutputPricePerToken: 10e-6, CacheReadPricePerToken: .2e-6,
+		CacheCreationPricePerToken: 2e-6, CacheCreation5mPrice: 2e-6,
+		CacheCreation1hPrice: 4e-6, SupportsCacheBreakdown: true,
+	}
+	s.fallbackPrices["kimi-k3.1-pro-highspeed"] = &ModelPricing{
+		InputPricePerToken: 4e-6, OutputPricePerToken: 20e-6, CacheReadPricePerToken: .2e-6,
+		CacheCreationPricePerToken: 4e-6, CacheCreation5mPrice: 4e-6,
+		CacheCreation1hPrice: 8e-6, SupportsCacheBreakdown: true,
+	}
+	s.fallbackPrices["kimi-k2.7-code"] = &ModelPricing{
+		InputPricePerToken: .95e-6, OutputPricePerToken: 4e-6, CacheReadPricePerToken: .19e-6,
+	}
+	s.fallbackPrices["kimi-k2.7-code-highspeed"] = &ModelPricing{
+		InputPricePerToken: 1.90e-6, OutputPricePerToken: 8e-6, CacheReadPricePerToken: .38e-6,
+	}
 	s.fallbackPrices["kimi-k3"] = &ModelPricing{
 		InputPricePerToken:     3e-6,    // $3.00 per MTok (cache miss)
 		OutputPricePerToken:    15e-6,   // $15.00 per MTok
@@ -1208,6 +1225,11 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 	if strings.Contains(modelLower, "kimi-for-coding") {
 		return s.fallbackPrices["kimi-for-coding"]
 	}
+	for _, model := range []string{"kimi-k3.1-pro-highspeed", "kimi-k3.1-pro", "kimi-k2.7-code-highspeed", "kimi-k2.7-code"} {
+		if canonicalCNOfficialModel(modelLower) == model {
+			return s.fallbackPrices[model]
+		}
+	}
 	if modelLower == "kimi-k3" || strings.HasSuffix(modelLower, "/kimi-k3") ||
 		modelLower == "k3" || modelLower == "k3-256k" ||
 		strings.HasSuffix(modelLower, "/k3") || strings.HasSuffix(modelLower, "/k3-256k") {
@@ -1428,6 +1450,7 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 			price1h := litellmPricing.CacheCreationInputTokenCostAbove1hr
 			enableBreakdown := price1h > 0 && price1h > price5m
 			return s.applyModelSpecificPricingPolicyEx(model, &ModelPricing{
+				OfficialPricing:                    litellmPricing.OfficialPricing,
 				InputPricePerToken:                 litellmPricing.InputCostPerToken,
 				InputPricePerTokenPriority:         litellmPricing.InputCostPerTokenPriority,
 				OutputPricePerToken:                litellmPricing.OutputCostPerToken,
@@ -1448,7 +1471,7 @@ func (s *BillingService) getModelPricingAt(model string, pricingAt time.Time) (*
 				ImageInputPricePerToken:       litellmPricing.InputCostPerImageToken,
 				ImageCacheReadPricePerToken:   litellmPricing.CacheReadInputImageTokenCost,
 				ImageOutputPricePerToken:      litellmPricing.OutputCostPerImageToken,
-			}, true, pricingAt), nil
+			}, !litellmPricing.OfficialPricing, pricingAt), nil
 		}
 	}
 
@@ -1646,7 +1669,7 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	// 06:00–10:00 UTC，仅工作日；北京时间周末全天低谷）按 2× 低谷价计费。
 	// 仅作用于默认价卡（Source=LiteLLM，无分组/渠道自定义定价）——分组/渠道
 	// 自定义定价保持运营者语义，不叠加。先克隆再乘，避免污染共享 fallbackPrices 指针。
-	if resolved.Source == PricingSourceLiteLLM && isDeepSeekModel(input.Model) {
+	if (resolved.Source == PricingSourceLiteLLM || resolved.Source == PricingSourceOfficial) && isDeepSeekModel(input.Model) {
 		if mult := deepseekPeakMultiplierAt(pricingAt); mult > 1 {
 			cloned := *pricing
 			cloned.InputPricePerToken *= mult

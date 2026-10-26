@@ -166,6 +166,10 @@ security:
     # 允许下载定价数据的主机列表
     pricing_hosts:
       - "raw.githubusercontent.com"
+      - "platform.kimi.ai"
+      - "api-docs.deepseek.com"
+      - "platform.minimax.io"
+      - "docs.z.ai"
     # Allowed hosts for CRS sync (required when using CRS sync)
     # 允许 CRS 同步的主机列表（使用 CRS 同步功能时必须配置）
     crs_hosts: []
@@ -1118,6 +1122,8 @@ plugins:
 # 定价数据源（可选）
 # =============================================================================
 pricing:
+  cn_official_enabled: true
+  cn_official_update_interval_hours: 6
   # URL to fetch model pricing data (default: model-price-repo main branch)
   # 获取模型定价数据的 URL（默认：model-price-repo main 分支）
   remote_url: "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/refs/heads/main//model_prices_and_context_window.json"
