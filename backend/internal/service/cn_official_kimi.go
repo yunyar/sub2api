@@ -26,7 +26,7 @@ type cnOfficialKimiColumns struct {
 
 func parseCNOfficialKimiPricing(body []byte) (map[string]*LiteLLMModelPricing, error) {
 	if len(bytes.TrimSpace(body)) == 0 {
-		return nil, fmt.Errorf("Kimi pricing document is empty")
+		return nil, fmt.Errorf("kimi pricing document is empty")
 	}
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
@@ -46,7 +46,7 @@ func parseCNOfficialKimiPricing(body []byte) (map[string]*LiteLLMModelPricing, e
 		return nil, err
 	}
 	if len(compiled) == 0 {
-		return nil, fmt.Errorf("Kimi pricing document contains no recognized model-price table")
+		return nil, fmt.Errorf("kimi pricing document contains no recognized model-price table")
 	}
 	return compiled, nil
 }
@@ -162,7 +162,7 @@ func cnOfficialKimiHTMLText(node *html.Node) string {
 	var visit func(*html.Node)
 	visit = func(current *html.Node) {
 		if current.Type == html.TextNode {
-			text.WriteString(current.Data)
+			_, _ = text.WriteString(current.Data)
 			return
 		}
 		for child := current.FirstChild; child != nil; child = child.NextSibling {
@@ -218,7 +218,7 @@ func parseCNOfficialKimiCompiledTables(root *html.Node) (map[string]*LiteLLMMode
 		return nil, err
 	}
 	if found && len(result) == 0 {
-		return nil, fmt.Errorf("Kimi compiled pricing tables contain no model rows")
+		return nil, fmt.Errorf("kimi compiled pricing tables contain no model rows")
 	}
 	return result, nil
 }
@@ -327,7 +327,7 @@ func cnOfficialKimiDocTables(source string) ([]cnOfficialKimiDocTable, error) {
 				}
 				title, ok := columnProps["title"]
 				if !ok {
-					return nil, fmt.Errorf("Kimi compiled column %d has no title", i)
+					return nil, fmt.Errorf("kimi compiled column %d has no title", i)
 				}
 				columns[i], err = cnOfficialKimiJSDisplayText(title)
 				if err != nil {
@@ -390,7 +390,7 @@ func cnOfficialKimiColumnIndexes(headers []string) (cnOfficialKimiColumns, bool,
 	}
 	for i, name := range recognized {
 		if name == "" {
-			return result, true, fmt.Errorf("Kimi pricing table has unsupported column %q", headers[i])
+			return result, true, fmt.Errorf("kimi pricing table has unsupported column %q", headers[i])
 		}
 		var target *int
 		switch name {
@@ -408,15 +408,15 @@ func cnOfficialKimiColumnIndexes(headers []string) (cnOfficialKimiColumns, bool,
 			target = &result.write1h
 		}
 		if target == nil || *target >= 0 {
-			return result, true, fmt.Errorf("Kimi pricing table has duplicate or ambiguous column %q", headers[i])
+			return result, true, fmt.Errorf("kimi pricing table has duplicate or ambiguous column %q", headers[i])
 		}
 		*target = i
 	}
 	if result.cache < 0 {
-		return result, true, fmt.Errorf("Kimi pricing table is missing the cached-input price column")
+		return result, true, fmt.Errorf("kimi pricing table is missing the cached-input price column")
 	}
 	if (result.write5m >= 0) != (result.write1h >= 0) {
-		return result, true, fmt.Errorf("Kimi pricing table must provide both 5m and 1h write prices")
+		return result, true, fmt.Errorf("kimi pricing table must provide both 5m and 1h write prices")
 	}
 	result.hasWrite = result.write5m >= 0
 	return result, true, nil
@@ -444,32 +444,32 @@ func cnOfficialKimiColumnName(header string) (string, bool) {
 
 func parseCNOfficialKimiRows(headers []string, columns cnOfficialKimiColumns, rows [][]string) (map[string]*LiteLLMModelPricing, error) {
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("Kimi pricing table has no model rows")
+		return nil, fmt.Errorf("kimi pricing table has no model rows")
 	}
 	result := make(map[string]*LiteLLMModelPricing, len(rows))
 	for rowIndex, row := range rows {
 		if len(row) != len(headers) {
-			return nil, fmt.Errorf("Kimi pricing row %d has %d cells for %d columns", rowIndex+1, len(row), len(headers))
+			return nil, fmt.Errorf("kimi pricing row %d has %d cells for %d columns", rowIndex+1, len(row), len(headers))
 		}
 		model := strings.TrimSpace(row[columns.model])
 		if model == "" || len(strings.Fields(model)) != 1 {
-			return nil, fmt.Errorf("Kimi pricing row %d has an empty or malformed model name", rowIndex+1)
+			return nil, fmt.Errorf("kimi pricing row %d has an empty or malformed model name", rowIndex+1)
 		}
 		if _, exists := result[model]; exists {
-			return nil, fmt.Errorf("Kimi pricing table contains duplicate model %q", model)
+			return nil, fmt.Errorf("kimi pricing table contains duplicate model %q", model)
 		}
 
 		input, err := cnOfficialKimiTokenPrice(row[columns.input])
 		if err != nil {
-			return nil, fmt.Errorf("Kimi model %q input price: %w", model, err)
+			return nil, fmt.Errorf("kimi model %q input price: %w", model, err)
 		}
 		output, err := cnOfficialKimiTokenPrice(row[columns.output])
 		if err != nil {
-			return nil, fmt.Errorf("Kimi model %q output price: %w", model, err)
+			return nil, fmt.Errorf("kimi model %q output price: %w", model, err)
 		}
 		cacheRead, err := cnOfficialKimiTokenPrice(row[columns.cache])
 		if err != nil {
-			return nil, fmt.Errorf("Kimi model %q cached-input price: %w", model, err)
+			return nil, fmt.Errorf("kimi model %q cached-input price: %w", model, err)
 		}
 		pricing := &LiteLLMModelPricing{
 			InputCostPerToken:       input,
@@ -482,11 +482,11 @@ func parseCNOfficialKimiRows(headers []string, columns cnOfficialKimiColumns, ro
 		if columns.hasWrite {
 			write5m, err := cnOfficialKimiTokenPrice(row[columns.write5m])
 			if err != nil {
-				return nil, fmt.Errorf("Kimi model %q 5m cache-write price: %w", model, err)
+				return nil, fmt.Errorf("kimi model %q 5m cache-write price: %w", model, err)
 			}
 			write1h, err := cnOfficialKimiTokenPrice(row[columns.write1h])
 			if err != nil {
-				return nil, fmt.Errorf("Kimi model %q 1h cache-write price: %w", model, err)
+				return nil, fmt.Errorf("kimi model %q 1h cache-write price: %w", model, err)
 			}
 			pricing.CacheCreationInputTokenCost = write5m
 			pricing.CacheCreationInputTokenCostAbove1hr = write1h
@@ -520,7 +520,7 @@ func cnOfficialKimiTokenPrice(value string) (float64, error) {
 func mergeCNOfficialKimiModels(destination, incoming map[string]*LiteLLMModelPricing) error {
 	for model, pricing := range incoming {
 		if _, exists := destination[model]; exists {
-			return fmt.Errorf("Kimi pricing document contains duplicate model %q across tables", model)
+			return fmt.Errorf("kimi pricing document contains duplicate model %q across tables", model)
 		}
 		destination[model] = pricing
 	}
@@ -656,7 +656,7 @@ func cnOfficialKimiJSString(expression string) (string, bool) {
 				return "", false
 			}
 		}
-		output.WriteByte(value[i])
+		_ = output.WriteByte(value[i])
 	}
 	return output.String(), true
 }

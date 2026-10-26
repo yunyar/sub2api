@@ -41,7 +41,7 @@ func TestCustomUpstreamMigrationUpgradeWithPostgres(t *testing.T) {
 	filenames, err := fs.Glob(migrations.FS, "*.sql")
 	require.NoError(t, err)
 	for _, filename := range filenames {
-		if filename == "246_enable_gemini_image_generation_groups.sql" || filename == "247_scoped_admin_api_keys.sql" {
+		if filename == "246_enable_gemini_image_generation_groups.sql" || filename == "247_scoped_admin_api_keys.sql" || filename == "248_group_image_count_billing.sql" {
 			continue
 		}
 		content, readErr := migrations.FS.ReadFile(filename)
@@ -56,9 +56,14 @@ func TestCustomUpstreamMigrationUpgradeWithPostgres(t *testing.T) {
 	}
 	require.NoError(t, ApplyMigrations(t.Context(), database))
 	require.NoError(t, ApplyMigrations(t.Context(), database))
-	for _, filename := range []string{"246_enable_gemini_image_generation_groups.sql", "247_scoped_admin_api_keys.sql"} {
+	for _, filename := range []string{"246_enable_gemini_image_generation_groups.sql", "247_scoped_admin_api_keys.sql", "248_group_image_count_billing.sql"} {
 		var count int
 		require.NoError(t, database.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM schema_migrations WHERE filename=$1", filename).Scan(&count))
 		require.Equal(t, 1, count)
 	}
+	var nullable, columnType, defaultValue string
+	require.NoError(t, database.QueryRowContext(t.Context(), "SELECT is_nullable, data_type, column_default FROM information_schema.columns WHERE table_schema='public' AND table_name='groups' AND column_name='image_count_billing'").Scan(&nullable, &columnType, &defaultValue))
+	require.Equal(t, "NO", nullable)
+	require.Equal(t, "boolean", columnType)
+	require.Equal(t, "false", defaultValue)
 }

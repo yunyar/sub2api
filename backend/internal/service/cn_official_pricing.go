@@ -51,8 +51,8 @@ type officialPricingDocumentClient interface {
 func cnOfficialPricingSources() []cnOfficialPricingSource {
 	return []cnOfficialPricingSource{
 		{Name: "kimi", URL: "https://platform.kimi.ai/docs/pricing/chat", Parse: parseCNOfficialKimiPricing},
-		{Name: "deepseek", URL: "https://api-docs.deepseek.com/quick_start/pricing", Parse: parseCNOfficialDeepSeekDocument},
-		{Name: "minimax", URL: "https://platform.minimax.io/docs/guides/pricing-paygo.md", Parse: parseCNOfficialMiniMaxDocument},
+		{Name: "deepseek", URL: cnOfficialDeepSeekPricingSourceURL, Parse: parseCNOfficialDeepSeekDocument},
+		{Name: "minimax", URL: cnOfficialMiniMaxPricingSourceURL, Parse: parseCNOfficialMiniMaxDocument},
 		{Name: "zai", URL: "https://docs.z.ai/guides/overview/pricing.md", Parse: parseCNOfficialZAIPricing},
 	}
 }

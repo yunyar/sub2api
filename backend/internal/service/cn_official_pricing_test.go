@@ -62,27 +62,27 @@ func newCNOfficialTestService(t *testing.T) (*PricingService, *cnOfficialTestCli
 
 func TestCNOfficialRefreshUpdatesPricesAndRetainsLastGoodOnFailure(t *testing.T) {
 	svc, client, source := newCNOfficialTestService(t)
-	svc.refreshCNOfficialPricingFromSources(false, []cnOfficialPricingSource{source})
+	require.NoError(t, svc.refreshCNOfficialPricingFromSources(false, []cnOfficialPricingSource{source}))
 	require.InDelta(t, 2e-6, svc.GetModelPricing("kimi-k3.1-pro").InputCostPerToken, 1e-14)
 	require.Equal(t, 1, client.calls)
-	svc.refreshCNOfficialPricingFromSources(false, []cnOfficialPricingSource{source})
+	require.NoError(t, svc.refreshCNOfficialPricingFromSources(false, []cnOfficialPricingSource{source}))
 	require.Equal(t, 1, client.calls, "successful prices do not refetch before the interval")
 	client.body = []byte(`{"kimi-k3.1-pro":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000011,"mode":"chat","litellm_provider":"moonshot"}}`)
-	svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source})
+	require.NoError(t, svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source}))
 	require.InDelta(t, 3e-6, svc.GetModelPricing("kimi-k3.1-pro").InputCostPerToken, 1e-14)
 	client.err = fmt.Errorf("upstream unavailable")
-	svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source})
+	require.ErrorContains(t, svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source}), "upstream unavailable")
 	require.InDelta(t, 3e-6, svc.GetModelPricing("kimi-k3.1-pro").InputCostPerToken, 1e-14)
 	require.Contains(t, svc.cnOfficialStatus["kimi"].Error, "upstream unavailable")
 	client.err = nil
 	client.body = []byte(`{"kimi-k3.1-pro":{"input_cost_per_token":0,"output_cost_per_token":0,"mode":"chat"}}`)
-	svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source})
+	require.Error(t, svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source}))
 	require.InDelta(t, 3e-6, svc.GetModelPricing("kimi-k3.1-pro").InputCostPerToken, 1e-14)
 }
 
 func TestCNOfficialCacheRestartCurrencyAndSourceValidation(t *testing.T) {
 	svc, _, source := newCNOfficialTestService(t)
-	svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source})
+	require.NoError(t, svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source}))
 	restored := NewPricingService(svc.cfg, nil)
 	restored.loadCNOfficialPricingCache()
 	require.NotNil(t, restored.GetModelPricing("kimi-k3.1-pro"))
@@ -133,7 +133,7 @@ func TestCNOfficialPricingOverridesCatalogButHonorsExplicitGroupAndFilePrices(t 
 	svc.pricingData = map[string]*LiteLLMModelPricing{
 		"kimi-k3.1-pro": {InputCostPerToken: 90e-6, OutputCostPerToken: 100e-6},
 	}
-	svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source})
+	require.NoError(t, svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source}))
 	require.InDelta(t, 2e-6, svc.GetIdentifiedModelPricing("moonshot/kimi-k3.1-pro").InputCostPerToken, 1e-14)
 	require.Nil(t, svc.GetModelPricing("kimi-k3.10-pro"))
 	billing := NewBillingService(&config.Config{}, svc)
@@ -162,14 +162,15 @@ func TestCNOfficialSnapshotsProviderIsolationAndAllowlistFailure(t *testing.T) {
 	svc, _, source := newCNOfficialTestService(t)
 	svc.cfg.Security.URLAllowlist.Enabled = true
 	svc.cfg.Security.URLAllowlist.PricingHosts = []string{"raw.githubusercontent.com"}
-	svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source})
+	require.Error(t, svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source}))
 	require.Empty(t, svc.cnOfficialData)
 	require.NotEmpty(t, svc.cnOfficialStatus["kimi"].Error)
 	svc.cfg.Security.URLAllowlist.PricingHosts = []string{"platform.kimi.ai"}
-	svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source})
+	require.NoError(t, svc.refreshCNOfficialPricingFromSources(true, []cnOfficialPricingSource{source}))
 	require.NotNil(t, svc.GetModelPricing("kimi-k3.1-pro"))
 	require.Error(t, validateCNOfficialModels("deepseek", cnOfficialTestModels(2e-6)))
-	status := svc.GetStatus()["cn_official"].(map[string]any)
+	status, ok := svc.GetStatus()["cn_official"].(map[string]any)
+	require.True(t, ok)
 	require.Equal(t, true, status["enabled"])
 	require.Equal(t, 1, status["model_count"])
 }

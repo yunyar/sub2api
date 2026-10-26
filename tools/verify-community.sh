@@ -21,6 +21,7 @@ fi
   src/api/__tests__/communityQRCodes.spec.ts \
   src/api/__tests__/admin.autoGroups.spec.ts \
   src/views/admin/__tests__/AutoGroupsView.spec.ts \
+  src/views/admin/__tests__/groupsOfficialPricing.spec.ts \
   src/api/__tests__/admin.paymentRechargeRisk.spec.ts \
   src/api/__tests__/playground.spec.ts \
   src/api/__tests__/url.spec.ts \
@@ -53,6 +54,7 @@ fi
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'CommunityQRCodes|ResolvePlaygroundKey')
 (cd backend && "$go_bin" test -tags unit ./internal/pkg/apicompat ./internal/securityaudit ./internal/service ./internal/handler ./internal/server/middleware -run 'AgentMessage|AgentOrchestration|AgentWaitRoundTrip|Function(Call)?Output|AutoModelCatalog|AutoRouting.*(Model|Codex)|AutoModelDirectory|AutoCodexModelsManifest|WriteAutoModelDirectory|ResponsesBridgeReturnsAtMessageDelta|AutoRoutingPrepareRequestKey(ConcurrentModelsKeepGroupAndBillingRequestLocal|FailureDoesNotPoisonNextPlatform)|BindEffectiveGroupContextConcurrentRequestsKeepRoutingStateIsolated')
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'ImageRateAlways|ImageCountOverridesChannelTokenPricing|ImageMultiplierIgnores|ChannelImageBillingUsesImageCount|ListPlazaGroups_GroupImagePrice|BatchImagePublicService_Submit|InflightEstimate_ImageUsesDedicatedGroupMultiplier|InflightEstimate_MediaKinds')
+(cd backend && "$go_bin" test -tags unit ./internal/service ./internal/repository -run 'CNOfficial|OfficialPricingDocument|ImageCountBilling|BillableImageCount|DedicatedImage.*ImageMultiplier|MixedImagesPreserveCustomPerImageBilling|ChannelPerRequestContextTierUsesTokens')
 (cd backend && "$go_bin" test -tags unit ./internal/payment/provider ./internal/pkg/ip)
 (cd backend && "$go_bin" test -tags unit ./internal/service -run 'EasyPay|PaymentRechargeRisk|PaymentRisk|AuthIPRisk|CanonicalizeReturnURL|PaymentReturnURLDrops|BuildPaymentReturnURL')
 (cd backend && "$go_bin" test -tags unit ./internal/handler ./internal/handler/admin ./internal/repository -run 'PaymentWebhook|PaymentRechargeRisk|ClientIP|EasyPayTransactionIdentity')

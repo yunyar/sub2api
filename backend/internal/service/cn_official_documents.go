@@ -27,13 +27,13 @@ func parseCNOfficialDeepSeekDocument(body []byte) (map[string]*LiteLLMModelPrici
 		return nil, fmt.Errorf("DeepSeek published peak schedule changed")
 	}
 	var normalized strings.Builder
-	normalized.WriteString("<p>USD per 1M tokens</p>")
+	_, _ = normalized.WriteString("<p>USD per 1M tokens</p>")
 	normalizedRow := func(row []string) {
-		normalized.WriteString("<tr>")
+		_, _ = normalized.WriteString("<tr>")
 		for _, cell := range row {
-			normalized.WriteString("<td>" + stdhtml.EscapeString(cell) + "</td>")
+			_, _ = normalized.WriteString("<td>" + stdhtml.EscapeString(cell) + "</td>")
 		}
-		normalized.WriteString("</tr>")
+		_, _ = normalized.WriteString("</tr>")
 	}
 	for _, table := range tables {
 		columns := make(map[int]string)
@@ -60,7 +60,7 @@ func parseCNOfficialDeepSeekDocument(body []byte) (map[string]*LiteLLMModelPrici
 		if len(columns) == 0 {
 			continue
 		}
-		normalized.WriteString("<table>")
+		_, _ = normalized.WriteString("<table>")
 		header := []string{"Price item", "Time period"}
 		for _, index := range columnOrder {
 			header = append(header, columns[index])
@@ -95,7 +95,7 @@ func parseCNOfficialDeepSeekDocument(body []byte) (map[string]*LiteLLMModelPrici
 			}
 			normalizedRow(next)
 		}
-		normalized.WriteString("</table>")
+		_, _ = normalized.WriteString("</table>")
 	}
 	models, err := parseCNOfficialDeepSeekPricing([]byte(normalized.String()))
 	if err != nil {
@@ -203,7 +203,7 @@ func parseCNOfficialMiniMaxDocument(body []byte) (map[string]*LiteLLMModelPricin
 		}
 	}
 	var normalized strings.Builder
-	normalized.WriteString("USD per 1M tokens\n\n")
+	_, _ = normalized.WriteString("USD per 1M tokens\n\n")
 	models := make([]string, 0, len(tiers))
 	for model := range tiers {
 		models = append(models, model)
@@ -221,7 +221,7 @@ func parseCNOfficialMiniMaxDocument(body []byte) (map[string]*LiteLLMModelPricin
 			header += " Priority Input USD | Priority Output USD | Priority Cache Read USD |"
 			separator += " --- | --- | --- |"
 		}
-		normalized.WriteString(header + "\n" + separator + "\n")
+		_, _ = normalized.WriteString(header + "\n" + separator + "\n")
 		for _, band := range []int{0, 1} {
 			tier := tiers[model][band]
 			if tier == nil {
@@ -234,9 +234,9 @@ func parseCNOfficialMiniMaxDocument(body []byte) (map[string]*LiteLLMModelPricin
 			if withPriority {
 				fields = append(fields, tier.priority...)
 			}
-			normalized.WriteString("| " + strings.Join(fields, " | ") + " |\n")
+			_, _ = normalized.WriteString("| " + strings.Join(fields, " | ") + " |\n")
 		}
-		normalized.WriteString("\n")
+		_, _ = normalized.WriteString("\n")
 	}
 	return parseCNOfficialMiniMaxPricing([]byte(normalized.String()))
 }

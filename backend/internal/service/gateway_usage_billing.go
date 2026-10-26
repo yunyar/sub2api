@@ -1247,7 +1247,7 @@ func (s *GatewayService) calculateImageCost(
 			Resolved:        resolved,
 		})
 		if err != nil {
-			logger.LegacyPrintf("service.gateway", "Calculate image token cost failed: %v", err)
+			logger.LegacyPrintf("service.gateway", "Calculate image channel cost failed: %v", err)
 			return &CostBreakdown{ActualCost: 0}
 		}
 		cost.BillingMode = string(BillingModeImage)

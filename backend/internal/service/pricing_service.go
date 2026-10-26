@@ -323,7 +323,9 @@ func (s *PricingService) Initialize() error {
 
 	if s.cfg.Pricing.CNOfficialEnabled {
 		s.loadCNOfficialPricingCache()
-		s.refreshCNOfficialPricing(false)
+		if err := s.refreshCNOfficialPricing(false); err != nil {
+			logger.LegacyPrintf("service.pricing", "[Pricing] Initial official pricing refresh incomplete: %v", err)
+		}
 	}
 
 	// 启动定时更新
@@ -379,7 +381,9 @@ func (s *PricingService) startUpdateScheduler() {
 					s.reloadIfCustomFilesChanged()
 				}
 				if officialEnabled {
-					s.refreshCNOfficialPricing(false)
+					if err := s.refreshCNOfficialPricing(false); err != nil {
+						logger.LegacyPrintf("service.pricing", "[Pricing] Scheduled official pricing refresh incomplete: %v", err)
+					}
 				}
 			case <-s.stopCh:
 				return
