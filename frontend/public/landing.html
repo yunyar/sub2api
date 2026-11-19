@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#f6f3ee" />
+<title>Happy · 善意流动 万物共生</title>
+<meta name="description" content="Happy —— 让每一次调用都带着善意。稳定、温柔、可信赖的 AI API 网关。" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cg transform='translate(32 32)' fill='%23ff8fab'%3E%3Cellipse cy='-14' rx='10' ry='15'/%3E%3Cellipse cy='-14' rx='10' ry='15' transform='rotate(72)'/%3E%3Cellipse cy='-14' rx='10' ry='15' transform='rotate(144)'/%3E%3Cellipse cy='-14' rx='10' ry='15' transform='rotate(216)'/%3E%3Cellipse cy='-14' rx='10' ry='15' transform='rotate(288)'/%3E%3Ccircle r='6.5' fill='%23ffe08a'/%3E%3C/g%3E%3C/svg%3E" />
+<style>
+:root{
+  --ink:#1d1d1f; --ink-2:#424245; --ink-3:#6e6e73;
+  --bg:#f6f3ee;
+  --peach:#ffb38a; --rose:#ff8fab; --mint:#7ad7c0; --sky:#8ec5ff; --lilac:#b9a7ff; --sun:#ffd76a;
+  --glass:rgba(255,255,255,.52); --glass-strong:rgba(255,255,255,.72);
+  --stroke:rgba(255,255,255,.7); --hair:rgba(29,29,31,.08);
+  --shadow:0 1px 1px rgba(0,0,0,.03),0 10px 30px -10px rgba(60,40,20,.18),0 30px 60px -30px rgba(60,40,20,.22);
+  --r-xl:32px; --r-lg:24px; --r-md:16px;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+html,body{overflow-x:clip}
+body{font-family:var(--font);color:var(--ink);background:var(--bg);overflow-x:hidden;-webkit-font-smoothing:antialiased;line-height:1.6}
+a{color:inherit;text-decoration:none}
+::selection{background:rgba(255,179,138,.45)}
+
+/* ===== 背景：极光 + 流动粒子 ===== */
+.aurora{position:fixed;inset:-20vmax;z-index:-3;filter:blur(70px) saturate(130%);opacity:.85;pointer-events:none}
+.aurora i{position:absolute;width:55vmax;height:55vmax;border-radius:50%;mix-blend-mode:multiply;animation:drift 26s ease-in-out infinite alternate}
+.aurora i:nth-child(1){background:radial-gradient(circle,#ffd3bd 0,transparent 65%);left:5%;top:0}
+.aurora i:nth-child(2){background:radial-gradient(circle,#c6f0e4 0,transparent 65%);right:0;top:10%;animation-duration:32s;animation-delay:-8s}
+.aurora i:nth-child(3){background:radial-gradient(circle,#dcd3ff 0,transparent 65%);left:25%;bottom:0;animation-duration:38s;animation-delay:-14s}
+.aurora i:nth-child(4){background:radial-gradient(circle,#ffe9a8 0,transparent 65%);right:20%;bottom:10%;animation-duration:30s;animation-delay:-4s}
+@keyframes drift{0%{transform:translate(0,0) scale(1)}50%{transform:translate(8vmax,-6vmax) scale(1.15)}100%{transform:translate(-6vmax,7vmax) scale(.95)}}
+#flow{position:fixed;inset:0;z-index:-2;pointer-events:none}
+.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+/* ===== 毛玻璃基础 ===== */
+.glass{
+  background:linear-gradient(140deg,rgba(255,255,255,.66),rgba(255,255,255,.38));
+  -webkit-backdrop-filter:blur(28px) saturate(180%);backdrop-filter:blur(28px) saturate(180%);
+  border:1px solid var(--stroke);box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.9);
+  border-radius:var(--r-lg);position:relative;
+}
+.glass::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(420px circle at var(--mx,50%) var(--my,-20%),rgba(255,255,255,.55),transparent 45%);opacity:0;transition:opacity .4s}
+.glass:hover::after{opacity:1}
+
+/* ===== 导航 ===== */
+.nav{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:50;width:min(1120px,calc(100% - 28px));
+  display:flex;align-items:center;gap:20px;padding:10px 10px 10px 20px;border-radius:999px;transition:all .5s var(--ease)}
+.nav.scrolled{top:8px;background:rgba(255,255,255,.7)}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px;letter-spacing:-.02em}
+.logo svg{width:30px;height:30px}
+.nav ul{display:flex;gap:4px;list-style:none;margin-left:auto}
+.nav ul a{display:block;padding:8px 14px;border-radius:999px;font-size:14px;color:var(--ink-2);transition:all .3s}
+.nav ul a:hover{background:rgba(255,255,255,.8);color:var(--ink)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:999px;font-size:15px;font-weight:600;
+  transition:transform .35s var(--ease),box-shadow .35s var(--ease),background .3s;cursor:pointer;border:0;white-space:nowrap;will-change:transform}
+.btn-dark{background:var(--ink);color:#fff;box-shadow:0 8px 24px -8px rgba(0,0,0,.45)}
+.btn-dark:hover{box-shadow:0 14px 34px -10px rgba(0,0,0,.5)}
+.btn-glass{background:rgba(255,255,255,.6);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.8);color:var(--ink)}
+.btn-glass:hover{background:rgba(255,255,255,.85)}
+.btn svg{width:16px;height:16px;transition:transform .35s var(--ease)}
+.btn:hover svg{transform:translateX(3px)}
+.burger{display:none}
+
+/* ===== Hero ===== */
+section{position:relative}
+.wrap{width:min(1120px,calc(100% - 40px));margin:0 auto}
+.hero{min-height:100vh;display:grid;place-items:center;padding:140px 0 80px;text-align:center}
+.pill{display:inline-flex;align-items:center;gap:10px;padding:7px 16px 7px 8px;border-radius:999px;font-size:13px;color:var(--ink-2)}
+.pill b{background:linear-gradient(120deg,var(--peach),var(--rose));color:#fff;font-weight:600;padding:3px 10px;border-radius:999px;font-size:12px}
+.hero h1{font-size:clamp(48px,9.5vw,128px);line-height:1.02;letter-spacing:-.045em;font-weight:800;margin:28px 0 22px}
+.hero h1 .line{display:block;overflow:hidden;padding:.04em 0}
+.hero h1 .line span{display:inline-block;transform:translateY(110%);animation:rise 1.2s var(--ease) forwards}
+.hero h1 .line:nth-child(2) span{animation-delay:.15s}
+@keyframes rise{to{transform:none}}
+.grad{background:linear-gradient(100deg,#ff9a6b 0%,#ff7fa6 25%,#b38cff 50%,#5fc8e8 75%,#5fd3ae 100%);background-size:200% auto;
+  -webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 8s linear infinite}
+@keyframes shine{to{background-position:200% center}}
+.hero p.lead{font-size:clamp(17px,2vw,22px);color:var(--ink-2);max-width:640px;margin:0 auto;opacity:0;animation:fade 1s .5s forwards}
+.hero .cta{display:flex;gap:12px;justify-content:center;margin-top:38px;flex-wrap:wrap;opacity:0;animation:fade 1s .7s forwards}
+.hero .cta .btn{padding:15px 28px;font-size:16px}
+@keyframes fade{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+/* 花朵 */
+.critters{position:absolute;inset:0;pointer-events:none;z-index:0}
+.bloom{position:absolute;width:var(--s,100px);height:var(--s,100px);animation:bob var(--d,7s) ease-in-out infinite;animation-delay:var(--dl,0s);pointer-events:auto;cursor:pointer}
+.bloom svg{width:100%;height:100%;overflow:visible;filter:drop-shadow(0 16px 22px rgba(170,90,90,.16)) drop-shadow(0 2px 4px rgba(170,90,90,.08));animation:open 2s var(--ease) both;animation-delay:var(--od,0s)}
+.bloom .spin{animation:spin var(--sp,80s) linear infinite}
+.bloom .layer{animation:breathe 6s ease-in-out infinite;animation-delay:var(--ld,0s);transition:scale 1s var(--ease)}
+.bloom .layer:nth-child(2){animation-direction:reverse}
+.bloom:hover .layer{scale:1.1}
+.bloom:hover .layer:nth-child(2){scale:1.16}
+.bloom .core{transition:scale .8s var(--ease)}
+.bloom:hover .core{scale:1.15}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breathe{0%,100%{transform:scale(.95)}50%{transform:scale(1.04)}}
+@keyframes open{from{opacity:0;transform:scale(.2) rotate(-120deg)}to{opacity:1;transform:none}}
+@keyframes bob{0%,100%{transform:translateY(0) rotate(var(--r,0deg))}50%{transform:translateY(-16px) rotate(calc(var(--r,0deg) * -1))}}
+/* 花瓣 */
+.petal{position:fixed;left:0;top:0;pointer-events:none;z-index:99;width:var(--w,14px);height:calc(var(--w,14px) * 1.3);
+  border-radius:100% 0 100% 0 / 100% 0 100% 0;background:linear-gradient(135deg,var(--a),var(--b));box-shadow:inset 0 0 0 .5px rgba(255,255,255,.7)}
+.rain{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.rain i{position:absolute;top:-40px;left:var(--x);width:var(--w);height:calc(var(--w) * 1.3);opacity:.8;
+  border-radius:100% 0 100% 0 / 100% 0 100% 0;background:linear-gradient(135deg,var(--a),var(--b));animation:fall var(--t) linear infinite;animation-delay:var(--dl)}
+@keyframes fall{
+  0%{transform:translate(0,0) rotate(0) rotateX(0);opacity:0}
+  8%{opacity:.85}
+  25%{transform:translate(var(--sx),27vh) rotate(80deg) rotateX(160deg)}
+  50%{transform:translate(calc(var(--sx) * -.6),55vh) rotate(170deg) rotateX(330deg)}
+  75%{transform:translate(var(--sx),82vh) rotate(260deg) rotateX(500deg)}
+  92%{opacity:.7}
+  100%{transform:translate(0,110vh) rotate(340deg) rotateX(660deg);opacity:0}}
+.orbit span{width:40px;height:40px;margin:-20px 0 0 -20px}
+.orbit span svg,.who i svg{width:100%;height:100%;overflow:visible}
+.who i{padding:4px}
+
+.scroll-hint{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);font-size:12px;color:var(--ink-3);letter-spacing:.2em;display:flex;flex-direction:column;align-items:center;gap:10px}
+.scroll-hint i{width:22px;height:36px;border:1.5px solid rgba(0,0,0,.25);border-radius:12px;position:relative}
+.scroll-hint i::after{content:"";position:absolute;left:50%;top:7px;width:3px;height:7px;border-radius:2px;background:var(--ink-3);transform:translateX(-50%);animation:wheel 1.8s infinite}
+@keyframes wheel{0%{opacity:0;transform:translate(-50%,0)}40%{opacity:1}100%{opacity:0;transform:translate(-50%,12px)}}
+
+/* ===== 统计条 ===== */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);margin-top:-30px;padding:8px;border-radius:var(--r-xl)}
+.stat{padding:26px 24px;text-align:center;position:relative}
+.stat+.stat::before{content:"";position:absolute;left:0;top:25%;height:50%;width:1px;background:var(--hair)}
+.stat .num{font-size:clamp(30px,4vw,46px);font-weight:700;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.stat .lbl{font-size:13px;color:var(--ink-3);margin-top:2px}
+
+/* ===== 通用 section 标题 ===== */
+.sec{padding:140px 0 40px}
+.eyebrow{font-size:13px;font-weight:600;letter-spacing:.24em;color:var(--ink-3);text-transform:uppercase;display:flex;align-items:center;gap:10px}
+.eyebrow::before{content:"";width:22px;height:2px;border-radius:2px;background:linear-gradient(90deg,var(--peach),var(--mint))}
+.sec h2{font-size:clamp(36px,5.6vw,72px);line-height:1.08;letter-spacing:-.04em;font-weight:800;margin:18px 0 18px;max-width:900px}
+.sec .sub{font-size:clamp(16px,1.6vw,19px);color:var(--ink-2);max-width:620px}
+.reveal{opacity:0;transform:translateY(40px);transition:opacity 1s var(--ease),transform 1s var(--ease)}
+.reveal.in{opacity:1;transform:none}
+
+/* ===== 理念：横向流动叙事 ===== */
+.manifesto{padding:160px 0 120px}
+.manifesto .big{font-size:clamp(30px,4.6vw,60px);line-height:1.28;font-weight:700;letter-spacing:-.03em;max-width:1000px}
+.manifesto .big .w{color:rgba(29,29,31,.14);transition:color .5s}
+.manifesto .big .w.on{color:var(--ink)}
+.manifesto .big .w.hl.on{background:linear-gradient(100deg,#ff8f6b,#ff7fa6,#9b8cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+/* 理念背后随滚动绽放的巨型莲花 */
+.manifesto{overflow:hidden}
+.giant{position:absolute;right:-8vw;top:50%;width:min(78vw,820px);aspect-ratio:1;translate:0 -50%;pointer-events:none;opacity:.42;z-index:0;
+  -webkit-mask:radial-gradient(circle,#000 40%,transparent 72%);mask:radial-gradient(circle,#000 40%,transparent 72%)}
+.giant svg{width:100%;height:100%;overflow:visible;filter:drop-shadow(0 40px 60px rgba(255,140,170,.25))}
+.giant .spin{animation:none}
+.giant .layer{animation:none;transition:none}
+/* ===== Bento 特性 ===== */
+.bento{display:grid;grid-template-columns:repeat(6,1fr);gap:18px;margin-top:60px}
+.card{padding:32px;overflow:hidden;transform-style:preserve-3d;transition:transform .6s var(--ease)}
+.card h3{font-size:24px;letter-spacing:-.02em;font-weight:700;margin:18px 0 8px}
+.card p{color:var(--ink-2);font-size:15px}
+.ico{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;font-size:24px;
+  background:linear-gradient(140deg,rgba(255,255,255,.95),rgba(255,255,255,.5));box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 6px 18px -6px rgba(0,0,0,.15)}
+.c1{grid-column:span 4;min-height:380px}
+.c2{grid-column:span 2}
+.c3{grid-column:span 2}
+.c4{grid-column:span 2}
+.c5{grid-column:span 2}
+.c6{grid-column:span 6;display:grid;grid-template-columns:1.1fr 1fr;gap:40px;align-items:center}
+
+/* 路由流动图 */
+.flowmap{position:absolute;right:-10px;bottom:-10px;width:62%;height:78%}
+.flowmap .node{fill:#fff;stroke:rgba(0,0,0,.06)}
+.flowmap .path{fill:none;stroke:url(#lg);stroke-width:2.5;stroke-linecap:round;stroke-dasharray:6 10;animation:dash 1.6s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-32}}
+.flowmap text{font-size:12px;font-weight:600;fill:var(--ink-2);font-family:var(--font)}
+
+/* 延迟条 */
+.bars{display:flex;align-items:flex-end;gap:6px;height:90px;margin-top:26px}
+.bars i{flex:1;border-radius:6px 6px 3px 3px;background:linear-gradient(to top,var(--mint),#c9f3e6);animation:eq 1.8s ease-in-out infinite;transform-origin:bottom}
+@keyframes eq{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+
+/* 心跳 ring */
+.ring{width:120px;height:120px;margin:24px auto 0;position:relative;display:grid;place-items:center}
+.ring::before,.ring::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid var(--rose);animation:pulse 2.4s var(--ease) infinite;opacity:0}
+.ring::after{animation-delay:1.2s}
+@keyframes pulse{0%{transform:scale(.5);opacity:.8}100%{transform:scale(1.4);opacity:0}}
+.ring b{font-size:42px;animation:beat 1.2s infinite}
+@keyframes beat{0%,100%{transform:scale(1)}15%{transform:scale(1.18)}30%{transform:scale(1)}45%{transform:scale(1.1)}}
+
+/* 终端 */
+.term{border-radius:20px;background:rgba(24,24,28,.86);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);color:#e8e8ed;
+  font:13.5px/1.75 "SF Mono",ui-monospace,Menlo,Consolas,monospace;box-shadow:0 30px 60px -20px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.1);overflow:hidden}
+.term .bar{display:flex;gap:8px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06);align-items:center}
+.term .bar i{width:12px;height:12px;border-radius:50%}
+.term .bar i:nth-child(1){background:#ff5f57}.term .bar i:nth-child(2){background:#febc2e}.term .bar i:nth-child(3){background:#28c840}
+.term .bar span{margin-left:auto;font-size:12px;color:#8e8e93}
+.term pre{padding:20px 22px;min-height:290px;white-space:pre-wrap;word-break:break-all}
+.term .k{color:#ff8fab}.term .s{color:#a5e8c9}.term .c{color:#8e8e93}.term .f{color:#8ec5ff}.term .n{color:#ffd76a}
+.caret{display:inline-block;width:8px;height:1.1em;background:#e8e8ed;vertical-align:-2px;animation:car 1s steps(1) infinite}
+@keyframes car{50%{opacity:0}}
+.tabs{display:inline-flex;padding:4px;border-radius:999px;background:rgba(0,0,0,.05);margin-top:26px}
+.tabs button{border:0;background:transparent;padding:8px 16px;border-radius:999px;font:600 13px var(--font);color:var(--ink-3);cursor:pointer;transition:all .3s}
+.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.08)}
+
+/* ===== 模型跑马灯 ===== */
+.marquee{overflow:hidden;margin-top:60px;display:flex;flex-direction:column;gap:16px;-webkit-mask:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);mask:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.track{display:flex;gap:16px;width:max-content;animation:scroll 40s linear infinite}
+.track.rev{animation-direction:reverse;animation-duration:48s}
+.marquee:hover .track{animation-play-state:paused}
+@keyframes scroll{to{transform:translateX(-50%)}}
+.chip{display:flex;align-items:center;gap:12px;padding:14px 22px 14px 14px;border-radius:999px;font-weight:600;font-size:15px}
+.chip i{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-size:16px;color:#fff}
+
+/* ===== 步骤 ===== */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:60px;position:relative}
+.step{padding:34px 30px}
+.step .no{font-size:64px;font-weight:800;letter-spacing:-.05em;line-height:1;background:linear-gradient(160deg,var(--ink) 30%,rgba(29,29,31,.15));-webkit-background-clip:text;background-clip:text;color:transparent}
+.step h3{font-size:22px;margin:18px 0 8px;letter-spacing:-.02em}
+.step p{color:var(--ink-2);font-size:15px}
+
+/* ===== 价格 ===== */
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:60px;align-items:stretch}
+.plan{padding:36px 32px;display:flex;flex-direction:column}
+.plan .tag{font-size:13px;font-weight:600;color:var(--ink-3)}
+.plan .price{font-size:52px;font-weight:800;letter-spacing:-.04em;margin:14px 0 4px}
+.plan .price small{font-size:16px;font-weight:500;color:var(--ink-3);letter-spacing:0}
+.plan ul{list-style:none;margin:24px 0 30px;display:grid;gap:12px;font-size:15px;color:var(--ink-2)}
+.plan li{display:flex;gap:10px;align-items:flex-start}
+.plan li::before{content:"";flex:none;width:18px;height:18px;margin-top:3px;border-radius:50%;background:linear-gradient(140deg,var(--mint),var(--sky)) ;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M10 0a10 10 0 100 20 10 10 0 000-20zm-1.2 14.2L4.6 10l1.4-1.4 2.8 2.8 5.2-5.2 1.4 1.4-6.6 6.6z'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M10 0a10 10 0 100 20 10 10 0 000-20zm-1.2 14.2L4.6 10l1.4-1.4 2.8 2.8 5.2-5.2 1.4 1.4-6.6 6.6z'/%3E%3C/svg%3E") center/contain no-repeat}
+.plan .btn{margin-top:auto;justify-content:center}
+.plan.featured{background:linear-gradient(150deg,rgba(255,255,255,.85),rgba(255,240,232,.6));transform:translateY(-12px)}
+.plan.featured::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1.5px;background:linear-gradient(140deg,var(--peach),var(--rose),var(--lilac),var(--mint));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+.badge{position:absolute;top:22px;right:22px;font-size:12px;font-weight:700;padding:5px 12px;border-radius:999px;color:#fff;background:linear-gradient(120deg,var(--peach),var(--rose))}
+
+/* ===== 善意墙 ===== */
+.voices{columns:3;column-gap:18px;margin-top:60px}
+.voice{break-inside:avoid;margin-bottom:18px;padding:26px}
+.voice p{font-size:16px;color:var(--ink)}
+.who{display:flex;align-items:center;gap:12px;margin-top:18px;font-size:13px;color:var(--ink-3)}
+.who i{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-size:18px}
+.who b{display:block;color:var(--ink);font-size:14px}
+
+/* ===== FAQ ===== */
+.faq{max-width:820px;margin:60px auto 0;display:grid;gap:12px}
+.qa{border-radius:var(--r-md);padding:0;overflow:hidden}
+.qa summary{list-style:none;cursor:pointer;padding:22px 26px;font-weight:600;font-size:17px;display:flex;justify-content:space-between;align-items:center;gap:20px}
+.qa summary::-webkit-details-marker{display:none}
+.qa summary::after{content:"";width:12px;height:12px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(45deg) translateY(-3px);transition:transform .4s var(--ease);flex:none}
+.qa[open] summary::after{transform:rotate(-135deg)}
+.qa .ans{padding:0 26px 24px;color:var(--ink-2);font-size:15px}
+
+/* ===== CTA ===== */
+.final{padding:140px 0 60px}
+.final .box{padding:clamp(48px,8vw,100px) clamp(24px,6vw,80px);text-align:center;border-radius:40px;overflow:hidden}
+.final h2{font-size:clamp(40px,6.4vw,84px);letter-spacing:-.045em;line-height:1.05;font-weight:800}
+.final p{font-size:19px;color:var(--ink-2);margin:20px auto 36px;max-width:560px}
+.final .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.final .cta .btn{padding:15px 28px;font-size:16px}
+.orbit{position:absolute;inset:0;pointer-events:none;z-index:-1}
+.orbit span{position:absolute;left:50%;top:50%;animation:orb var(--t) linear infinite;--rad:var(--r)}
+@keyframes orb{from{transform:rotate(0) translateX(var(--rad)) rotate(0)}to{transform:rotate(360deg) translateX(var(--rad)) rotate(-360deg)}}
+
+footer{padding:50px 0 60px;color:var(--ink-3);font-size:13px}
+footer .row{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;padding-top:30px;border-top:1px solid var(--hair)}
+footer nav{display:flex;gap:22px;flex-wrap:wrap}
+footer a:hover{color:var(--ink)}
+
+/* ===== 光标光晕 ===== */
+.cursor{position:fixed;width:420px;height:420px;border-radius:50%;pointer-events:none;z-index:-1;left:0;top:0;
+  background:radial-gradient(circle,rgba(255,200,170,.35),transparent 60%);transform:translate(-50%,-50%);transition:opacity .4s}
+
+/* ===== 响应式 ===== */
+@media (max-width:960px){
+  .nav ul{display:none}
+  .nav .btn-glass{display:none}
+  .nav .btn-dark{margin-left:auto}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .stat:nth-child(3)::before{display:none}
+  .bento{grid-template-columns:1fr}
+  .c1,.c2,.c3,.c4,.c5,.c6{grid-column:auto}
+  .c1{min-height:440px}
+  .c6{grid-template-columns:1fr}
+  .steps,.plans{grid-template-columns:1fr}
+  .plan.featured{transform:none}
+  .voices{columns:1}
+  .flowmap{width:100%;height:55%}
+}
+/* 手机菜单 */
+.burger{width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.7);cursor:pointer;position:relative;flex:none;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 4px 12px -6px rgba(0,0,0,.2)}
+.burger i{position:absolute;left:13px;right:13px;height:1.8px;border-radius:2px;background:var(--ink);transition:transform .45s var(--ease),top .45s var(--ease)}
+.burger i:nth-child(1){top:16px}.burger i:nth-child(2){top:24px}
+.nav.open .burger i:nth-child(1){top:20px;transform:rotate(45deg)}
+.nav.open .burger i:nth-child(2){top:20px;transform:rotate(-45deg)}
+.mmenu{position:fixed;top:76px;left:14px;right:14px;z-index:49;padding:10px;border-radius:26px;
+  opacity:0;transform:translateY(-10px) scale(.98);pointer-events:none;transition:opacity .4s var(--ease),transform .5s var(--ease)}
+.nav.open + .mmenu{opacity:1;transform:none;pointer-events:auto}
+.mmenu a{display:flex;justify-content:space-between;align-items:center;padding:15px 18px;border-radius:16px;font-size:17px;font-weight:600}
+.mmenu a:active{background:rgba(255,255,255,.7)}
+.mmenu a span{color:var(--ink-3);font-weight:400;font-size:14px}
+.mmenu .row{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px}
+.mmenu .row .btn{justify-content:center;padding:14px}
+.nav.open + .mmenu a{animation:fade .5s var(--ease) both}
+.nav.open + .mmenu a:nth-child(2){animation-delay:.04s}.nav.open + .mmenu a:nth-child(3){animation-delay:.08s}
+.nav.open + .mmenu a:nth-child(4){animation-delay:.12s}.nav.open + .mmenu a:nth-child(5){animation-delay:.16s}
+@media (max-width:960px){
+  .burger{display:block}
+  .nav .btn-dark{margin-left:auto}
+}
+@media (min-width:961px){.mmenu{display:none}}
+@media (max-width:600px){
+  .nav{padding:8px 8px 8px 16px;gap:10px}
+  .nav .btn-dark{padding:10px 16px;font-size:14px}
+  .bloom{--s:58px !important}
+  .bloom:nth-child(n+6),.bloom:nth-child(3),.bloom:nth-child(4){display:none}
+  .hero h1{font-size:58px}
+  .hero{padding:118px 0 70px;min-height:92vh}
+  .hero h1{margin:22px 0 18px}
+  .hero p.lead{font-size:16px;padding:0 6px}
+  .hero p.lead br{display:none}
+  .hero .cta{flex-direction:column;align-items:stretch;padding:0 12px}
+  .hero .cta .btn{justify-content:center}
+  .pill{font-size:12px}
+  .scroll-hint{display:none}
+  .stats{margin-top:0}
+  .stat{padding:20px 12px}
+  .sec{padding:96px 0 20px}
+  .manifesto{padding:110px 0 80px}
+  .giant{width:120vw;right:-40vw;opacity:.32}
+  .card{padding:26px}
+  .c1{min-height:470px}
+  .flowmap{width:112%;right:-6%;height:52%}
+  .term{font-size:12px}
+  .term pre{padding:16px;min-height:250px}
+  .tabs{display:flex;width:100%}.tabs button{flex:1}
+  .chip{padding:10px 16px 10px 10px;font-size:14px}.chip i{width:28px;height:28px}
+  .step,.plan{padding:28px 24px}
+  .plan .price{font-size:44px}
+  .final{padding:96px 0 40px}
+  .final .box{border-radius:30px}
+  .final p{font-size:16px}
+  .final .cta{flex-direction:column;align-items:stretch}
+  .final .cta .btn{justify-content:center}
+  .orbit span{width:28px;height:28px;margin:-14px 0 0 -14px}
+  footer .row{flex-direction:column;align-items:flex-start}
+  .cursor{display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+  .reveal{opacity:1;transform:none}
+}
+</style>
+</head>
+<body>
+
+<div class="aurora"><i></i><i></i><i></i><i></i></div>
+<canvas id="flow"></canvas>
+<div class="grain"></div>
+<div class="cursor" id="cursor"></div>
+
+<!-- 导航 -->
+<header class="nav glass" id="nav">
+  <a class="logo" href="#top">
+    <svg viewBox="0 0 64 64"><defs><linearGradient id="lgLogo" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb38a"/><stop offset=".5" stop-color="#ff8fab"/><stop offset="1" stop-color="#b9a7ff"/></linearGradient></defs><g transform="translate(32 32)"><g fill="url(#lgLogo)" opacity=".92"><ellipse cy="-14" rx="10" ry="15"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(72)"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(144)"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(216)"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(288)"/></g><circle r="6.5" fill="#ffe08a" stroke="#fff" stroke-width="1.5"/></g></svg>
+    Happy
+  </a>
+  <ul>
+    <li><a href="#idea">理念</a></li>
+    <li><a href="#features">能力</a></li>
+    <li><a href="#models">模型</a></li>
+    <li><a href="#pricing">方案</a></li>
+    <li><a href="#faq">问答</a></li>
+  </ul>
+  <a class="btn btn-glass magnetic" href="/login">登录</a>
+  <a class="btn btn-dark magnetic" href="/register">免费开始</a>
+  <button class="burger" id="burger" aria-label="打开菜单" aria-expanded="false"><i></i><i></i></button>
+</header>
+<nav class="mmenu glass" id="mmenu" aria-label="手机菜单">
+  <a href="#idea">理念<span>Belief</span></a>
+  <a href="#features">能力<span>Capabilities</span></a>
+  <a href="#models">模型<span>Garden</span></a>
+  <a href="#pricing">方案<span>Plans</span></a>
+  <a href="#faq">问答<span>FAQ</span></a>
+  <div class="row"><a class="btn btn-glass" href="/login">登录</a><a class="btn btn-dark" href="/register">免费开始</a></div>
+</nav>
+
+<main id="top">
+<!-- Hero -->
+<section class="hero">
+  <div class="rain" id="rain"></div>
+  <div class="critters" id="critters"></div>
+  <div class="wrap" style="position:relative;z-index:1">
+    <a class="pill glass" href="/model-plaza"><b>NEW</b>模型广场已上线 · 一个 Key 连接万物 →</a>
+    <h1>
+      <span class="line"><span>善意流动</span></span>
+      <span class="line"><span class="grad">万物共生</span></span>
+    </h1>
+    <p class="lead">Happy 是一座温柔的 AI 网关。<br/>让每一次调用都被认真接住，让每一份善意都能抵达远方。</p>
+    <div class="cta">
+      <a class="btn btn-dark magnetic" href="/register">领取你的 API Key
+        <svg viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <a class="btn btn-glass magnetic" href="/model-plaza">逛逛模型广场</a>
+    </div>
+  </div>
+  <div class="scroll-hint"><i></i>SCROLL</div>
+</section>
+
+<!-- 数据 -->
+<div class="wrap">
+  <div class="stats glass reveal">
+    <div class="stat"><div class="num" data-count="99.98" data-dec="2" data-suf="%">0</div><div class="lbl">可用性</div></div>
+    <div class="stat"><div class="num" data-count="50" data-suf="+">0</div><div class="lbl">接入的模型</div></div>
+    <div class="stat"><div class="num" data-count="320" data-suf="ms">0</div><div class="lbl">平均首字延迟</div></div>
+    <div class="stat"><div class="num" data-count="24" data-suf="×7">0</div><div class="lbl">温柔守护</div></div>
+  </div>
+</div>
+
+<!-- 理念 -->
+<section class="manifesto" id="idea">
+  <div class="giant" id="giant" aria-hidden="true"></div>
+  <div class="wrap" style="position:relative;z-index:1">
+    <div class="eyebrow reveal">Our Belief</div>
+    <p class="big" id="manifesto" style="margin-top:28px">我们相信，技术不该冰冷。一次请求，是一份<span class="hl">信任</span>；一次响应，是一份<span class="hl">回应</span>。当算力像水一样流动，当善意像光一样传递，每一个开发者、每一个想法、每一个小小的生命，都能在这里<span class="hl">被看见、被照亮、共同生长</span>。</p>
+  </div>
+</section>
+
+<!-- 能力 Bento -->
+<section class="sec" id="features">
+  <div class="wrap">
+    <div class="eyebrow reveal">Capabilities</div>
+    <h2 class="reveal">温柔，<br/>也可以很强大。</h2>
+    <p class="sub reveal">我们把复杂留给自己，把简单交给你。智能路由、稳定加速、透明计费，一切都安静而可靠地运转。</p>
+
+    <div class="bento">
+      <div class="card glass c1 reveal tilt">
+        <div class="ico">🌊</div>
+        <h3>智能流动路由</h3>
+        <p style="max-width:300px">请求像溪流一样自动寻找最顺畅的路径。多渠道实时健康探测，故障毫秒级切换，你几乎感觉不到波澜。</p>
+        <svg class="flowmap" viewBox="0 0 400 300">
+          <defs><linearGradient id="lg" gradientUnits="userSpaceOnUse" x1="70" y1="0" x2="300" y2="0"><stop offset="0" stop-color="#ffb38a"/><stop offset=".5" stop-color="#ff8fab"/><stop offset="1" stop-color="#7ad7c0"/></linearGradient></defs>
+          <path class="path" d="M70 150 C160 150 180 60 300 60"/>
+          <path class="path" d="M70 150 C160 150 180 150 300 150" style="animation-delay:-.5s"/>
+          <path class="path" d="M70 150 C160 150 180 240 300 240" style="animation-delay:-1s"/>
+          <g><circle class="node" cx="70" cy="150" r="30"/><text x="70" y="154" text-anchor="middle">你</text></g>
+          <g><rect class="node" x="262" y="40" width="96" height="40" rx="20"/><text x="310" y="64" text-anchor="middle">Claude</text></g>
+          <g><rect class="node" x="262" y="130" width="96" height="40" rx="20"/><text x="310" y="154" text-anchor="middle">GPT</text></g>
+          <g><rect class="node" x="262" y="220" width="96" height="40" rx="20"/><text x="310" y="244" text-anchor="middle">Gemini</text></g>
+          <circle r="5" fill="#ff8fab"><animateMotion dur="2.2s" repeatCount="indefinite" path="M70 150 C160 150 180 60 300 60"/></circle>
+          <circle r="5" fill="#ffb38a"><animateMotion dur="1.8s" repeatCount="indefinite" begin=".4s" path="M70 150 C160 150 180 150 300 150"/></circle>
+          <circle r="5" fill="#7ad7c0"><animateMotion dur="2.6s" repeatCount="indefinite" begin=".9s" path="M70 150 C160 150 180 240 300 240"/></circle>
+        </svg>
+      </div>
+      <div class="card glass c2 reveal tilt">
+        <div class="ico">⚡️</div>
+        <h3>轻快加速</h3>
+        <p>全球多节点与国内加速端点，流式输出如呼吸般自然。</p>
+        <div class="bars" id="bars"></div>
+      </div>
+      <div class="card glass c3 reveal tilt">
+        <div class="ico">🫶</div>
+        <h3>实时守护</h3>
+        <p>渠道监控每分钟心跳一次，状态公开透明。</p>
+        <div class="ring"><b>💗</b></div>
+      </div>
+      <div class="card glass c4 reveal tilt">
+        <div class="ico">🌱</div>
+        <h3>按量生长</h3>
+        <p>用多少算多少，余额提醒贴心而不打扰。没有门槛，也没有套路。</p>
+      </div>
+      <div class="card glass c5 reveal tilt">
+        <div class="ico">🤝</div>
+        <h3>分享共生</h3>
+        <p>邀请好友一起来，善意会以返利的形式流回你身边。</p>
+      </div>
+      <div class="card glass c6 reveal">
+        <div>
+          <div class="ico">🧩</div>
+          <h3>完全兼容，零成本迁移</h3>
+          <p>兼容 OpenAI 与 Anthropic 原生协议。只需替换 Base URL 与 Key，你熟悉的 SDK、工具和工作流都能立刻工作。</p>
+          <div class="tabs" id="tabs">
+            <button class="on" data-k="curl">cURL</button>
+            <button data-k="py">Python</button>
+            <button data-k="js">Node.js</button>
+          </div>
+        </div>
+        <div class="term">
+          <div class="bar"><i></i><i></i><i></i><span id="termTitle">terminal — zsh</span></div>
+          <pre id="code"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 模型 -->
+<section class="sec" id="models">
+  <div class="wrap">
+    <div class="eyebrow reveal">Model Garden</div>
+    <h2 class="reveal">一个 Key，<br/>拥抱整片森林。</h2>
+    <p class="sub reveal">主流大模型如同花园里的不同物种，各自绽放，又彼此相连。随时在模型广场里挑选最适合你的那一朵。</p>
+  </div>
+  <div class="marquee reveal">
+    <div class="track" id="t1"></div>
+    <div class="track rev" id="t2"></div>
+  </div>
+</section>
+
+<!-- 步骤 -->
+<section class="sec">
+  <div class="wrap">
+    <div class="eyebrow reveal">How it flows</div>
+    <h2 class="reveal">三步，<br/>让善意开始流动。</h2>
+    <div class="steps">
+      <div class="step glass reveal tilt"><div class="no">01</div><h3>注册账号</h3><p>邮箱即可注册，一分钟完成，无需复杂审核。</p></div>
+      <div class="step glass reveal tilt" style="transition-delay:.1s"><div class="no">02</div><h3>创建 Key</h3><p>在控制台生成专属 API Key，可按分组、额度精细管理。</p></div>
+      <div class="step glass reveal tilt" style="transition-delay:.2s"><div class="no">03</div><h3>开始创造</h3><p>替换 Base URL，你的应用、Agent 与灵感便能立刻生长。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 方案 -->
+<section class="sec" id="pricing">
+  <div class="wrap">
+    <div class="eyebrow reveal">Plans</div>
+    <h2 class="reveal">为每一种生长，<br/>准备一片土壤。</h2>
+    <div class="plans">
+      <div class="plan glass reveal tilt">
+        <div class="tag">种子 · Seed</div>
+        <div class="price">按量<small> / 用多少付多少</small></div>
+        <p style="color:var(--ink-2);font-size:15px">适合刚刚萌芽的想法与个人项目。</p>
+        <ul><li>全部模型随心调用</li><li>透明计费明细</li><li>余额低提醒</li><li>社区支持</li></ul>
+        <a class="btn btn-glass" href="/register">免费注册</a>
+      </div>
+      <div class="plan glass featured reveal tilt" style="transition-delay:.1s">
+        <span class="badge">最受喜爱</span>
+        <div class="tag">花开 · Bloom</div>
+        <div class="price">充值<small> / 享更优倍率</small></div>
+        <p style="color:var(--ink-2);font-size:15px">适合持续创作的开发者与小团队。</p>
+        <ul><li>包含种子方案全部能力</li><li>更优的分组倍率</li><li>国内加速端点</li><li>优先渠道调度</li><li>邀请返利共享</li></ul>
+        <a class="btn btn-dark" href="/purchase">立即充值</a>
+      </div>
+      <div class="plan glass reveal tilt" style="transition-delay:.2s">
+        <div class="tag">森林 · Forest</div>
+        <div class="price">定制<small> / 与你同行</small></div>
+        <p style="color:var(--ink-2);font-size:15px">适合企业与大规模调用场景。</p>
+        <ul><li>专属分组与渠道</li><li>定制并发与限额</li><li>一对一技术支持</li><li>用量报表与对账</li></ul>
+        <a class="btn btn-glass" href="#contact">联系我们</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 善意墙 -->
+<section class="sec">
+  <div class="wrap">
+    <div class="eyebrow reveal">Kind Words</div>
+    <h2 class="reveal">来自森林里的回声。</h2>
+    <div class="voices">
+      <div class="voice glass reveal"><p>“深夜调试 Agent，渠道突然抖动，Happy 自动切走了，我甚至没察觉。第二天才在监控页看到那次切换。像有人默默帮你撑着伞。”</p><div class="who"><i style="background:#ffe3d3" data-f="ranunculus"></i><div><b>独立开发者 · 小林</b>Claude Code 重度用户</div></div></div>
+      <div class="voice glass reveal"><p>“价格透明，每一笔都看得清清楚楚。这种被尊重的感觉，很少见。”</p><div class="who"><i style="background:#d9f5ec" data-f="daisy"></i><div><b>研究生 · 阿禾</b>论文助手</div></div></div>
+      <div class="voice glass reveal"><p>“把 Base URL 换了一下，整个团队的工具链就都通了。迁移成本几乎为零。”</p><div class="who"><i style="background:#e6e0ff" data-f="cosmos"></i><div><b>技术负责人 · Momo</b>SaaS 创业团队</div></div></div>
+      <div class="voice glass reveal"><p>“我邀请了几个朋友，大家都很喜欢。返利回来的额度，又被我拿去做了一个给流浪猫找家的小程序。善意真的会流动。”</p><div class="who"><i style="background:#fff1c2" data-f="plumeria"></i><div><b>前端工程师 · 糖糖</b>公益项目作者</div></div></div>
+      <div class="voice glass reveal"><p>“国内加速端点很稳，流式输出顺滑得像在本地跑。”</p><div class="who"><i style="background:#dcefff" data-f="forget"></i><div><b>产品经理 · 北北</b>AI 写作工具</div></div></div>
+      <div class="voice glass reveal"><p>“页面好看，用起来也安心。是那种会推荐给朋友的服务。”</p><div class="who"><i style="background:#ffe0ea" data-f="sakura"></i><div><b>设计师 · 小满</b>创意工作室</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="sec" id="faq">
+  <div class="wrap">
+    <div class="eyebrow reveal" style="justify-content:center">FAQ</div>
+    <h2 class="reveal" style="text-align:center;margin-left:auto;margin-right:auto">想知道的，都在这里。</h2>
+    <div class="faq">
+      <details class="qa glass reveal" open><summary>Happy 是什么？</summary><div class="ans">Happy 是一个 AI API 网关，把多家主流大模型统一成一个接口。你只需一个 Key，就能调用 Claude、GPT、Gemini 等模型，并享受智能路由与稳定加速。</div></details>
+      <details class="qa glass reveal"><summary>如何接入？需要改代码吗？</summary><div class="ans">几乎不需要。将 SDK 的 Base URL 替换为 Happy 提供的地址，API Key 替换为控制台生成的 Key 即可，兼容 OpenAI 与 Anthropic 原生协议。</div></details>
+      <details class="qa glass reveal"><summary>如何计费？</summary><div class="ans">按实际 Token 用量计费，不同分组有不同倍率，所有明细都可以在控制台随时查看。余额不足时会提前温柔提醒你。</div></details>
+      <details class="qa glass reveal"><summary>服务稳定吗？</summary><div class="ans">我们对每条渠道进行分钟级健康探测，异常时自动切换。你可以在「渠道监控」页面实时查看各渠道状态。</div></details>
+      <details class="qa glass reveal"><summary>邀请返利怎么参与？</summary><div class="ans">登录后进入「邀请返利」页面获取专属链接，好友通过你的链接注册并使用，你将获得相应返利额度。</div></details>
+    </div>
+  </div>
+</section>
+
+<!-- 最终 CTA -->
+<section class="final" id="contact">
+  <div class="wrap">
+    <div class="box glass reveal">
+      <div class="orbit">
+        <span style="--t:28s;--r:min(38vw,420px)" data-f="sakura"></span>
+        <span style="--t:34s;--r:min(34vw,380px);animation-delay:-8s" data-f="daisy"></span>
+        <span style="--t:40s;--r:min(40vw,460px);animation-delay:-16s" data-f="cosmos"></span>
+        <span style="--t:30s;--r:min(30vw,340px);animation-delay:-22s" data-f="forget"></span>
+        <span style="--t:44s;--r:min(36vw,400px);animation-delay:-4s" data-f="plumeria"></span>
+      </div>
+      <h2>让这一次调用，<br/><span class="grad">成为善意的开始。</span></h2>
+      <p>注册即可开始，无需信用卡。我们在这里，安静地等你。</p>
+      <div class="cta">
+        <a class="btn btn-dark magnetic" href="/register">免费开始
+          <svg viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+        <a class="btn btn-glass magnetic" href="/monitor">查看渠道状态</a>
+      </div>
+      <p style="font-size:14px;margin:28px auto 0;color:var(--ink-3)">联系我们：Oops_SQL</p>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <a class="logo" href="#top" style="font-size:16px">
+        <svg viewBox="0 0 64 64" style="width:24px;height:24px"><g transform="translate(32 32)"><g fill="url(#lgLogo)" opacity=".92"><ellipse cy="-14" rx="10" ry="15"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(72)"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(144)"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(216)"/><ellipse cy="-14" rx="10" ry="15" transform="rotate(288)"/></g><circle r="6.5" fill="#ffe08a" stroke="#fff" stroke-width="1.5"/></g></svg>
+        Happy · 善意流动 万物共生
+      </a>
+      <nav>
+        <a href="/model-plaza">模型广场</a>
+        <a href="/available-channels">可用渠道</a>
+        <a href="/monitor">渠道监控</a>
+        <a href="/legal/terms">服务条款</a>
+        <a href="/legal/usage-policy">使用政策</a>
+      </nav>
+      <span>© <span id="yr"></span> Happy. Made with 💗 for every living thing.</span>
+    </div>
+  </div>
+</footer>
+
+<script src="/happy-static/landing.js" defer></script>
+<script src="/happy-static/glow.js" defer></script>
+</body>
+</html>

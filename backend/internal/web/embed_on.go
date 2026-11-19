@@ -39,6 +39,7 @@ type FrontendServer struct {
 	distFS      fs.FS
 	fileServer  http.Handler
 	baseHTML    []byte
+	landingHTML []byte // optional landing page for "/" and "/home"
 	cache       *HTMLCache
 	settings    PublicSettingsProvider
 	overrideDir string // local file override directory
@@ -66,10 +67,14 @@ func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer
 	cache := NewHTMLCache()
 	cache.SetBaseHTML(baseHTML)
 
+	// The landing page is optional: builds without it keep the SPA home view.
+	landingHTML, _ := fs.ReadFile(distFS, landingHTMLFile)
+
 	return &FrontendServer{
 		distFS:      distFS,
 		fileServer:  http.FileServer(http.FS(distFS)),
 		baseHTML:    baseHTML,
+		landingHTML: landingHTML,
 		cache:       cache,
 		settings:    settingsProvider,
 		overrideDir: filepath.Join("data", "public"),
@@ -92,6 +97,19 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		if shouldBypassEmbeddedFrontend(path) {
 			c.Next()
 			return
+		}
+
+		// Standalone landing page for "/" and "/home" (local override first).
+		if isLandingRequest(c.Request.Method, path) {
+			if s.tryServeOverride(c, landingHTMLFile) {
+				return
+			}
+			if len(s.landingHTML) > 0 {
+				applyHTMLNoCacheHeaders(c.Writer.Header())
+				c.Data(http.StatusOK, "text/html; charset=utf-8", s.landingHTML)
+				c.Abort()
+				return
+			}
 		}
 
 		cleanPath := strings.TrimPrefix(path, "/")
