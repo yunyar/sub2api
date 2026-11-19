@@ -354,10 +354,9 @@
 
 /*!
  * Happy · Flowing Light —— 流光
- * 1. 丝带：鼠标移动时，一缕柔软的半透明丝带随之流动，颜色在桃、玫瑰、丁香、天蓝、薄荷之间缓慢流转，停下即淡去。
- * 2. 边框光：悬停在按钮、卡片、输入框上，离鼠标最近的一段边框被点亮，随鼠标沿边框滑行。
- * 3. 涟漪：点击 / 轻点处泛起一圈细细的彩虹光环。
- * 只沿边框或以半透明方式出现，不遮挡任何内容。可独立引入任意页面。
+ * 1. 边框光：悬停在按钮、卡片、输入框上，离鼠标最近的一段边框被点亮，随鼠标沿边框滑行。
+ * 2. 涟漪：点击 / 轻点处泛起一圈细细的彩虹光环。
+ * 只沿边框出现，不遮挡任何内容；鼠标移动本身不留拖尾。可独立引入任意页面。
  */
 (() => {
   if (window.__happyGlow) return;
@@ -375,10 +374,6 @@
 
   let cv, ctx, W = 0, H = 0, D = 1, running = false;
   const mouse = {x: -1e4, y: -1e4, seen: false};
-
-  /* ---------- 丝带：弹簧链 ---------- */
-  const N = 24, pts = Array.from({length: N}, () => ({x: -1e4, y: -1e4}));
-  let energy = 0, lastMove = 0;
 
   /* ---------- 边框光 ---------- */
   const FRAME = 'button,a.btn,.btn,input,textarea,select,.card,.stat-card,.card-glass,.glass,.badge,.chip,.pill,[role="button"],.sidebar-link';
@@ -411,10 +406,8 @@
   const kick = () => { if (!running) { running = true; requestAnimationFrame(frame); } };
 
   function onMove(e) {
-    const dx = e.clientX - mouse.x, dy = e.clientY - mouse.y;
-    if (!mouse.seen) { pts.forEach(p => { p.x = e.clientX; p.y = e.clientY; }); mouse.seen = true; }
-    else energy = Math.min(1, energy + Math.hypot(dx, dy) / 140);
-    mouse.x = e.clientX; mouse.y = e.clientY; lastMove = performance.now();
+    mouse.seen = true;
+    mouse.x = e.clientX; mouse.y = e.clientY;
     hover(e.target);
     kick();
   }
@@ -473,27 +466,6 @@
   }
 
   /* ---------- 绘制 ---------- */
-  function drawRibbon(now) {
-    if (!mouse.seen) return false;
-    // 弹簧跟随：头部追鼠标，后面逐节追前一节
-    pts[0].x += (mouse.x - pts[0].x) * .42; pts[0].y += (mouse.y - pts[0].y) * .42;
-    for (let i = 1; i < N; i++) { pts[i].x += (pts[i - 1].x - pts[i].x) * .38; pts[i].y += (pts[i - 1].y - pts[i].y) * .38; }
-    if (now - lastMove > 60) energy *= .93;
-    if (energy < .01) return false;
-    const hue = now / 2400;
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    for (let i = 0; i < N - 1; i++) {
-      const a = pts[i], b = pts[i + 1], k = 1 - i / (N - 1);
-      if (Math.abs(a.x - b.x) + Math.abs(a.y - b.y) < .2) continue;
-      const c = colorAt(hue + i * .09, .42 * energy * k);
-      ctx.strokeStyle = c; ctx.shadowColor = colorAt(hue + i * .09, .6 * energy * k); ctx.shadowBlur = 10;
-      ctx.lineWidth = 1 + 6.5 * Math.pow(k, 1.4) * (.5 + .5 * energy);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-    }
-    ctx.shadowBlur = 0;
-    return true;
-  }
-
   function drawEdges(now) {
     let alive = false;
     for (let j = edges.length - 1; j >= 0; j--) {
@@ -537,8 +509,8 @@
   function frame(now) {
     ctx.setTransform(D, 0, 0, D, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    const a = drawEdges(now), b = fine && drawRibbon(now), c = drawRipples(now);
-    if (a || b || c || (fine && now - lastMove < 400)) requestAnimationFrame(frame);
+    const a = drawEdges(now), c = drawRipples(now);
+    if (a || c) requestAnimationFrame(frame);
     else { running = false; ctx.clearRect(0, 0, W, H); }
   }
 
