@@ -228,6 +228,19 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/playground/mobile',
+    name: 'PlaygroundMobile',
+    component: () => import('@/views/user/PlaygroundView.vue'),
+    props: { mobile: true },
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Playground',
+      titleKey: 'playground.title',
+      descriptionKey: 'playground.description'
+    }
+  },
+  {
     path: '/batch-image',
     name: 'BatchImageGuide',
     alias: '/docs/batch-image',
@@ -286,6 +299,29 @@ const routes: RouteRecordRaw[] = [
       title: 'Available Channels',
       titleKey: 'availableChannels.title',
       descriptionKey: 'availableChannels.description'
+    }
+  },
+  {
+    path: '/settings/mcp',
+    name: 'MCP',
+    component: () => import('@/views/user/MCPView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'MCP Connection',
+      titleKey: 'mcp.title',
+      descriptionKey: 'mcp.description'
+    }
+  },
+  {
+    path: '/oauth/mcp/authorize',
+    name: 'MCPOAuthAuthorize',
+    component: () => import('@/views/auth/MCPOAuthAuthorizeView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Authorize MCP Application',
+      titleKey: 'mcp.consentTitle'
     }
   },
   {

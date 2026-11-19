@@ -108,11 +108,31 @@ describe('playgroundImageCache', () => {
     expect(legacyStore.createIndex).toHaveBeenCalledWith('accountConversation', ['accountId', 'conversationId'], { unique: false })
   })
 
-  it('does not open IndexedDB for timer-driven expiry cleanup', async () => {
-    const open = vi.fn()
+  it('removes expired image records while preserving live and legacy records', async () => {
+    const removeExpired = vi.fn()
+    const removeLive = vi.fn()
+    const removeLegacy = vi.fn()
+    const transaction = { oncomplete: null as null | (() => void), onerror: null, onabort: null, objectStore: () => store }
+    const cursorRequest = { result: null as unknown, onsuccess: null as null | (() => void), onerror: null }
+    const records = [
+      { value: { expiresAt: 50 }, delete: removeExpired },
+      { value: { expiresAt: 150 }, delete: removeLive },
+      { value: {}, delete: removeLegacy }
+    ]
+    const advance = () => queueMicrotask(() => {
+      const record = records.shift()
+      cursorRequest.result = record ? { ...record, continue: advance } : null
+      cursorRequest.onsuccess?.()
+      if (!record) transaction.oncomplete?.()
+    })
+    const store = { openCursor: () => { advance(); return cursorRequest } }
+    const database = { transaction: () => transaction, close: vi.fn() }
+    const open = vi.fn(() => request(database))
     vi.stubGlobal('indexedDB', { open })
 
-    await expect(playgroundImageCache.deleteExpired()).resolves.toBeUndefined()
-    expect(open).not.toHaveBeenCalled()
+    await expect(playgroundImageCache.deleteExpired(100)).resolves.toBeUndefined()
+    expect(removeExpired).toHaveBeenCalledOnce()
+    expect(removeLive).not.toHaveBeenCalled()
+    expect(removeLegacy).not.toHaveBeenCalled()
   })
 })

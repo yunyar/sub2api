@@ -54,7 +54,8 @@ vi.mock('@/api/groups', () => ({ userGroupsAPI: { getAvailable: state.getAvailab
 vi.mock('@/api/autoRouting', () => ({
   autoRoutingAPI: { getAvailableProfiles: state.getAvailableProfiles }
 }))
-vi.mock('@/api/playground', () => ({
+vi.mock('@/api/playground', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/api/playground')>(),
   PlaygroundImageGenerationError: state.PartialImageError,
   playgroundAPI: {
     listModels: state.listModels,
@@ -70,7 +71,7 @@ vi.mock('@/api/playground', () => ({
       : fallback)
 }))
 vi.mock('@/api/playgroundHistory', () => ({
-  playgroundHistory: { list: state.list, save: state.save, delete: state.remove }
+  playgroundHistory: { list: state.list, save: state.save, delete: state.remove, quota: async () => ({ limitMB: 50 }) }
 }))
 vi.mock('@/utils/playgroundPreferences', () => ({
   loadPlaygroundPreferences: () => ({ groupId: 0, chatModel: '', imageModel: '', imageMode: state.preferenceMode }),
@@ -86,7 +87,9 @@ vi.mock('@/utils/playgroundIntent', () => ({
 }))
 vi.mock('@/utils/playgroundId', () => ({ createPlaygroundId: () => `id-${++state.nextId}` }))
 vi.mock('@/utils/playgroundImageCache', () => ({
-  playgroundImageBlob: async (url: string) => new Blob([url]),
+  playgroundImageBlob: async (url: string) => Object.assign(new Blob([url], { type: 'image/png' }), {
+    arrayBuffer: async () => new TextEncoder().encode(url).buffer
+  }),
   playgroundImageCache: {
     put: state.cachePut,
     listConversation: state.cacheList,
@@ -94,10 +97,13 @@ vi.mock('@/utils/playgroundImageCache', () => ({
     deleteExpired: state.cacheDeleteExpired
   }
 }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
+  useI18n: () => ({ t: (key: string) => key })
+}))
 
 function mountView() {
-  const wrapper = mount(PlaygroundView)
+  const wrapper = mount(PlaygroundView, { global: { stubs: ['RouterLink'] } })
   mountedWrappers.push(wrapper)
   return wrapper
 }
@@ -123,6 +129,7 @@ async function selectFiles(wrapper: ReturnType<typeof mountView>, files: File[])
 
 afterEach(() => {
   mountedWrappers.splice(0).forEach(wrapper => wrapper.unmount())
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   localStorage.clear()
@@ -251,11 +258,13 @@ describe('PlaygroundView model and intent routing', () => {
     const artifactButton = wrapper.findAll('button').find(button => button.text() === 'playground.downloadArtifact')
     expect(artifactButton).toBeTruthy()
 
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const createObjectURL = vi.fn(() => 'blob:playground-artifact')
     vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     await artifactButton!.trigger('click')
     expect(createObjectURL).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(1000)
     expect(click).toHaveBeenCalledOnce()
   })
 
@@ -332,23 +341,33 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.streamChat).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid UTF-8 and oversized image attachments', async () => {
+  it('rejects invalid UTF-8 and attachments over the combined byte limit', async () => {
     const wrapper = mountView()
     await flushPromises()
     await selectFiles(wrapper, [createFile('invalid.txt', [0xff], 'text/plain')])
     expect(wrapper.text()).toContain('playground.attachmentInvalidText')
     expect(wrapper.find('.attachment-item').exists()).toBe(false)
 
-    await selectFiles(wrapper, [new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' })])
-    expect(wrapper.text()).toContain('playground.attachmentImageTooLarge')
-    expect(wrapper.find('.attachment-item').exists()).toBe(false)
+    await selectFiles(wrapper, [createFile('notes.txt', 'ok')])
+    await selectFiles(wrapper, [new File([new Uint8Array(19_999_999)], 'large.png', { type: 'image/png' })])
+    expect(wrapper.text()).toContain('playground.attachmentTooLarge')
+    expect(wrapper.findAll('.attachment-item')).toHaveLength(1)
+  })
+
+  it('counts new uploads together with files already in the tray', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await selectFiles(wrapper, Array.from({ length: 19 }, (_, index) => createFile(`${index}.txt`, 'notes')))
+    await selectFiles(wrapper, [createFile('last.txt', 'ok'), createFile('extra.txt', 'too many')])
+    expect(wrapper.text()).toContain('playground.attachmentTooManyFiles')
+    expect(wrapper.findAll('.attachment-item')).toHaveLength(20)
   })
 
   it('rejects expanded messages over the UTF-8 history limit before saving', async () => {
     const wrapper = mountView()
     await flushPromises()
     await selectFiles(wrapper, [createFile('large.txt', 'x'.repeat(24 * 1024), 'text/plain')])
-    await wrapper.get('textarea.composer-input').setValue('p'.repeat(10 * 1024))
+    await wrapper.get('textarea.composer-input').setValue('p'.repeat(1024 * 1024))
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
@@ -481,7 +500,8 @@ describe('PlaygroundView model and intent routing', () => {
     expect(wrapper.text()).toContain('playground.insufficientBalance')
   })
 
-  it('downloads an expired locally cached image', async () => {
+  it('downloads an unexpired locally cached image', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     state.accountId = 1
     state.list.mockResolvedValue([{
       id: 'cached-conversation', title: 'Cached image', groupId: 7, model: 'chat-model', imageModel: 'image-model', systemPrompt: '', temperature: 0.7,
@@ -490,9 +510,11 @@ describe('PlaygroundView model and intent routing', () => {
         { id: 2, role: 'assistant', content: 'lighthouse', model: 'image-model', kind: 'image' },
       ], revision: 1, expiresAt: Date.now() + 604800000,
     }])
-    state.cacheList.mockResolvedValue([{ id: 'cached-image', accountId: '1', conversationId: 'cached-conversation', messageId: 2, prompt: 'draw a lighthouse', expiresAt: Date.now() - 600_001, blob: new Blob(['image']) }])
-    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:cached-image') })
-    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() })
+    state.cacheList.mockResolvedValue([{ id: 'cached-image', accountId: '1', conversationId: 'cached-conversation', messageId: 2, prompt: 'draw a lighthouse', expiresAt: Date.now() + 600_000, blob: new Blob(['image']) }])
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:cached-image')
+      static revokeObjectURL = vi.fn()
+    })
     const fetch = vi.fn().mockResolvedValue(new Response(new Blob(['image'])))
     vi.stubGlobal('fetch', fetch)
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
@@ -500,11 +522,12 @@ describe('PlaygroundView model and intent routing', () => {
     await flushPromises()
     await wrapper.get('.history-item button').trigger('click')
     await flushPromises()
-    await wrapper.get('button.text-sm.font-medium').trigger('click')
+    await wrapper.get('.image-card button:last-child').trigger('click')
     await flushPromises()
 
     expect(fetch).toHaveBeenCalledWith('blob:cached-image')
     expect(click).toHaveBeenCalled()
+    vi.advanceTimersByTime(1000)
   })
 
   it('applies workflow presets without changing the standard conversation presets', async () => {
@@ -686,7 +709,7 @@ describe('PlaygroundView model and intent routing', () => {
     expect(wrapper.get('.attachment-item').text()).toContain('next.txt')
   })
 
-  it('combines the prior image prompt with a follow-up generation request', async () => {
+  it('uses the actual previous image as input for a follow-up edit', async () => {
     state.generateImages.mockResolvedValue([{ url: 'data:image/png;base64,image' }])
     const wrapper = mountView()
     await flushPromises()
@@ -699,12 +722,16 @@ describe('PlaygroundView model and intent routing', () => {
     await flushPromises()
 
     expect(state.generateImages).toHaveBeenLastCalledWith(expect.objectContaining({
-      prompt: 'draw a lighthouse\n\nbrighter'
+      prompt: 'brighter',
+      inputImages: [expect.stringContaining('data:')]
     }))
   })
 
-  it('keeps the original image subject through two consecutive revisions', async () => {
-    state.generateImages.mockResolvedValue([{ url: 'data:image/png;base64,image' }])
+  it('uses the most recent image for each consecutive revision', async () => {
+    state.generateImages
+      .mockResolvedValueOnce([{ url: 'data:image/png;base64,first' }])
+      .mockResolvedValueOnce([{ url: 'data:image/png;base64,second' }])
+      .mockResolvedValueOnce([{ url: 'data:image/png;base64,third' }])
     const wrapper = mountView()
     await flushPromises()
 
@@ -719,8 +746,10 @@ describe('PlaygroundView model and intent routing', () => {
     await flushPromises()
 
     expect(state.generateImages).toHaveBeenLastCalledWith(expect.objectContaining({
-      prompt: 'draw a lighthouse\n\nbrighter\n\nbrighter'
+      prompt: 'brighter',
+      inputImages: [expect.stringContaining('data:')]
     }))
+    expect(state.generateImages.mock.calls[2][0].inputImages).not.toEqual(state.generateImages.mock.calls[1][0].inputImages)
   })
 
   it('uses numeric message IDs and advances revisions for concurrent image saves', async () => {

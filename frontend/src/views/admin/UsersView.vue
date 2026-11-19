@@ -731,6 +731,14 @@
                 <Icon name="chartBar" size="sm" class="text-gray-400" :stroke-width="2" />
                 {{ t('admin.users.platformQuota.menuItem') }}
               </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+                @click="playgroundStorageUser = user; closeActionMenu()"
+              >
+                <Icon name="database" size="sm" class="text-gray-400" />
+                {{ t('playground.storageSettings') }}
+              </button>
 
               <!-- Balance History -->
               <button
@@ -783,6 +791,7 @@
       @success="loadUsers"
     />
     <UserApiKeysModal :show="showApiKeysModal" :user="viewingUser" @close="closeApiKeysModal" />
+    <UserPlaygroundStorageModal :user="playgroundStorageUser" @close="playgroundStorageUser = null" />
     <UserAllowedGroupsModal :show="showAllowedGroupsModal" :user="allowedGroupsUser" @close="closeAllowedGroupsModal" @success="loadUsers" />
     <UserBalanceModal :show="showBalanceModal" :user="balanceUser" :operation="balanceOperation" @close="closeBalanceModal" @success="loadUsers" />
     <UserBalanceHistoryModal :show="showBalanceHistoryModal" :user="balanceHistoryUser" @close="closeBalanceHistoryModal" @deposit="handleDepositFromHistory" @withdraw="handleWithdrawFromHistory" />
@@ -825,6 +834,7 @@ import UserCreateModal from '@/components/admin/user/UserCreateModal.vue'
 import UserEditModal from '@/components/admin/user/UserEditModal.vue'
 import BulkEditUserModal from '@/components/admin/user/BulkEditUserModal.vue'
 import UserPlatformQuotaModal from '@/components/admin/user/UserPlatformQuotaModal.vue'
+import UserPlaygroundStorageModal from '@/components/admin/user/UserPlaygroundStorageModal.vue'
 import UserApiKeysModal from '@/components/admin/user/UserApiKeysModal.vue'
 import UserAllowedGroupsModal from '@/components/admin/user/UserAllowedGroupsModal.vue'
 import UserBalanceModal from '@/components/admin/user/UserBalanceModal.vue'
@@ -832,6 +842,7 @@ import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryM
 import GroupReplaceModal from '@/components/admin/user/GroupReplaceModal.vue'
 
 const appStore = useAppStore()
+const playgroundStorageUser = ref<AdminUser | null>(null)
 
 // Generate dynamic attribute columns from enabled definitions
 const attributeColumns = computed<Column[]>(() =>

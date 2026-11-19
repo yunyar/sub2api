@@ -20,7 +20,7 @@
       <div class="workflow-scroll">
         <article v-for="(step, index) in steps" :key="step.id" class="workflow-step" :class="{ current: index === currentStep }">
           <div class="flex items-center justify-between gap-2"><strong>{{ t('workflow.step', { number: index + 1 }) }}</strong><div class="flex gap-1"><button v-if="index !== currentStep" class="btn btn-secondary btn-xs" @click="currentStep = index">{{ t('workflow.goTo') }}</button><button class="btn btn-secondary btn-xs" :disabled="steps.length === 1" @click="removeStep(index)">{{ t('workflow.remove') }}</button></div></div>
-          <textarea v-model="step.prompt" class="input mt-2 w-full min-h-24" :disabled="isRunning(step.id)" :maxlength="16000" @input="editStep(index)" />
+          <textarea v-model="step.prompt" class="input mt-2 w-full min-h-24" :disabled="isRunning(step.id)" :maxlength="maxStepPromptBytes" @input="editStep(index)" />
           <div v-if="index === currentStep" class="workflow-attachments">
             <div v-for="attachment in attachments" :key="attachment.id" class="workflow-attachment">
               <img v-if="attachment.kind === 'image'" :src="attachment.dataUrl" :alt="attachment.name" class="workflow-attachment-thumb" />
@@ -46,7 +46,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Group } from '@/types'
 import { useAuthStore } from '@/stores'
-import { PlaygroundImageGenerationError, playgroundAPI, playgroundModelSupportsEndpoint, type PlaygroundEndpoint, type PlaygroundImage, type PlaygroundMessage, type PlaygroundModel, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
+import { PlaygroundImageGenerationError, playgroundAPI, playgroundAttachmentLimitError, playgroundImageInputBytes, playgroundModelSupportsEndpoint, type PlaygroundEndpoint, type PlaygroundImage, type PlaygroundMessage, type PlaygroundModel, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
+import { selectPlaygroundContext } from '@/utils/playgroundContext'
 import { playgroundHistory, type Conversation, type ConversationMessage, type ConversationRouting, type WorkflowStep } from '@/api/playgroundHistory'
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundIntent, type PlaygroundMode } from '@/utils/playgroundIntent'
@@ -135,7 +136,8 @@ function resetRequests() {
   pendingSaves.value = 0
 }
 function expired(image: Image) { return !image.persistent && image.expiresAt <= Date.now() }
-function promptTooLong(prompt: string) { return new TextEncoder().encode(prompt).length > 16000 }
+const maxStepPromptBytes = 1024 * 1024
+function promptTooLong(prompt: string) { return new TextEncoder().encode(prompt).length > maxStepPromptBytes }
 function expiry(value: number) { return value ? t('workflow.expires', { time: new Date(value).toLocaleString() }) : '' }
 function selectedGroupIsValid() {
   return props.groups.some(group => group.id === presets.value.groupId && group.status === 'active')
@@ -425,8 +427,8 @@ async function runCurrent(instruction = ''): Promise<boolean> {
   const imageNotes = attachmentSnapshot.filter(attachment => attachment.kind === 'image').map(attachment => `\n\n[Image: ${attachment.name}]`)
   const stepPrompt = `${step.prompt || (attachmentSnapshot.length ? t('playground.attachmentOnlyPrompt') : '')}${attachmentNotes.join('')}${imageNotes.join('')}`
   const prompt = instruction ? `${stepPrompt}\n\nPrevious result:\n${old}\n\nRevision guidance:\n${instruction}` : stepPrompt
-  if (promptTooLong(prompt)) {
-    error.value = t('playground.attachmentTooMuchText')
+  if (promptTooLong(stepPrompt)) {
+    error.value = t('playground.historyMessageTooLarge')
     return false
   }
   const priors = steps.value.slice(0, stepIndex).flatMap(priorStep => {
@@ -446,11 +448,29 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       return false
     }
     const imageAttachments = attachmentSnapshot.filter((attachment): attachment is WorkflowAttachment & { dataUrl: string } => attachment.kind === 'image' && Boolean(attachment.dataUrl))
-    const hasImageInput = imageAttachments.length > 0 || context.some(message =>
-      typeof message.content !== 'string' && message.content.some(part => part.type === 'image_url')
-    )
+    const priorImages = context.flatMap(message => typeof message.content === 'string'
+      ? []
+      : message.content.flatMap(part => part.type === 'image_url' ? [part.image_url.url] : []))
+    const inputImages = [...priorImages, ...imageAttachments.map(attachment => attachment.dataUrl)]
+    const size = attachmentSnapshot.reduce((total, attachment) => total + attachment.size, 0)
+      + priorImages.reduce((total, url) => total + playgroundImageInputBytes(url), 0)
+    const limitError = playgroundAttachmentLimitError(priorImages.length + attachmentSnapshot.length, size)
+    if (limitError) {
+      error.value = t(limitError)
+      return false
+    }
+    const userMessage: PlaygroundMessage | PlaygroundMultimodalMessage = imageAttachments.length
+      ? { role: 'user', content: [{ type: 'text', text: prompt }, ...imageAttachments.map(attachment => ({ type: 'image_url' as const, image_url: { url: attachment.dataUrl } }))] }
+      : { role: 'user', content: prompt }
+    const chatContext = intent === 'chat'
+      ? selectPlaygroundContext([...context, userMessage], '', props.models?.find(item => item.id === model))
+      : null
+    if (intent === 'chat' && !chatContext) {
+      error.value = t('playground.contextTooLarge')
+      return false
+    }
     const endpoint: PlaygroundEndpoint = intent === 'image'
-      ? hasImageInput ? 'images_edit' : 'images_generation'
+      ? inputImages.length ? 'images_edit' : 'images_generation'
       : 'chat'
     if (!modelSupports(model, endpoint)) {
       error.value = t('playground.modelEndpointUnsupported')
@@ -492,7 +512,6 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       let generated: PlaygroundImage[]
       let generationError: unknown
       try {
-        const inputImages = [...context.flatMap(message => typeof message.content === 'string' ? [] : message.content.flatMap(part => part.type === 'image_url' ? [part.image_url.url] : [])), ...imageAttachments.map(attachment => attachment.dataUrl)]
         generated = await playgroundAPI.generateImages({
           route,
           model,
@@ -519,19 +538,10 @@ async function runCurrent(instruction = ''): Promise<boolean> {
       if (generationError) error.value = (generationError as PlaygroundImageGenerationError).status === 402
         ? t('workflow.insufficientBalance')
         : (generationError as Error).message
-    } else {
+    } else if (chatContext) {
       let content = ''
-      const userMessage: PlaygroundMessage | PlaygroundMultimodalMessage = imageAttachments.length
-        ? {
-            role: 'user',
-            content: [
-              { type: 'text', text: prompt },
-              ...imageAttachments.map(attachment => ({ type: 'image_url' as const, image_url: { url: attachment.dataUrl } }))
-            ]
-          }
-        : { role: 'user', content: prompt }
       let replacedImages = false
-      await playgroundAPI.streamChat({ route, model, messages: [...context, userMessage], signal: request.controller.signal, onDelta: delta => {
+      await playgroundAPI.streamChat({ route, model, messages: chatContext, signal: request.controller.signal, onDelta: delta => {
         if (!isCurrentRequest(request)) return
         content += delta
         if (!content.trim()) return

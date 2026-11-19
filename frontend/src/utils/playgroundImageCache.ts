@@ -123,7 +123,20 @@ export const playgroundImageCache = {
       records.filter(image => image.stepId === stepId).forEach(image => store.delete(image.cacheKey))
     })
   },
-  deleteExpired(_now?: number) {
-    return Promise.resolve()
+  deleteExpired(now = Date.now()) {
+    return withStore('readwrite', store => new Promise<void>((resolve, reject) => {
+      const request = store.openCursor()
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (!cursor) {
+          resolve()
+          return
+        }
+        const image = cursor.value as StoredPlaygroundImage
+        if (image.expiresAt && image.expiresAt <= now) cursor.delete()
+        cursor.continue()
+      }
+    }))
   }
 }

@@ -1,14 +1,20 @@
 package routes
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/adminaccess"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -59,36 +65,191 @@ var playgroundHistoryID = regexp.MustCompile(`^[a-zA-Z0-9-]{1,64}$`)
 var playgroundHistoryImageData = regexp.MustCompile(`(?i)data:image/[a-z0-9.+-]+;base64,`)
 var playgroundHistoryScientificNumber = regexp.MustCompile(`^(-?)([0-9]+)(?:\.([0-9]+))?[eE]([+-]?[0-9]+)$`)
 
+const (
+	playgroundHistoryRetention = 30 * 24 * time.Hour
+	playgroundHistoryMaxBody   = 4 * 1024 * 1024
+	playgroundHistoryMaxText   = 1024 * 1024
+	playgroundDefaultQuotaMB   = 50
+	playgroundMaxQuotaMB       = 120
+)
+
 var savePlaygroundHistory = redis.NewScript(`
 local now = tonumber(ARGV[1])
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
 local previous = redis.call('GET', KEYS[2])
-local incoming = cjson.decode(ARGV[3])
-local expiry = now + 604800000
+local revision = tonumber(ARGV[3])
+local expiry = now + tonumber(ARGV[6])
 if previous then
-  local stored = cjson.decode(previous)
-  if stored.expiresAt <= now then return {410, ''} end
-  if stored.revision ~= incoming.revision then return {409, ''} end
-  expiry = stored.expiresAt
-elseif incoming.revision ~= 0 then
+  local currentRevision, currentExpiry = string.match(previous, '^PG1 (%d+) (%d+) ')
+  if not currentRevision then
+    local stored = cjson.decode(previous)
+    currentRevision, currentExpiry = stored.revision, stored.expiresAt
+  end
+  expiry = tonumber(currentExpiry)
+  if expiry <= now then return {410, ''} end
+  if tonumber(currentRevision) ~= revision then return {409, ''} end
+elseif revision ~= 0 then
   return {410, ''}
 elseif redis.call('ZCARD', KEYS[1]) >= 30 then
   return {429, ''}
 end
-incoming.revision = incoming.revision + 1
-incoming.expiresAt = expiry
-local encoded, revisionUpdated = string.gsub(ARGV[3], '"revision"%s*:%s*%-?%d+', '"revision":' .. incoming.revision, 1)
-local expiryUpdated
-encoded, expiryUpdated = string.gsub(encoded, '"expiresAt"%s*:%s*%-?%d+', '"expiresAt":' .. expiry, 1)
-if revisionUpdated ~= 1 or expiryUpdated ~= 1 then return {500, ''} end
+local quotaMB = tonumber(redis.call('GET', KEYS[3])) or tonumber(ARGV[7])
+local size = tonumber(ARGV[5])
+local prefix = string.sub(KEYS[1], 1, -6)
+for _, id in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do
+  if id ~= ARGV[2] then
+    local key = prefix .. id
+    local header = redis.call('GETRANGE', key, 0, 63)
+    local rawSize = string.match(header, '^PG1 %d+ %d+ (%d+)\n')
+    size = size + (tonumber(rawSize) or redis.call('STRLEN', key))
+  end
+end
+if size > quotaMB * 1048576 then return {413, ''} end
+local encoded = 'PG1 ' .. (revision + 1) .. ' ' .. expiry .. ' ' .. ARGV[5] .. '\n' .. ARGV[4]
 redis.call('SET', KEYS[2], encoded, 'PX', math.max(1, expiry - now))
 redis.call('ZADD', KEYS[1], expiry, ARGV[2])
-redis.call('PEXPIRE', KEYS[1], 604800000)
+redis.call('PEXPIRE', KEYS[1], ARGV[6])
 return {200, encoded}
 `)
 
+func playgroundHistoryPrefix(userID int64) string {
+	return fmt.Sprintf("playground:history:{%d}:", userID)
+}
+
+func playgroundHistoryQuotaKey(userID int64) string {
+	return playgroundHistoryPrefix(userID) + ":quota"
+}
+
+func readPlaygroundHistoryQuota(c *gin.Context, client *redis.Client, userID int64) {
+	quota, err := client.Get(c.Request.Context(), playgroundHistoryQuotaKey(userID)).Int()
+	if err == redis.Nil {
+		quota = playgroundDefaultQuotaMB
+	} else if err != nil {
+		response.InternalError(c, "Failed to load playground storage quota")
+		return
+	}
+	response.Success(c, gin.H{"limitMB": quota, "defaultMB": playgroundDefaultQuotaMB})
+}
+
+func registerPlaygroundHistoryAdminRoutes(admin *gin.RouterGroup, client *redis.Client) {
+	quota := admin.Group("/users/:id/playground-storage")
+	quota.Use(func(c *gin.Context) {
+		if adminaccess.RestrictedFromContext(c.Request.Context()) != nil {
+			response.Error(c, http.StatusForbidden, "Full administrator access required")
+			c.Abort()
+			return
+		}
+		userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		if err != nil || userID < 1 {
+			response.BadRequest(c, "Invalid user ID")
+			c.Abort()
+			return
+		}
+		c.Set("playgroundQuotaUserID", userID)
+	})
+	quota.GET("", func(c *gin.Context) {
+		readPlaygroundHistoryQuota(c, client, c.GetInt64("playgroundQuotaUserID"))
+	})
+	quota.PUT("", middleware.RequestBodyLimit(1024), func(c *gin.Context) {
+		var payload struct {
+			LimitMB *int `json:"limitMB"`
+		}
+		if c.ShouldBindJSON(&payload) != nil || payload.LimitMB == nil || *payload.LimitMB < 0 || *payload.LimitMB > playgroundMaxQuotaMB {
+			response.BadRequest(c, fmt.Sprintf("Storage quota must be between 0 and %d MiB", playgroundMaxQuotaMB))
+			return
+		}
+		userID := c.GetInt64("playgroundQuotaUserID")
+		key := playgroundHistoryQuotaKey(userID)
+		ctx := c.Request.Context()
+		var err error
+		if *payload.LimitMB == 0 {
+			err = client.Del(ctx, key).Err()
+		} else {
+			err = client.Set(ctx, key, *payload.LimitMB, 0).Err()
+		}
+		if err != nil {
+			response.InternalError(c, "Failed to update playground storage quota")
+			return
+		}
+		readPlaygroundHistoryQuota(c, client, userID)
+	})
+}
+
+func storePlaygroundConversation(ctx context.Context, client *redis.Client, prefix string, item playgroundConversation) (int, playgroundConversation, error) {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return 0, item, err
+	}
+	if len(raw) > playgroundHistoryMaxBody {
+		return http.StatusRequestEntityTooLarge, item, nil
+	}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write(raw); err != nil {
+		_ = writer.Close()
+		return 0, item, err
+	}
+	if err := writer.Close(); err != nil {
+		return 0, item, err
+	}
+	result, err := savePlaygroundHistory.Run(ctx, client,
+		[]string{prefix + "index", prefix + item.ID, prefix + ":quota"},
+		time.Now().UnixMilli(), item.ID, item.Revision, compressed.Bytes(), len(raw),
+		playgroundHistoryRetention.Milliseconds(), playgroundDefaultQuotaMB,
+	).Slice()
+	if err != nil {
+		return 0, item, err
+	}
+	if len(result) != 2 {
+		return 0, item, fmt.Errorf("invalid playground storage result")
+	}
+	code, ok := result[0].(int64)
+	if !ok {
+		return 0, item, fmt.Errorf("invalid playground storage status")
+	}
+	if code == http.StatusOK {
+		stored, ok := result[1].(string)
+		if !ok {
+			return 0, item, fmt.Errorf("invalid stored playground conversation")
+		}
+		item, err = decodePlaygroundConversation(stored)
+	}
+	return int(code), item, err
+}
+
+func decodePlaygroundConversation(stored string) (playgroundConversation, error) {
+	var item playgroundConversation
+	if !strings.HasPrefix(stored, "PG1 ") {
+		err := json.Unmarshal(normalizePlaygroundConversationJSON([]byte(stored)), &item)
+		return item, err
+	}
+	header, compressed, found := strings.Cut(stored, "\n")
+	if !found {
+		return item, fmt.Errorf("missing playground storage header")
+	}
+	var revision, expiry int64
+	var size int
+	if _, err := fmt.Sscanf(header, "PG1 %d %d %d", &revision, &expiry, &size); err != nil || size < 1 || size > playgroundHistoryMaxBody {
+		return item, fmt.Errorf("invalid playground storage header")
+	}
+	reader, err := gzip.NewReader(strings.NewReader(compressed))
+	if err != nil {
+		return item, err
+	}
+	defer reader.Close()
+	raw, err := io.ReadAll(io.LimitReader(reader, int64(size)+1))
+	if err != nil || len(raw) != size {
+		return item, fmt.Errorf("invalid compressed playground conversation")
+	}
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return item, err
+	}
+	item.Revision, item.ExpiresAt = revision, expiry
+	return item, nil
+}
+
 func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWTAuthMiddleware, client *redis.Client) {
-	history := v1.Group("/playground/conversations", gin.HandlerFunc(jwtAuth), middleware.RequestBodyLimit(256*1024))
+	history := v1.Group("/playground/conversations", gin.HandlerFunc(jwtAuth), middleware.RequestBodyLimit(playgroundHistoryMaxBody))
 	history.Use(func(c *gin.Context) {
 		subject, ok := middleware.GetAuthSubjectFromContext(c)
 		if !ok || subject.UserID <= 0 {
@@ -96,8 +257,12 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 			c.Abort()
 			return
 		}
-		c.Set("playgroundHistoryPrefix", fmt.Sprintf("playground:history:{%d}:", subject.UserID))
+		c.Set("playgroundHistoryPrefix", playgroundHistoryPrefix(subject.UserID))
 		c.Next()
+	})
+	history.GET("/quota", func(c *gin.Context) {
+		subject, _ := middleware.GetAuthSubjectFromContext(c)
+		readPlaygroundHistoryQuota(c, client, subject.UserID)
 	})
 	history.GET("", func(c *gin.Context) {
 		prefix := c.GetString("playgroundHistoryPrefix")
@@ -116,8 +281,8 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 				response.InternalError(c, "Failed to load conversations")
 				return
 			}
-			var item playgroundConversation
-			if json.Unmarshal(normalizePlaygroundConversationJSON([]byte(raw)), &item) != nil {
+			item, err := decodePlaygroundConversation(raw)
+			if err != nil {
 				response.InternalError(c, "Invalid conversation data")
 				return
 			}
@@ -134,34 +299,17 @@ func RegisterPlaygroundHistoryRoutes(v1 *gin.RouterGroup, jwtAuth middleware.JWT
 			return
 		}
 		item.ID = c.Param("id")
-		raw, err := json.Marshal(item)
-		if err != nil {
-			response.BadRequest(c, "Invalid conversation")
-			return
-		}
-		prefix := c.GetString("playgroundHistoryPrefix")
-		result, err := savePlaygroundHistory.Run(c.Request.Context(), client, []string{prefix + "index", prefix + item.ID}, time.Now().UnixMilli(), item.ID, string(raw)).Slice()
+		code, saved, err := storePlaygroundConversation(c.Request.Context(), client, c.GetString("playgroundHistoryPrefix"), item)
 		if err != nil {
 			response.InternalError(c, "Failed to save conversation")
 			return
 		}
-		if len(result) != 2 {
-			response.InternalError(c, "Invalid storage response")
-			return
-		}
-		code, ok := result[0].(int64)
-		if !ok {
-			response.InternalError(c, "Invalid storage response")
-			return
-		}
 		if code != http.StatusOK {
-			response.Error(c, int(code), "Conversation expired, changed on another device, or history limit reached")
-			return
-		}
-		var saved playgroundConversation
-		encoded, valid := result[1].(string)
-		if !valid || json.Unmarshal(normalizePlaygroundConversationJSON([]byte(encoded)), &saved) != nil {
-			response.InternalError(c, "Invalid storage response")
+			if code == http.StatusRequestEntityTooLarge {
+				response.Error(c, code, "Playground history storage quota exceeded")
+			} else {
+				response.Error(c, code, "Conversation expired, changed on another device, or history limit reached")
+			}
 			return
 		}
 		response.Success(c, saved)
@@ -283,11 +431,11 @@ func normalizeLegacyIntegralJSONNumber(raw json.RawMessage) (json.RawMessage, bo
 }
 
 func validPlaygroundConversation(item *playgroundConversation) bool {
-	if len(item.Messages) > 200 || len(item.Title) > 240 || len(item.Model) > 256 || len(item.ImageModel) > 256 || item.Revision < 0 || item.Temperature < 0 || item.Temperature > 2 || (item.Kind != "" && item.Kind != "chat" && item.Kind != "workflow") {
+	if len(item.Messages) > 200 || len(item.Title) > 240 || len(item.Model) > 256 || len(item.ImageModel) > 256 || len(item.SystemPrompt) > playgroundHistoryMaxText || item.Revision < 0 || item.Revision > 1<<31 || item.Temperature < 0 || item.Temperature > 2 || (item.Kind != "" && item.Kind != "chat" && item.Kind != "workflow") {
 		return false
 	}
 	for _, message := range item.Messages {
-		if (message.Role != "user" && message.Role != "assistant") || len(message.Content) > 32768 || len(message.Model) > 256 || len(message.StepID) > 64 || (message.Kind != "" && message.Kind != "chat" && message.Kind != "image") || playgroundHistoryImageData.MatchString(message.Content) {
+		if (message.Role != "user" && message.Role != "assistant") || len(message.Content) > playgroundHistoryMaxText || len(message.Model) > 256 || len(message.StepID) > 64 || (message.Kind != "" && message.Kind != "chat" && message.Kind != "image") || playgroundHistoryImageData.MatchString(message.Content) {
 			return false
 		}
 	}
@@ -299,7 +447,7 @@ func validPlaygroundConversation(item *playgroundConversation) bool {
 	}
 	stepIDs := make(map[string]struct{}, len(item.Workflow.Steps))
 	for _, step := range item.Workflow.Steps {
-		if !playgroundHistoryID.MatchString(step.ID) || len(step.Prompt) > 16000 {
+		if !playgroundHistoryID.MatchString(step.ID) || len(step.Prompt) > playgroundHistoryMaxText {
 			return false
 		}
 		if _, exists := stepIDs[step.ID]; exists {

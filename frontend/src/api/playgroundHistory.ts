@@ -16,6 +16,7 @@ export interface ConversationRouting {
 
 export interface WorkflowStep { id: string; prompt: string }
 export interface WorkflowState { steps: WorkflowStep[]; currentStep: number }
+export interface PlaygroundStorageQuota { limitMB: number; defaultMB: number }
 
 export interface Conversation {
   id: string
@@ -34,6 +35,15 @@ export interface Conversation {
 }
 
 export const playgroundHistory = {
+  async quota() {
+    return (await apiClient.get<PlaygroundStorageQuota>('/playground/conversations/quota')).data
+  },
+  async adminQuota(userID: number) {
+    return (await apiClient.get<PlaygroundStorageQuota>(`/admin/users/${userID}/playground-storage`)).data
+  },
+  async setAdminQuota(userID: number, limitMB: number) {
+    return (await apiClient.put<PlaygroundStorageQuota>(`/admin/users/${userID}/playground-storage`, { limitMB })).data
+  },
   async list() {
     return (await apiClient.get<Conversation[]>('/playground/conversations')).data
   },

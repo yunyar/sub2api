@@ -1,10 +1,17 @@
 <template>
-  <AppLayout>
-    <div class="studio">
+  <component :is="mobile ? 'div' : AppLayout">
+    <div
+      class="studio"
+      :class="{ 'mobile-studio': mobile, 'settings-expanded': mobileControlsOpen }"
+      :style="mobile && mobileViewportHeight ? { height: `${mobileViewportHeight}px` } : undefined"
+      @keydown.esc="closeMobilePanels"
+      @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles"
+    >
+      <button v-if="historyOpen" class="history-scrim" type="button" :aria-label="t('common.close')" @click="historyOpen = false" />
       <aside v-show="activeTab === 'standard'" class="history-panel" :class="{ 'mobile-open': historyOpen }">
         <div class="flex items-center justify-between">
           <h1 class="text-lg font-semibold">{{ t('playground.title') }}</h1>
-          <button class="text-sm lg:hidden" @click="historyOpen = false">{{ t('common.close') }}</button>
+          <button class="text-sm" :class="{ 'lg:hidden': !mobile }" @click="historyOpen = false">{{ t('common.close') }}</button>
         </div>
         <button class="btn btn-primary mt-5 w-full" :disabled="busy" @click="newConversation">＋ {{ t('playground.newChat') }}</button>
         <p class="mt-6 text-xs font-medium text-gray-400 dark:text-dark-400">{{ t('playground.history') }}</p>
@@ -18,13 +25,28 @@
             <button class="rounded p-2 text-gray-400 hover:text-red-500 dark:text-dark-400" :disabled="busy" :aria-label="t('common.delete')" @click="deleteTarget = item.id">×</button>
           </div>
         </div>
-        <p class="retention-note">{{ t('playground.retention') }}</p>
+        <p class="retention-note">{{ t('playground.retention') }} {{ t('playground.storageLimit', { limit: storageLimitMB }) }}</p>
         <button class="mt-3 text-left text-xs text-gray-500 hover:text-primary-500 dark:text-dark-400" :disabled="busy" @click="refreshHistory()">{{ t('playground.refreshHistory') }}</button>
       </aside>
 
-      <main class="conversation-panel" :class="{ 'is-dragging-files': draggingFiles }" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles">
+      <main class="conversation-panel" :class="{ 'is-dragging-files': draggingFiles }">
+        <div v-if="mobile" class="mobile-header">
+          <button class="studio-icon" type="button" :aria-label="t('playground.history')" :aria-expanded="historyOpen" @click="openMobileHistory">
+            <Icon name="menu" size="md" />
+          </button>
+          <button class="mobile-conversation-picker" type="button" :aria-label="t('playground.settings')" :aria-expanded="mobileControlsOpen" @click="mobileControlsOpen = !mobileControlsOpen">
+            <span class="mobile-conversation-title">{{ activeTab === 'workflow' ? t('playground.workflow') : current.title || t('playground.title') }}</span>
+            <span class="mobile-model-label">
+              <span class="truncate">{{ mobileModelLabel }}</span>
+              <Icon name="chevronDown" size="xs" />
+            </span>
+          </button>
+          <button class="studio-icon" type="button" :aria-label="t('playground.newChat')" :disabled="busy" @click="newMobileChat">
+            <Icon name="plus" size="md" />
+          </button>
+        </div>
         <header class="studio-toolbar">
-          <button v-if="activeTab === 'standard'" class="btn btn-secondary lg:hidden" @click="historyOpen = !historyOpen">☰</button>
+          <button v-if="!mobile && activeTab === 'standard'" class="studio-icon lg:hidden" type="button" :aria-label="t('playground.history')" @click="historyOpen = !historyOpen"><Icon name="menu" size="md" /></button>
           <div class="playground-tabs" role="tablist">
             <button class="playground-tab" :class="{ active: activeTab === 'standard' }" role="tab" :aria-selected="activeTab === 'standard'" @click="activeTab = 'standard'">{{ t('playground.standard') }}</button>
             <button class="playground-tab" :class="{ active: activeTab === 'workflow' }" role="tab" :aria-selected="activeTab === 'workflow'" @click="openWorkflowTab">{{ t('playground.workflow') }}</button>
@@ -78,19 +100,20 @@
               <option v-for="model in imageModels" :key="model.id" :value="model.id">{{ model.id }}</option>
             </select>
           </label>
-          <div class="ml-auto hidden text-right sm:block"><span class="toolbar-label">{{ t('playground.balance') }}</span><span class="text-sm font-medium tabular-nums">${{ (authStore.user?.balance ?? 0).toFixed(4) }}</span></div>
+          <div class="toolbar-account">
+            <div class="text-right"><span class="toolbar-label">{{ t('playground.balance') }}</span><span class="text-sm font-medium tabular-nums">${{ (authStore.user?.balance ?? 0).toFixed(4) }}</span></div>
+            <RouterLink v-if="!busy" class="studio-view-link" :to="mobile ? '/playground' : '/playground/mobile'">{{ t(mobile ? 'playground.desktopView' : 'playground.mobileView') }}</RouterLink>
+          </div>
         </header>
 
         <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :routing="workflowPresets.routing" :route="workflowRequestRoute" :route-valid="workflowRouteValid" :models="models" :models-loading="loadingModels" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" :attachments="attachments" :attachments-loading="loadingAttachments" @request-attachments="attachmentInput?.click()" @remove-attachment="removeAttachment" @consume-attachments="removeAttachments" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
         <div v-show="activeTab === 'standard'" class="standard-playground">
         <div ref="viewport" class="conversation-scroll">
           <div v-if="!current.messages.length && !currentImages.length" class="welcome">
-            <div class="welcome-icon">✦</div>
-            <h2 class="text-2xl font-semibold tracking-tight sm:text-3xl">{{ t('playground.welcome') }}</h2>
-            <p class="mt-3 max-w-md text-sm leading-6 text-gray-500 dark:text-dark-300">{{ t('playground.welcomeDescription') }}</p>
-            <div class="mt-8 grid w-full max-w-lg gap-3 sm:grid-cols-2">
-              <button class="suggestion" @click="draft = t('playground.chatSuggestion')">{{ t('playground.chatSuggestion') }} ↗</button>
-              <button class="suggestion" @click="draft = t('playground.imageSuggestion')">{{ t('playground.imageSuggestion') }} ↗</button>
+            <h2 class="welcome-title text-xl font-semibold sm:text-2xl">{{ t('playground.welcome') }}</h2>
+            <div v-if="!mobile" class="mt-5 grid w-full max-w-lg gap-2 sm:grid-cols-2">
+              <button class="suggestion" @click="draft = t('playground.chatSuggestion')">{{ t('playground.chatSuggestion') }}</button>
+              <button class="suggestion" @click="draft = t('playground.imageSuggestion')">{{ t('playground.imageSuggestion') }}</button>
             </div>
           </div>
           <div v-else class="mx-auto w-full max-w-3xl space-y-7">
@@ -99,7 +122,7 @@
                 <div v-if="message.role === 'user'" class="user-bubble">{{ message.content }}</div>
                 <div v-else>
                   <span class="mb-2 block text-xs font-semibold text-gray-400 dark:text-dark-400">{{ message.model || current.model }}</span>
-                  <p v-if="message.kind === 'image'">{{ pendingImageIds.includes(message.id) ? t('playground.generating') : t('playground.imagesGenerated', { count: currentImages.filter(image => image.messageId === message.id).length }) }}</p>
+                  <p v-if="message.kind === 'image'">{{ pendingImageIds.includes(message.id) ? t('playground.generating') : (message.content || t('playground.imageUnavailable')) }}</p>
                   <template v-else>
                     <div class="playground-markdown" v-html="renderMarkdown(message.content || (streaming ? '…' : ''))"></div>
                     <div v-if="message.content" class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -113,8 +136,11 @@
                 <figure v-for="image in currentImages.filter(entry => entry.messageId === message.id)" :key="image.id" class="image-card">
                   <button class="image-preview block w-full cursor-zoom-in" :aria-label="t('playground.preview')" @click="preview = image"><img :src="image.url" :alt="image.prompt" class="max-h-96 w-full object-contain" /></button>
                   <figcaption class="flex items-center justify-between gap-2 p-3">
-                    <span v-if="!image.objectUrl" class="text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ remaining(image.expiresAt) }}</span>
-                    <button class="text-sm font-medium text-primary-600" @click="downloadImage(image)">{{ t('playground.download') }}</button>
+                    <span v-if="image.expiresAt" class="text-xs tabular-nums text-gray-500 dark:text-dark-400">{{ remaining(image.expiresAt) }}</span>
+                    <div class="ml-auto flex flex-wrap gap-3">
+                      <button type="button" class="studio-view-link" @click="selectImageReference(image)">{{ t('playground.useImageReference') }}</button>
+                      <button type="button" class="studio-view-link" @click="downloadImage(image)">{{ t('playground.download') }}</button>
+                    </div>
                   </figcaption>
                 </figure>
               </div>
@@ -137,6 +163,13 @@
               <label class="text-xs">{{ t('playground.count') }}<select v-model.number="imageCount" class="input mt-2 w-full" :disabled="streaming || submitting"><option v-for="count in 10" :key="count" :value="count">{{ count }}</option></select></label>
             </div>
             <form class="composer" @submit.prevent="send">
+              <div v-if="selectedImageReference" class="attachment-list">
+                <div class="attachment-item">
+                  <img :src="selectedImageReference.url" alt="" class="attachment-thumb" />
+                  <span class="min-w-0 flex-1 truncate text-xs">{{ t('playground.imageReference') }}</span>
+                  <button type="button" class="attachment-remove" :aria-label="t('common.delete')" @click="imageReferenceId = ''">×</button>
+                </div>
+              </div>
               <div v-if="attachments.length" class="attachment-list" aria-live="polite">
                 <div v-for="attachment in attachments" :key="attachment.id" class="attachment-item">
                   <img v-if="attachment.kind === 'image'" :src="attachment.dataUrl" :alt="attachment.name" class="attachment-thumb" />
@@ -145,21 +178,31 @@
                   <button type="button" class="attachment-remove" :aria-label="t('playground.removeAttachment', { name: attachment.name })" :disabled="submitting" @click="removeAttachment(attachment.id)">×</button>
                 </div>
               </div>
-              <textarea v-model="draft" rows="3" class="composer-input" :placeholder="t('playground.messagePlaceholder')" :disabled="submitting" @keydown.enter.exact="onEnter" />
+              <textarea ref="composerInput" v-model="draft" rows="2" class="composer-input" :aria-label="t('playground.messagePlaceholder')" :placeholder="t('playground.messagePlaceholder')" :disabled="submitting" @keydown.enter.exact="onEnter" />
               <div class="composer-actions">
                 <div class="composer-tools">
                   <input ref="attachmentInput" class="sr-only" type="file" multiple :accept="attachmentAccept" :disabled="submitting || loadingAttachments" @change="handleAttachmentSelection" />
-                  <button type="button" class="mode-button" :disabled="submitting || loadingAttachments" @click="attachmentInput?.click()">{{ t('playground.attachFiles') }}</button>
-                  <label class="mode-control"><span class="sr-only">{{ t('playground.modeLabel') }}</span><select v-model="imageMode" class="mode-select" :disabled="submitting"><option value="auto">{{ t('playground.modeAuto') }}</option><option value="chat">{{ t('playground.modeChat') }}</option><option value="image">{{ t('playground.modeImage') }}</option></select></label>
+                  <button type="button" :class="mobile ? 'studio-icon' : 'mode-button'" :aria-label="t('playground.attachFiles')" :title="t('playground.attachmentNote')" :disabled="submitting || loadingAttachments" @click="attachmentInput?.click()">
+                    <Icon v-if="mobile" name="plus" size="sm" />
+                    <span v-else>{{ t('playground.attachFiles') }}</span>
+                  </button>
+                  <label class="mode-control">
+                    <span class="sr-only">{{ t('playground.modeLabel') }}</span>
+                    <select v-model="imageMode" class="mode-select" :disabled="submitting">
+                      <option value="auto">{{ t(mobile ? 'playground.mobileModeAuto' : 'playground.modeAuto') }}</option>
+                      <option value="chat">{{ t(mobile ? 'playground.mobileModeChat' : 'playground.modeChat') }}</option>
+                      <option value="image">{{ t(mobile ? 'playground.mobileModeImage' : 'playground.modeImage') }}</option>
+                    </select>
+                  </label>
                   <span v-if="imageMode === 'image'" class="mode-indicator">{{ t('playground.imagesToGenerate', { count: imageCountResolution.count }) }}</span>
-                  <button type="button" class="mode-button" :aria-expanded="settingsOpen" :disabled="submitting" @click="settingsOpen = !settingsOpen">{{ t('playground.settings') }}</button>
+                  <button type="button" class="studio-icon" :aria-label="t('playground.settings')" :title="t('playground.settings')" :aria-expanded="settingsOpen" :disabled="submitting" @click="settingsOpen = !settingsOpen"><Icon name="cog" size="sm" /></button>
                 </div>
                 <span v-if="activeRequestCount" class="request-status" aria-live="polite">{{ t('playground.activeRequests', { count: activeRequestCount }) }}</span>
                 <button v-if="activeRequestCount" type="button" class="btn btn-secondary" @click="abortActiveRequests">{{ t('playground.stop') }}</button>
-                <button class="btn btn-primary" type="submit" :disabled="!canSend">{{ t('playground.send') }} ↑</button>
+                <button class="btn btn-primary studio-send" type="submit" :aria-label="t('playground.send')" :title="t('playground.send')" :disabled="!canSend"><Icon name="arrowUp" size="sm" /></button>
               </div>
             </form>
-            <p class="mt-3 text-center text-xs leading-5 text-gray-400 dark:text-dark-400">{{ t('playground.retention') }} {{ t('playground.imageRetention') }} {{ t('playground.attachmentNote') }} {{ t('playground.artifactNote') }}</p>
+            <p class="composer-retention">{{ t('playground.imageRetention') }}</p>
           </div>
         </div>
         </div>
@@ -272,7 +315,7 @@
       </template>
     </BaseDialog>
     <BaseDialog :show="Boolean(deleteTarget)" :title="t('common.delete')" @close="deleteTarget = ''"><p>{{ t('playground.deleteConfirm') }}</p><button class="btn btn-primary mt-4" @click="deleteConversation">{{ t('common.delete') }}</button></BaseDialog>
-  </AppLayout>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -285,7 +328,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import { userGroupsAPI } from '@/api/groups'
 import Icon from '@/components/icons/Icon.vue'
 import { autoRoutingAPI, type AvailableAutoGroupProfile } from '@/api/autoRouting'
-import { PlaygroundImageGenerationError, playgroundAPI, playgroundModelSupportsEndpoint, type PlaygroundAutoRoutingConfig, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
+import { PlaygroundImageGenerationError, playgroundAPI, playgroundAttachmentLimitError, playgroundModelSupportsEndpoint, type PlaygroundAutoRoutingConfig, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
 import { playgroundHistory, type Conversation, type ConversationMessage, type ConversationRouting } from '@/api/playgroundHistory'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
@@ -293,6 +336,7 @@ import { isPlaygroundImageModel, isPlaygroundVideoModel } from '@/utils/playgrou
 import { resolvePlaygroundIntent, type PlaygroundMode } from '@/utils/playgroundIntent'
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
+import { selectPlaygroundContext } from '@/utils/playgroundContext'
 import { playgroundImageBlob, playgroundImageCache } from '@/utils/playgroundImageCache'
 import { playgroundImageExtension } from '@/utils/playgroundImageFormat'
 import { loadPlaygroundPreferences, savePlaygroundPreferences } from '@/utils/playgroundPreferences'
@@ -307,11 +351,8 @@ type TextAttachment = { id: string; name: string; kind: 'text'; text: string; si
 type ImageAttachment = { id: string; name: string; kind: 'image'; dataUrl: string; size: number }
 type PlaygroundAttachment = TextAttachment | ImageAttachment
 type RequestContext = { accountId: number | null; epoch: number; conversationId: string }
-const maxTextAttachmentBytes = 24 * 1024
-const maxMessageBytes = 32 * 1024
-const maxConversationBytes = 256 * 1024
-const maxImageAttachmentBytes = 5 * 1024 * 1024
-const maxImageAttachments = 4
+const maxMessageBytes = 1024 * 1024
+const maxConversationBytes = 4 * 1024 * 1024
 const textAttachmentExtensions = new Set([
   'txt', 'md', 'markdown', 'csv', 'json', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'vue',
   'html', 'htm', 'css', 'scss', 'sass', 'less', 'py', 'go', 'rs', 'java', 'kt', 'swift',
@@ -326,6 +367,28 @@ const attachmentAccept = [
   'image/png', 'image/jpeg', 'image/webp'
 ].join(',')
 const { t } = useI18n()
+const props = defineProps<{ mobile?: boolean }>()
+const mobileControlsOpen = ref(false)
+const storageLimitMB = ref(50)
+const composerInput = ref<HTMLTextAreaElement | null>(null)
+const mobileViewportHeight = ref(0)
+const mobileModelLabel = computed(() => {
+  const model = imageMode.value === 'image' ? selectedImageModel.value : selectedChatModel.value
+  return (activeTab.value === 'standard' && model) || t('playground.settings')
+})
+
+function updateMobileViewport() {
+  const viewport = window.visualViewport
+  mobileViewportHeight.value = viewport?.scale === 1 ? Math.round(viewport.height) : 0
+}
+
+function closeMobilePanels() {
+  if (!props.mobile) return
+  historyOpen.value = false
+  mobileControlsOpen.value = false
+  settingsOpen.value = false
+}
+const imageReferenceId = ref('')
 const authStore = useAuthStore()
 const appStore = useAppStore()
 const groups = ref<Group[]>([])
@@ -400,7 +463,8 @@ const imageModels = computed(() => models.value.filter((model) =>
   playgroundModelSupportsEndpoint(model, 'images_edit', isPlaygroundImageModel(model.id))
 ))
 const normalConversations = computed(() => conversations.value.filter((conversation) => conversation.kind !== 'workflow'))
-const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && (image.objectUrl || image.expiresAt > now.value)))
+const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && (!image.expiresAt || image.expiresAt > now.value)))
+const selectedImageReference = computed(() => currentImages.value.find(image => image.id === imageReferenceId.value))
 const activeRouteSource = computed(() => activeTab.value === 'workflow' ? workflowPresets.value : current.value)
 const selectedAutoProfile = computed(() => {
   const routing = activeRouteSource.value.routing
@@ -703,7 +767,6 @@ async function readAttachment(file: File): Promise<PlaygroundAttachment> {
   const extension = fileExtension(file.name)
   if (imageAttachmentExtensions.has(extension)) {
     const expectedMime = extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg'
-    if (file.size > maxImageAttachmentBytes) throw new Error(t('playground.attachmentImageTooLarge', { name: file.name }))
     const bytes = new Uint8Array(await file.arrayBuffer())
     const detectedImageMime = imageMime(bytes)
     if (detectedImageMime !== expectedMime || (file.type && file.type !== expectedMime)) {
@@ -714,12 +777,11 @@ async function readAttachment(file: File): Promise<PlaygroundAttachment> {
   if (!textAttachmentExtensions.has(extension)) {
     throw new Error(t('playground.attachmentUnsupported', { name: file.name }))
   }
-  if (file.size > maxTextAttachmentBytes) throw new Error(t('playground.attachmentTooMuchText'))
   const bytes = new Uint8Array(await file.arrayBuffer())
   let text: string
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
   catch { throw new Error(t('playground.attachmentInvalidText', { name: file.name })) }
-  if (Array.from(text).some(character => {
+  if (Array.prototype.some.call(text, (character: string) => {
     const code = character.charCodeAt(0)
     return (code < 32 && ![9, 10, 13].includes(code)) || (code >= 127 && code <= 159)
   })) {
@@ -739,30 +801,25 @@ function addAttachments(files: File[]) {
   attachmentBatchCount += 1
   loadingAttachments.value = true
   attachmentQueue = attachmentQueue.then(async () => {
+    if (!isCurrentRequest(context)) return
+    let rejection = ''
     for (const file of files) {
       if (!isCurrentRequest(context)) return
+      const totalBytes = attachments.value.reduce((total, item) => total + item.size, 0)
+      const limitError = playgroundAttachmentLimitError(attachments.value.length + 1, totalBytes + file.size)
+      if (limitError) {
+        rejection ||= t(limitError)
+        continue
+      }
       try {
         const attachment = await readAttachment(file)
         if (!isCurrentRequest(context)) return
-        if (attachment.kind === 'image') {
-          const imageCount = attachments.value.filter(item => item.kind === 'image').length
-          if (imageCount >= maxImageAttachments) {
-            error.value = t('playground.attachmentTooManyImages')
-            continue
-          }
-        } else {
-          const textBytes = attachments.value.reduce((total, item) => total + (item.kind === 'text' ? item.size : 0), 0)
-          if (textBytes + attachment.size > maxTextAttachmentBytes) {
-            error.value = t('playground.attachmentTooMuchText')
-            continue
-          }
-        }
         attachments.value.push(attachment)
-        error.value = ''
       } catch (caught) {
-        if (isCurrentRequest(context)) error.value = caught instanceof Error ? caught.message : t('playground.requestFailed')
+        rejection ||= caught instanceof Error ? caught.message : t('playground.requestFailed')
       }
     }
+    if (isCurrentRequest(context)) error.value = rejection
   }).finally(() => {
     attachmentBatchCount = Math.max(0, attachmentBatchCount - 1)
     if (isCurrentRequest(context)) loadingAttachments.value = attachmentBatchCount > 0
@@ -804,7 +861,7 @@ function historyLimitError(conversation: PlaygroundConversation) {
   if (conversation.messages.some(message => new TextEncoder().encode(message.content).byteLength > maxMessageBytes)) {
     return t('playground.historyMessageTooLarge')
   }
-  if (new TextEncoder().encode(JSON.stringify(conversation)).byteLength > maxConversationBytes) {
+  if (conversation.messages.length > 200 || new TextEncoder().encode(JSON.stringify(conversation)).byteLength > maxConversationBytes) {
     return t('playground.historyConversationTooLarge')
   }
   return ''
@@ -816,6 +873,7 @@ function newConversation() {
   current.value = { ...emptyConversation(), groupId, routing: routing ? { ...routing } : { mode: 'fixed' }, model, imageModel }
   acceptedRevisions.clear()
   acceptedRevisions.set(current.value.id, current.value.revision)
+  imageReferenceId.value = ''
   draft.value = ''; attachments.value = []; loadingAttachments.value = false; error.value = ''; saveError.value = ''; historyOpen.value = false
 }
 function releaseImages(entries: ImageEntry[]) {
@@ -839,7 +897,7 @@ async function restoreImages(conversationId: string) {
   const existing = images.value.filter(image => image.conversationId === conversationId)
   releaseImages(existing)
   images.value = images.value.filter(image => image.conversationId !== conversationId)
-  images.value.push(...cached.map(image => ({
+  images.value.push(...cached.filter(image => !image.expiresAt || image.expiresAt > Date.now()).map(image => ({
     id: image.id,
     conversationId: image.conversationId,
     messageId: image.messageId,
@@ -904,12 +962,16 @@ function openConversation(item: PlaygroundConversation) {
   acceptedRevisions.clear()
   acceptedRevisions.set(current.value.id, current.value.revision)
   reseedMessageId(current.value.messages)
+  imageReferenceId.value = ''
   draft.value = ''; attachments.value = []; loadingAttachments.value = false; error.value = ''; saveError.value = ''; historyOpen.value = false
   if (accountId.value !== null) saveLastConversation(accountId.value, item.id)
   void restoreImages(item.id)
   scrollBottom()
 }
 async function refreshHistory(context = requestContext()) {
+  void playgroundHistory.quota().then(quota => {
+    if (isCurrentAccount(context)) storageLimitMB.value = quota.limitMB
+  }).catch(() => {})
   try {
     const history = await playgroundHistory.list()
     if (isCurrentAccount(context)) conversations.value = history.sort((first, second) => second.expiresAt - first.expiresAt)
@@ -936,8 +998,12 @@ async function saveConversation(snapshot = JSON.parse(JSON.stringify(current.val
       conversations.value = [saved, ...conversations.value.filter(item => item.id !== saved.id)]
       saveError.value = ''
       return true
-    } catch {
-      if (!context || isCurrentRequest(context)) saveError.value = t('playground.saveFailed')
+    } catch (caught) {
+      if (!context || isCurrentRequest(context)) {
+        saveError.value = t((caught as { status?: number } | null)?.status === 413
+          ? 'playground.storageFull'
+          : 'playground.saveFailed')
+      }
       return false
     }
     finally { saving.value = false }
@@ -999,7 +1065,25 @@ async function loadModels(route: PlaygroundRequestRoute | null, target: 'standar
   } }
   finally { if (request === modelRequest) loadingModels.value = false }
 }
-function onEnter(event: KeyboardEvent) { if (!event.isComposing) { event.preventDefault(); send() } }
+function onEnter(event: KeyboardEvent) {
+  if (!event.isComposing && !window.matchMedia?.('(pointer: coarse)').matches) {
+    event.preventDefault()
+    void send()
+  }
+}
+function openMobileHistory() {
+  activeTab.value = 'standard'
+  historyOpen.value = !historyOpen.value
+}
+function newMobileChat() {
+  activeTab.value = 'standard'
+  newConversation()
+}
+function selectImageReference(image: ImageEntry) {
+  imageReferenceId.value = image.id
+  imageMode.value = 'image'
+  composerInput.value?.focus()
+}
 function isImageRevisionPrompt(prompt: string): boolean {
   return /(?:再来|再生成|重画|重新画|换成|改成|换个|换一|改一|更写实|更真实|更亮|更暗|加上|去掉|去除|背景|颜色|构图|画风|风格|分辨率)|\b(?:another|redraw|regenerate|brighter|darker|background|colou?r|style|replace|remove|add)\b/i.test(prompt)
 }
@@ -1025,8 +1109,15 @@ async function send() {
   const model = kind === 'image' ? conversation.imageModel : conversation.model
   if (!model) { error.value = t(kind === 'image' ? 'playground.noImageModel' : 'playground.noChatModel'); return }
   const modelCapability = models.value.find(item => item.id === model)
+  const implicitReference = kind === 'image' && !imageSnapshot.length && previousIntent === 'image' && isImageRevisionPrompt(prompt)
+    ? [...conversation.messages].reverse().find(message => message.role === 'assistant' && currentImages.value.some(image => image.messageId === message.id))
+    : undefined
+  const referenceImage = kind === 'image'
+    ? selectedImageReference.value ?? currentImages.value.find(image => image.messageId === implicitReference?.id)
+    : undefined
+  let referenceBlob: Blob | undefined
   const endpoint = kind === 'image'
-    ? imageSnapshot.length ? 'images_edit' : 'images_generation'
+    ? imageSnapshot.length || referenceImage ? 'images_edit' : 'images_generation'
     : 'chat'
   const fallbackCapability = kind === 'image' ? isPlaygroundImageModel(model) : !isPlaygroundImageModel(model) && !isPlaygroundVideoModel(model)
   if (!playgroundModelSupportsEndpoint(modelCapability ?? { id: model }, endpoint, fallbackCapability)) {
@@ -1035,10 +1126,11 @@ async function send() {
   }
   const systemPrompt = conversation.systemPrompt
   const temperature = conversation.temperature
-  const priorImagePrompt = previousIntent === 'image' && isImageRevisionPrompt(prompt)
+  const priorImagePrompt = !referenceImage && previousIntent === 'image' && isImageRevisionPrompt(prompt)
     ? conversation.messages
       .filter(message => message.role === 'user' && message.kind === 'image')
       .map(message => message.content.replace(/\n\n\[Image: [^\]]+\]/g, ''))
+      .slice(-4)
       .join('\n\n')
     : ''
   if (kind === 'image' && requestedImageCount.error) {
@@ -1074,6 +1166,29 @@ async function send() {
       ]
     }
   }
+  const outgoingSystemPrompt = [systemPrompt, artifactGenerationInstruction].filter(Boolean).join('\n\n')
+  const chatContext = kind === 'chat' ? selectPlaygroundContext(history, outgoingSystemPrompt, modelCapability) : null
+  if (kind === 'chat' && !chatContext) {
+    error.value = t('playground.contextTooLarge')
+    return
+  }
+  if (referenceImage) {
+    submitting.value = true
+    try {
+      referenceBlob = await playgroundImageBlob(referenceImage.url)
+      if (!isCurrentRequest(context)) return
+      const limitError = playgroundAttachmentLimitError(
+        attachmentSnapshot.length + 1,
+        attachmentSnapshot.reduce((total, attachment) => total + attachment.size, referenceBlob.size)
+      )
+      if (limitError) { error.value = t(limitError); return }
+    } catch {
+      if (isCurrentRequest(context)) error.value = t('playground.imageUnavailable')
+      return
+    } finally {
+      if (isCurrentRequest(context)) submitting.value = false
+    }
+  }
   conversation.messages.push(userMessage)
   conversation.title = title
   submitting.value = true
@@ -1088,6 +1203,7 @@ async function send() {
     return
   }
   draft.value = ''
+  imageReferenceId.value = ''
   removeAttachments(attachmentSnapshot.map(attachment => attachment.id))
   error.value = ''
   if (kind === 'image') {
@@ -1115,6 +1231,12 @@ async function send() {
       let generated: PlaygroundImage[]
       let generationError: unknown
       try {
+        const inputImages = imageSnapshot.map(image => image.dataUrl)
+        if (referenceBlob) {
+          const bytes = new Uint8Array(await referenceBlob.arrayBuffer())
+          inputImages.push(bytesToDataUrl(bytes, referenceBlob.type))
+        }
+        if (!isCurrentRequest(context)) return
         generated = await playgroundAPI.generateImages({
           route,
           model,
@@ -1122,7 +1244,7 @@ async function send() {
           size: imageSize.value,
           quality: imageQuality.value,
           count: requestedImageCount.count,
-          ...(imageSnapshot.length ? { inputImages: imageSnapshot.map(image => image.dataUrl) } : {}),
+          ...(inputImages.length ? { inputImages } : {}),
           signal: imageController.signal,
           onImage: saveImage
         })
@@ -1156,13 +1278,7 @@ async function send() {
         generatingCount.value -= 1
       }
     }
-  } else {
-    const outgoingSystemPrompt = [
-      systemPrompt,
-      artifactGenerationInstruction,
-      `Keep the complete assistant message, including downloadable text artifacts, within ${maxMessageBytes} UTF-8 bytes.`
-    ].filter(Boolean).join('\n\n')
-    if (outgoingSystemPrompt) history.unshift({ role: 'system', content: outgoingSystemPrompt })
+  } else if (chatContext) {
     const assistantId = createMessageId()
     conversation.messages.push({ id: assistantId, role: 'assistant', content: '', model, kind })
     const chatController = new AbortController()
@@ -1172,7 +1288,7 @@ async function send() {
       await playgroundAPI.streamChat({
         route,
         model,
-        messages: history,
+        messages: chatContext,
         temperature,
         signal: chatController.signal,
         onDelta(delta) {
@@ -1250,6 +1366,8 @@ watch(accountId, (account, previousAccount) => {
   acceptedRevisions.clear()
   draft.value = ''
   attachments.value = []
+  imageReferenceId.value = ''
+  storageLimitMB.value = 50
   loadingAttachments.value = false
   streamingCount.value = 0
   generatingCount.value = 0
@@ -1272,23 +1390,38 @@ watch(accountId, (account, previousAccount) => {
   void initializeRouteOptions(account)
 })
 onMounted(async () => {
+  if (props.mobile) {
+    updateMobileViewport()
+    window.visualViewport?.addEventListener('resize', updateMobileViewport)
+  }
   timer = setInterval(() => {
     now.value = Date.now()
-    const expiredImages = images.value.filter(image => !image.objectUrl && image.expiresAt <= now.value)
+    const expiredImages = images.value.filter(image => image.expiresAt && image.expiresAt <= now.value)
     releaseImages(expiredImages)
-    images.value = images.value.filter(image => image.objectUrl || image.expiresAt > now.value)
-    if (preview.value && !preview.value.objectUrl && preview.value.expiresAt <= now.value) preview.value = null
+    images.value = images.value.filter(image => !image.expiresAt || image.expiresAt > now.value)
+    if (expiredImages.length) void playgroundImageCache.deleteExpired(now.value).catch(() => {})
+    if (preview.value?.expiresAt && preview.value.expiresAt <= now.value) preview.value = null
     conversations.value = conversations.value.filter(item => item.expiresAt > now.value)
     if (!busy.value && current.value.expiresAt && current.value.expiresAt <= now.value) { newConversation(); error.value = t('playground.expired') }
   }, 1000)
+  void Promise.resolve(playgroundImageCache.deleteExpired(Date.now())).catch(() => {})
   await initializeRouteOptions(accountId.value)
 })
-onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(timer); releaseImages(images.value); images.value = []; preview.value = null })
+onBeforeUnmount(() => { window.visualViewport?.removeEventListener('resize', updateMobileViewport); disposed = true; abortActiveRequests(); clearInterval(timer); releaseImages(images.value); images.value = []; preview.value = null })
 </script>
 
 <style scoped>
-.studio { display:flex; height:calc(100dvh - 8rem); min-height:540px; overflow:hidden; border:1px solid #e5e7eb; border-radius:20px; background:#fff; color:#1f2937; }
-.history-panel { display:flex; flex-direction:column; width:244px; flex-shrink:0; padding:24px 16px; border-right:1px solid #e5e7eb; background:#f8f9fb; }
+.studio { position:relative; display:flex; height:calc(100dvh - 8rem); min-height:480px; overflow:hidden; border:1px solid #e5e7eb; border-radius:8px; background:#fff; color:#1f2937; }
+.history-panel { display:flex; flex-direction:column; width:224px; flex-shrink:0; padding:20px 12px; border-right:1px solid #e5e7eb; background:#f8f9fb; }
+.history-scrim { display:none; }
+.mobile-header { display:none; }
+.toolbar-account { display:flex; flex-shrink:0; align-items:center; gap:12px; margin-left:auto; }
+.studio-view-link { color:#0f766e; font-size:12px; font-weight:600; }
+.studio-view-link:hover { text-decoration:underline; }
+.studio-icon,.studio-send { display:grid; width:36px; height:36px; flex:0 0 36px; place-items:center; padding:0; border-radius:8px; }
+.studio-icon:hover,.studio-icon[aria-expanded="true"] { background:#64748b20; }
+.studio-icon:disabled { opacity:.45; }
+.composer-retention { margin-top:8px; text-align:center; font-size:11px; line-height:1.4; color:#64748b; }
 .history-item { display:flex; align-items:center; gap:4px; padding:12px 8px; border-radius:10px; }
 .history-item:hover,.history-item.selected { background:#eaeef5; }
 .retention-note { margin-top:20px; font-size:11px; line-height:1.8; color:#9ca3af; }
@@ -1297,7 +1430,7 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 .drag-overlay { position:absolute; z-index:30; inset:12px; display:grid; place-items:center; pointer-events:none; border:2px dashed #6366f1; border-radius:18px; background:#6366f11a; color:#4f46e5; font-size:18px; font-weight:700; animation:playground-drop-in .16s ease-out; }
 .request-status { color:#6366f1; font-size:12px; white-space:nowrap; }
 .standard-playground { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
-.studio-toolbar { display:flex; align-items:center; gap:20px; padding:18px 24px; border-bottom:1px solid #f0f1f3; }
+.studio-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 18px; border-bottom:1px solid #e5e7eb; }
 .toolbar-label { display:block; margin-bottom:4px; color:#9ca3af; font-size:10px; }
 .toolbar-select { max-width:280px; background:transparent; font-size:13px; font-weight:500; outline-offset:3px; }
 .toolbar-warning { max-width:180px; color:#b45309; font-size:11px; line-height:1.4; }
@@ -1306,16 +1439,13 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 .playground-tab.active { background:#fff; color:#4f46e5; box-shadow:0 1px 2px #0000000d; }
 .conversation-scroll { flex:1; min-height:0; overflow:auto; padding:32px; }
 .welcome { display:flex; height:100%; min-height:280px; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
-.welcome-icon { display:grid; place-items:center; width:56px; height:56px; margin-bottom:24px; border-radius:18px; background:#eef2ff; color:#6366f1; font-size:30px; }
-.suggestion { border:1px solid #e5e7eb; border-radius:12px; padding:18px; text-align:left; font-size:13px; color:#6b7280; transition:background .2s; }
+.suggestion { border:1px solid #e5e7eb; border-radius:8px; padding:12px; text-align:left; font-size:13px; color:#6b7280; }
 .suggestion:hover { background:#f8f9fb; }
 .user-bubble { max-width:85%; border-radius:18px 18px 4px 18px; padding:12px 18px; background:#f0f2f6; white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.8; }
 .assistant-message { font-size:14px; line-height:1.9; overflow-wrap:anywhere; }
 .composer-area { flex-shrink:0; padding:12px 32px 20px; }
-.composer { border:1px solid #dfe3ea; border-radius:18px; box-shadow:0 4px 20px #00000005; }
-.composer:focus-within { border-color:#a5b4fc; }
-.composer { transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
-.composer:focus-within { transform:translateY(-1px); box-shadow:0 8px 28px #6366f126; }
+.composer { border:1px solid #dfe3ea; border-radius:8px; transition:border-color .15s ease; }
+.composer:focus-within { border-color:#0f766e; }
 .composer-input { display:block; width:100%; resize:none; padding:16px 18px 8px; background:transparent; outline:none; font-size:14px; }
 .composer-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding:4px 12px 12px; }
 .composer-tools { display:flex; flex:1 1 auto; align-items:center; flex-wrap:wrap; gap:4px; }
@@ -1355,9 +1485,78 @@ onBeforeUnmount(() => { disposed = true; abortActiveRequests(); clearInterval(ti
 :global(html.dark .composer-input::placeholder) { color:#64748b; }
 :global(html.dark .drag-overlay) { color:#c7d2fe; background:#1e293bd9; border-color:#818cf8; }
 :global(html.dark .request-status) { color:#a5b4fc; }
+:global(html.dark .studio-view-link) { color:#5eead4; }
+:global(html.dark .composer-retention) { color:#94a3b8; }
+.mobile-studio {
+  --mobile-background:#f7f6f2;
+  --mobile-surface:#fffefa;
+  --mobile-ink:#302d28;
+  --mobile-muted:#716a5f;
+  --mobile-line:#e1ddd4;
+  --mobile-selection:#ede9e0;
+  --mobile-accent:#a4472d;
+  --mobile-accent-hover:#883a24;
+  height:100dvh;
+  min-height:0;
+  border:0;
+  border-radius:0;
+}
+:global(html.dark .mobile-studio) {
+  --mobile-background:#242321;
+  --mobile-surface:#302e2b;
+  --mobile-ink:#f0ede5;
+  --mobile-muted:#bcb4a6;
+  --mobile-line:#4a463f;
+  --mobile-selection:#3b3832;
+  --mobile-accent:#af5034;
+  --mobile-accent-hover:#9d432b;
+}
+.mobile-studio .mobile-header {
+  display:grid;
+  grid-template-columns:44px minmax(0,1fr) 44px;
+  align-items:center;
+  gap:8px;
+  padding:max(8px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) 8px max(14px,env(safe-area-inset-left));
+}
+.mobile-conversation-picker { justify-self:center; max-width:100%; min-width:0; padding:4px 10px; border-radius:12px; }
+.mobile-conversation-picker[aria-expanded="true"] { background:var(--mobile-selection); }
+.mobile-conversation-title { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px; font-weight:600; }
+.mobile-model-label { display:flex; align-items:center; justify-content:center; gap:4px; color:var(--mobile-muted); font-size:12px; }
+.mobile-model-label svg { flex:none; }
+.mobile-studio .studio-toolbar { display:none; flex-shrink:0; padding:8px 16px 12px; border-color:var(--mobile-line); max-height:38dvh; overflow:auto; }
+.mobile-studio.settings-expanded .studio-toolbar { display:flex; }
+.mobile-studio .studio-toolbar > label { flex:1 1 30%; min-width:92px; }
+.mobile-studio .toolbar-select { width:100%; max-width:100%; font-size:16px; }
+.mobile-studio .history-panel { display:none; }
+.mobile-studio .history-panel.mobile-open { display:flex; position:absolute; inset:0 auto 0 0; width:min(320px,85%); z-index:20; padding:20px 16px max(20px,env(safe-area-inset-bottom)); border-color:var(--mobile-line); }
+.mobile-studio .history-scrim { display:block; position:absolute; inset:0; z-index:15; background:#14110e66; }
+.mobile-studio .conversation-scroll { padding:20px 20px 12px; overscroll-behavior:contain; }
+.mobile-studio .welcome { min-height:0; }
+.mobile-studio .welcome-title { font-family:Georgia,"Noto Serif SC",serif; font-size:clamp(26px,7vw,38px); font-weight:400; line-height:1.25; }
+.mobile-studio .conversation-panel,.mobile-studio .studio-toolbar,.mobile-studio .conversation-scroll,.mobile-studio .composer-area,.mobile-studio .history-panel {
+  background:var(--mobile-background);
+  color:var(--mobile-ink);
+}
+.mobile-studio .user-bubble,.mobile-studio .history-item:hover,.mobile-studio .history-item.selected { background:var(--mobile-selection); }
+.mobile-studio .user-bubble { border-radius:16px; padding:10px 14px; }
+.mobile-studio .user-bubble,.mobile-studio .assistant-message { font-size:16px; line-height:1.65; }
+.mobile-studio .composer-area { padding:8px max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); }
+.mobile-studio .composer,.mobile-studio .settings-panel { background:var(--mobile-surface); border:1px solid var(--mobile-line); border-radius:22px; }
+.mobile-studio .composer:focus-within { border-color:var(--mobile-muted); }
+.mobile-studio .settings-panel { max-height:30dvh; overflow:auto; }
+.mobile-studio .composer-input { color:var(--mobile-ink); font-size:16px; padding:13px 15px 3px; }
+.mobile-studio .composer-input::placeholder,.mobile-studio .composer-retention,.mobile-studio .retention-note,.mobile-studio .toolbar-label,.mobile-studio .studio-view-link { color:var(--mobile-muted); }
+.mobile-studio .studio-icon,.mobile-studio .studio-send { width:44px; height:44px; flex-basis:44px; border-radius:50%; }
+.mobile-studio .btn-primary { background:var(--mobile-accent); color:#fff; }
+.mobile-studio .btn-primary:hover:not(:disabled) { background:var(--mobile-accent-hover); }
+.mobile-studio .composer-actions { padding:2px 8px 7px; gap:4px; }
+.mobile-studio .mode-select,.mobile-studio .mode-indicator { background:var(--mobile-selection); color:var(--mobile-ink); }
+.mobile-studio .mode-select { min-height:40px; border-radius:20px; font-size:16px; }
+.mobile-studio .attachment-list { flex-wrap:nowrap; overflow-x:auto; padding:8px 10px 0; }
+.mobile-studio .attachment-item { flex:0 0 152px; border-color:var(--mobile-line); border-radius:10px; }
 @keyframes playground-drop-in { from { opacity:0; transform:scale(.98); } to { opacity:1; transform:scale(1); } }
 @keyframes playground-message-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
 @media(prefers-reduced-motion:reduce) { .drag-overlay,.request-status,.message-entry { animation:none; } .composer { transition:none; } .composer:focus-within { transform:none; } }
-@media(max-width:1023px) { .history-panel { display:none; } .history-panel.mobile-open { display:flex; position:absolute; inset:0; width:min(300px,85%); z-index:20; box-shadow:12px 0 30px #0002; } .studio { position:relative; } }
-@media(max-width:640px) { .studio { height:calc(100dvh - 7rem); min-height:440px; border-radius:12px; } .studio-toolbar { flex-wrap:wrap; padding:12px; gap:10px; } .studio-toolbar > .btn { flex:0 0 auto; } .playground-tabs { flex:0 0 auto; flex-wrap:nowrap; white-space:nowrap; } .playground-tab { flex-shrink:0; white-space:nowrap; } .studio-toolbar > label { flex:1 1 30%; min-width:100px; } .toolbar-select { width:100%; max-width:100%; } .toolbar-warning { flex-basis:100%; max-width:none; } .conversation-scroll { padding:20px 14px; } .composer-area { padding:8px 12px 14px; } .mode-button { padding:6px; } }
+@media(max-width:1023px) { .history-panel { display:none; } .history-panel.mobile-open { display:flex; position:absolute; inset:0 auto 0 0; width:min(300px,85%); z-index:20; } .history-scrim { display:block; position:absolute; inset:0; z-index:15; background:#11182765; } }
+@media(max-width:640px) { .studio:not(.mobile-studio) { height:calc(100dvh - 7rem); min-height:440px; } .studio-toolbar { padding:10px; gap:8px; } .playground-tabs { flex:0 0 auto; white-space:nowrap; } .studio-toolbar > label { flex:1 1 30%; min-width:92px; } .toolbar-select { width:100%; max-width:100%; } .toolbar-warning { flex-basis:100%; max-width:none; } .conversation-scroll { padding:18px 14px; } .composer-area { padding:8px 12px 14px; } .mode-button { padding:6px; } }
 </style>

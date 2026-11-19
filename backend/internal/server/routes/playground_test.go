@@ -3,7 +3,6 @@ package routes
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -132,19 +131,12 @@ func TestValidatePlaygroundImageEditRequest(t *testing.T) {
 	png := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
 	jpeg := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, 0xff})
 	webp := "data:image/webp;base64," + base64.StdEncoding.EncodeToString([]byte("RIFF0000WEBP"))
-	maxSizePNG := make([]byte, playgroundImageEditMaxBytes)
+	maxSizePNG := make([]byte, playgroundAttachmentMaxBytes)
 	copy(maxSizePNG, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
 	maxSizeDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(maxSizePNG)
-	oversizedPNG := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, playgroundImageEditMaxBytes-7)...)
-	oversized := "data:image/png;base64," + base64.StdEncoding.EncodeToString(oversizedPNG)
-	fourImages, err := json.Marshal(map[string]any{"images": []map[string]string{
-		{"image_url": png}, {"image_url": jpeg}, {"image_url": webp}, {"image_url": png},
-	}})
-	require.NoError(t, err)
-	fiveImages, err := json.Marshal(map[string]any{"images": []map[string]string{
-		{"image_url": png}, {"image_url": png}, {"image_url": png}, {"image_url": png}, {"image_url": png},
-	}})
-	require.NoError(t, err)
+	image := `{"image_url":"` + png + `"}`
+	maxInputs := `{"images":[` + strings.Repeat(image+",", playgroundAttachmentMaxCount-1) + image + `]}`
+	tooManyInputs := `{"images":[` + strings.Repeat(image+",", playgroundAttachmentMaxCount) + image + `]}`
 
 	tests := []struct {
 		name        string
@@ -154,13 +146,14 @@ func TestValidatePlaygroundImageEditRequest(t *testing.T) {
 	}{
 		{name: "accepts png jpeg and webp", body: `{"images":[{"image_url":"` + png + `"},{"image_url":"` + jpeg + `"},{"image_url":"` + webp + `"}]}`, contentType: "application/json", wantStatus: http.StatusOK},
 		{name: "accepts maximum image size", body: `{"images":[{"image_url":"` + maxSizeDataURL + `"}]}`, contentType: "application/json", wantStatus: http.StatusOK},
-		{name: "accepts four inputs", body: string(fourImages), contentType: "application/json", wantStatus: http.StatusOK},
+		{name: "accepts 20 inputs", body: maxInputs, contentType: "application/json", wantStatus: http.StatusOK},
 		{name: "rejects missing inputs", body: `{"images":[]}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
-		{name: "rejects more than four inputs", body: string(fiveImages), contentType: "application/json", wantStatus: http.StatusBadRequest},
+		{name: "rejects 21 inputs", body: tooManyInputs, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "rejects remote input", body: `{"images":[{"image_url":"https://example.com/image.png"}]}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "rejects svg data url", body: `{"images":[{"image_url":"data:image/svg+xml;base64,PHN2Zz4="}]}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "rejects mismatched magic", body: `{"images":[{"image_url":"data:image/png;base64,` + base64.StdEncoding.EncodeToString([]byte("not png")) + `"}]}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
-		{name: "rejects oversized input", body: `{"images":[{"image_url":"` + oversized + `"}]}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
+		{name: "rejects oversized combined inputs", body: `{"images":[{"image_url":"` + maxSizeDataURL + `"},` + image + `]}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
+		{name: "counts mask bytes toward the budget", body: `{"images":[{"image_url":"` + maxSizeDataURL + `"}],"mask":` + image + `}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "rejects remote mask", body: `{"images":[{"image_url":"` + png + `"}],"mask":{"image_url":"https://example.com/mask.png"}}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "rejects duplicate input fields", body: `{"images":[{"image_url":"` + png + `","image_url":"https://example.com/image.png"}]}`, contentType: "application/json", wantStatus: http.StatusBadRequest},
 		{name: "rejects non JSON", body: "images=local", contentType: "application/x-www-form-urlencoded", wantStatus: http.StatusBadRequest},
@@ -285,6 +278,34 @@ func TestPlaygroundChatCompletionsHandlerUsesOpenAIGatewayPlatforms(t *testing.T
 			ctx.Writer.WriteHeaderNow()
 			require.Equal(t, test.want, got)
 			require.Equal(t, http.StatusNoContent, writer.Code)
+		})
+	}
+}
+
+func TestValidatePlaygroundChatAttachments(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	image := `{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}`
+	message := `{"role":"user","content":[` + strings.Repeat(image+",", 9) + image + `]}`
+	for _, test := range []struct {
+		name     string
+		messages string
+		status   int
+	}{
+		{name: "20 images across messages", messages: message + "," + message, status: http.StatusNoContent},
+		{name: "21 images across messages", messages: message + "," + message + `,{"role":"user","content":[` + image + `]}`, status: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"messages":[` + test.messages + `]}`
+			router := gin.New()
+			router.POST("/chat/completions", validatePlaygroundChatAttachments, func(c *gin.Context) {
+				restored, err := io.ReadAll(c.Request.Body)
+				require.NoError(t, err)
+				require.Equal(t, body, string(restored))
+				c.Status(http.StatusNoContent)
+			})
+			writer := httptest.NewRecorder()
+			router.ServeHTTP(writer, httptest.NewRequest(http.MethodPost, "/chat/completions", strings.NewReader(body)))
+			require.Equal(t, test.status, writer.Code)
 		})
 	}
 }

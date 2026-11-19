@@ -3,6 +3,22 @@ import { buildApiUrl } from './url'
 import { refreshAuthTokens } from './tokenRefresh'
 import { playgroundImageDataURL } from '@/utils/playgroundImageFormat'
 
+export const playgroundAttachmentMaxCount = 20
+export const playgroundAttachmentMaxBytes = 20_000_000
+
+export function playgroundAttachmentLimitError(count: number, bytes: number) {
+  if (count > playgroundAttachmentMaxCount) return 'playground.attachmentTooManyFiles'
+  if (bytes > playgroundAttachmentMaxBytes) return 'playground.attachmentTooLarge'
+  return ''
+}
+
+export function playgroundImageInputBytes(dataURL: string) {
+  const separator = dataURL.indexOf(',')
+  if (separator < 0) return 0
+  const padding = dataURL.endsWith('==') ? 2 : dataURL.endsWith('=') ? 1 : 0
+  return Math.floor((dataURL.length - separator - 1) * 3 / 4) - padding
+}
+
 export type PlaygroundRequestRoute =
   | { mode: 'fixed'; groupId: number }
   | { mode: 'auto'; autoProfileId: number }
@@ -20,6 +36,8 @@ export interface PlaygroundModel {
   upstream_models?: string[]
   supported_endpoints?: PlaygroundEndpoint[]
   account_schedulable?: boolean
+  context_window?: number
+  max_context_window?: number
 }
 
 export type PlaygroundEndpoint =

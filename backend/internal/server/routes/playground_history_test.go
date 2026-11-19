@@ -60,15 +60,15 @@ func TestPlaygroundHistoryIsolationExpiryAndConflicts(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code)
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &saved))
 	expiry := saved.Data.ExpiresAt
-	require.InDelta(t, time.Now().Add(7*24*time.Hour).UnixMilli(), expiry, 2000)
+	require.InDelta(t, time.Now().Add(playgroundHistoryRetention).UnixMilli(), expiry, 2000)
 	conversation.Revision = 2
 	require.NoError(t, json.Unmarshal(request("PUT", "/example", "1", conversation).Body.Bytes(), &saved))
 	require.Equal(t, expiry, saved.Data.ExpiresAt)
-	server.FastForward(7*24*time.Hour + time.Second)
+	server.FastForward(playgroundHistoryRetention + time.Second)
 	require.NotContains(t, request("GET", "", "1", nil).Body.String(), "Private")
 	require.Equal(t, http.StatusGone, request("PUT", "/example", "1", saved.Data).Code)
 	conversation.Revision = 0
-	conversation.Messages[0].Content = strings.Repeat("x", 256*1024)
+	conversation.Messages[0].Content = strings.Repeat("x", playgroundHistoryMaxText+1)
 	require.NotEqual(t, http.StatusOK, request("PUT", "/oversized", "1", conversation).Code)
 }
 
@@ -125,7 +125,7 @@ func TestPlaygroundAttachmentHistoryValidation(t *testing.T) {
 	for _, content := range []string{
 		"prefix data:image/png;base64,abc",
 		"prefix DATA:IMAGE/JPEG;BASE64,abc",
-		strings.Repeat("界", 32768/3+1),
+		strings.Repeat("界", playgroundHistoryMaxText/3+1),
 	} {
 		conversation.Messages[0].Content = content
 		require.False(t, validPlaygroundConversation(&conversation))
@@ -184,9 +184,8 @@ func TestPlaygroundWorkflowHistoryPreservesEmptyMessagesAsArray(t *testing.T) {
 
 	raw, err := client.Get(t.Context(), "playground:history:{1}:workflow-1").Result()
 	require.NoError(t, err)
-	require.Contains(t, raw, `"messages":[]`)
-	var stored playgroundConversation
-	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	stored, err := decodePlaygroundConversation(raw)
+	require.NoError(t, err)
 	require.NotNil(t, stored.Messages)
 	require.Empty(t, stored.Messages)
 }
@@ -282,16 +281,14 @@ func TestPlaygroundWorkflowHistoryWithRealRedis(t *testing.T) {
 		Messages: []playgroundHistoryMessage{},
 		Workflow: &playgroundWorkflow{Steps: []playgroundWorkflowStep{{ID: "step-1", Prompt: "first"}}},
 	}
-	raw, err := json.Marshal(conversation)
+	code, _, err := storePlaygroundConversation(t.Context(), client, keyPrefix, conversation)
 	require.NoError(t, err)
-	result, err := savePlaygroundHistory.Run(t.Context(), client, []string{keyPrefix + "index", keyPrefix + conversation.ID}, now, conversation.ID, string(raw)).Slice()
-	require.NoError(t, err)
-	require.Equal(t, int64(http.StatusOK), result[0])
+	require.Equal(t, http.StatusOK, code)
 
 	storedRaw, err := client.Get(t.Context(), keyPrefix+conversation.ID).Result()
 	require.NoError(t, err)
-	var stored playgroundConversation
-	require.NoError(t, json.Unmarshal([]byte(storedRaw), &stored))
+	stored, err := decodePlaygroundConversation(storedRaw)
+	require.NoError(t, err)
 	require.Equal(t, conversation.Title, stored.Title)
 	require.NotNil(t, stored.Messages)
 	require.Empty(t, stored.Messages)
@@ -329,16 +326,47 @@ func TestPlaygroundHistoryLegacyCJSONWithRealRedis(t *testing.T) {
 	var loaded playgroundConversation
 	require.NoError(t, json.Unmarshal(normalizePlaygroundConversationJSON([]byte(legacy)), &loaded))
 	require.Equal(t, conversation.Messages[0].ID, loaded.Messages[0].ID)
-	updated, err := json.Marshal(loaded)
+	code, _, err := storePlaygroundConversation(t.Context(), client, keyPrefix, loaded)
 	require.NoError(t, err)
-	result, err := savePlaygroundHistory.Run(t.Context(), client, []string{keyPrefix + "index", keyPrefix + conversation.ID}, now, conversation.ID, string(updated)).Slice()
-	require.NoError(t, err)
-	require.Equal(t, int64(http.StatusOK), result[0])
+	require.Equal(t, http.StatusOK, code)
 	storedRaw, err := client.Get(t.Context(), keyPrefix+conversation.ID).Result()
 	require.NoError(t, err)
-	var stored playgroundConversation
-	require.NoError(t, json.Unmarshal([]byte(storedRaw), &stored))
+	stored, err := decodePlaygroundConversation(storedRaw)
+	require.NoError(t, err)
 	require.Equal(t, conversation.Messages[0].ID, stored.Messages[0].ID)
 	require.Equal(t, int64(2), stored.Revision)
 	require.Equal(t, expiresAt, stored.ExpiresAt)
+}
+
+func TestPlaygroundHistoryQuotaCountsUncompressedBytes(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	prefix := playgroundHistoryPrefix(1)
+	require.NoError(t, client.Set(t.Context(), playgroundHistoryQuotaKey(1), 1, 0).Err())
+	item := playgroundConversation{ID: "first", Messages: []playgroundHistoryMessage{{ID: 1, Role: "user", Content: strings.Repeat("repeat ", 100000)}}}
+
+	code, saved, err := storePlaygroundConversation(t.Context(), client, prefix, item)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, item.Messages, saved.Messages)
+	raw, err := client.Get(t.Context(), prefix+item.ID).Result()
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(raw, "PG1 "))
+	require.Less(t, len(raw), 5000)
+
+	saved.Title = "updated"
+	code, saved, err = storePlaygroundConversation(t.Context(), client, prefix, saved)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, int64(2), saved.Revision)
+
+	item.ID = "second"
+	code, _, err = storePlaygroundConversation(t.Context(), client, prefix, item)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusRequestEntityTooLarge, code)
+	require.NoError(t, client.Del(t.Context(), prefix+"first").Err())
+	code, _, err = storePlaygroundConversation(t.Context(), client, prefix, item)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, code)
 }

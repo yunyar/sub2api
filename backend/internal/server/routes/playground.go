@@ -17,13 +17,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 const playgroundGroupHeader = "X-Playground-Group-ID"
 const playgroundAutoProfileHeader = "X-Playground-Auto-Profile-ID"
 const playgroundImageGenerationMaxCount = 10
-const playgroundImageEditMaxInputs = 4
-const playgroundImageEditMaxBytes = 5 << 20
+const playgroundAttachmentMaxCount = 20
+const playgroundAttachmentMaxBytes = 20_000_000
 
 type playgroundImageGenerationRequest struct {
 	Count json.RawMessage `json:"n"`
@@ -93,18 +94,65 @@ func validatePlaygroundImageEditRequest(c *gin.Context) {
 		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_REQUEST", "Image edit request must be valid JSON")
 		return
 	}
-	if len(request.Images) == 0 || len(request.Images) > playgroundImageEditMaxInputs {
-		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_INPUT_COUNT", "Image edits require between 1 and 4 input images")
+	if len(request.Images) == 0 {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_INPUT_COUNT", "Image edits require at least one input image")
 		return
 	}
+	var budget playgroundImageBudget
 	for _, image := range request.Images {
-		if !validPlaygroundImageDataURL(image.ImageURL) {
-			middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_INPUT", "Each input image must be a local PNG, JPEG, or WebP data URL no larger than 5 MiB")
+		if !budget.add(c, image.ImageURL, "INVALID_IMAGE_INPUT") {
 			return
 		}
 	}
-	if request.Mask != nil && strings.TrimSpace(request.Mask.ImageURL) != "" && !validPlaygroundImageDataURL(request.Mask.ImageURL) {
-		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_MASK", "The mask must be a local PNG, JPEG, or WebP data URL no larger than 5 MiB")
+	if request.Mask != nil && strings.TrimSpace(request.Mask.ImageURL) != "" {
+		budget.add(c, request.Mask.ImageURL, "INVALID_IMAGE_MASK")
+	}
+}
+
+type playgroundImageBudget struct {
+	count int
+	bytes int
+}
+
+func (budget *playgroundImageBudget) add(c *gin.Context, value, invalidCode string) bool {
+	if budget.count >= playgroundAttachmentMaxCount {
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_IMAGE_INPUT_COUNT", "At most 20 image attachments are allowed per request")
+		return false
+	}
+	budget.count++
+	size, valid := playgroundImageDataURLSize(value)
+	if size > playgroundAttachmentMaxBytes-budget.bytes {
+		middleware.AbortWithError(c, http.StatusBadRequest, "IMAGE_INPUT_TOO_LARGE", "Image attachments may total at most 20 MB per request")
+		return false
+	}
+	if !valid {
+		middleware.AbortWithError(c, http.StatusBadRequest, invalidCode, "Image attachments must be local PNG, JPEG, or WebP data URLs")
+		return false
+	}
+	budget.bytes += size
+	return true
+}
+
+func validatePlaygroundChatAttachments(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			middleware.AbortWithError(c, http.StatusRequestEntityTooLarge, "REQUEST_TOO_LARGE", "Request body is too large")
+			return
+		}
+		middleware.AbortWithError(c, http.StatusBadRequest, "INVALID_REQUEST", "Failed to read chat request")
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+
+	var budget playgroundImageBudget
+	for _, message := range gjson.GetBytes(body, "messages").Array() {
+		for _, part := range message.Get("content").Array() {
+			if part.Get("type").String() == "image_url" && !budget.add(c, part.Get("image_url.url").String(), "INVALID_IMAGE_INPUT") {
+				return
+			}
+		}
 	}
 }
 
@@ -167,16 +215,16 @@ func hasDuplicatePlaygroundJSONKeys(body []byte) bool {
 	return false
 }
 
-func validPlaygroundImageDataURL(value string) bool {
+func playgroundImageDataURLSize(value string) (int, bool) {
 	value = strings.TrimSpace(value)
 	header, encoded, ok := strings.Cut(value, ",")
 	if !ok || !strings.HasPrefix(strings.ToLower(header), "data:") {
-		return false
+		return 0, false
 	}
 
 	parts := strings.Split(header[len("data:"):], ";")
 	if len(parts) != 2 || !strings.EqualFold(parts[1], "base64") {
-		return false
+		return 0, false
 	}
 	mimeType := strings.ToLower(strings.TrimSpace(parts[0]))
 	var signature []byte
@@ -188,19 +236,19 @@ func validPlaygroundImageDataURL(value string) bool {
 	case "image/webp":
 		signature = []byte("RIFF")
 	default:
-		return false
+		return 0, false
 	}
-	if encoded == "" || len(encoded) > base64.StdEncoding.EncodedLen(playgroundImageEditMaxBytes) {
-		return false
+	if len(encoded) > base64.StdEncoding.EncodedLen(playgroundAttachmentMaxBytes) {
+		return playgroundAttachmentMaxBytes + 1, false
 	}
 	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
-	if err != nil || len(decoded) == 0 || len(decoded) > playgroundImageEditMaxBytes || len(decoded) < len(signature) {
-		return false
+	if err != nil || len(decoded) < len(signature) {
+		return 0, false
 	}
 	if mimeType == "image/webp" {
-		return len(decoded) >= 12 && string(decoded[:4]) == "RIFF" && string(decoded[8:12]) == "WEBP"
+		return len(decoded), len(decoded) >= 12 && bytes.HasPrefix(decoded, signature) && string(decoded[8:12]) == "WEBP"
 	}
-	return bytes.HasPrefix(decoded, signature)
+	return len(decoded), bytes.HasPrefix(decoded, signature)
 }
 
 func playgroundImageEditHandler(openAIImagesHandler gin.HandlerFunc) gin.HandlerFunc {
@@ -355,7 +403,7 @@ func RegisterPlaygroundRoutes(
 	playground.Use(middleware.RequireGroupAssignment(settingService, middleware.AnthropicErrorWriter))
 
 	playground.GET("/models", h.Gateway.Models)
-	playground.POST("/chat/completions", playgroundChatCompletionsHandler(h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions))
+	playground.POST("/chat/completions", validatePlaygroundChatAttachments, playgroundChatCompletionsHandler(h.OpenAIGateway.ChatCompletions, h.Gateway.ChatCompletions))
 	playground.POST("/images/generations", func(c *gin.Context) {
 		validatePlaygroundImageGenerationCount(c)
 		if c.IsAborted() {

@@ -14,7 +14,7 @@ func TestConvertClaudeMessagesToGeminiGenerateContentPreservesDocumentAttachment
 	body := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"Compare the document and image."},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERi0="}},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}},{"type":"text","text":"Report the differences."}]}]}`)
 	original := bytes.Clone(body)
 
-	converted, err := convertClaudeMessagesToGeminiGenerateContent(body)
+	converted, err := convertClaudeMessagesToGeminiGenerateContent(body, "gemini-2.5-pro")
 
 	require.NoError(t, err)
 	require.Equal(t, original, body)

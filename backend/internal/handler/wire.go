@@ -187,6 +187,7 @@ func ProvideHandlers(
 	playgroundAutoRoutingHandler *PlaygroundAutoRoutingHandler,
 	authHandler *AuthHandler,
 	userHandler *UserHandler,
+	mcpOAuthHandler *MCPOAuthHandler,
 	apiKeyHandler *APIKeyHandler,
 	usageHandler *UsageHandler,
 	redeemHandler *RedeemHandler,
@@ -216,6 +217,7 @@ func ProvideHandlers(
 		PlaygroundAutoRouting: playgroundAutoRoutingHandler,
 		Auth:                  authHandler,
 		User:                  userHandler,
+		MCPOAuth:              mcpOAuthHandler,
 		APIKey:                apiKeyHandler,
 		Usage:                 usageHandler,
 		Redeem:                redeemHandler,
@@ -244,6 +246,7 @@ var ProviderSet = wire.NewSet(
 	// Top-level handlers
 	NewAuthHandler,
 	NewUserHandler,
+	NewMCPOAuthHandler,
 	NewAPIKeyHandler,
 	NewAutoRoutingHandler,
 	NewPlaygroundAutoRoutingHandler,

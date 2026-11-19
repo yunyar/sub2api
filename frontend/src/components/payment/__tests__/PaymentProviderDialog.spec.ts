@@ -93,6 +93,7 @@ function mountDialog(options: { editing?: ProviderInstance | null } = {}) {
           template: '<div><slot /><slot name="footer" /></div>',
         },
         Select: {
+          name: 'Select',
           props: ['modelValue', 'options', 'disabled'],
           emits: ['update:modelValue'],
           template: '<select :value="modelValue" :disabled="disabled" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
@@ -242,6 +243,26 @@ describe('PaymentProviderDialog EasyPay RSA2 configuration', () => {
 
     expect(wrapper.emitted('save')).toBeUndefined()
     await vi.waitFor(() => expect(showError).toHaveBeenCalledWith(messages[messageKey]))
+    wrapper.unmount()
+  })
+
+  it.each([undefined, '1', '0'])('loads and saves the refund success code %s', async (storedCode) => {
+    const provider = easypayProvider(storedCode === undefined ? {} : { refundSuccessCode: storedCode })
+    const wrapper = mountDialog({ editing: provider })
+    ;(wrapper.vm as unknown as { loadProvider: (provider: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+
+    const selector = wrapper.findAllComponents({ name: 'Select' }).find(select =>
+      select.props('options').some((option: { value: string }) => option.value === '0'),
+    )
+    expect(selector, 'refund success code selector').toBeDefined()
+    expect(selector!.props('modelValue')).toBe(storedCode ?? '1')
+    const selectedCode = storedCode === '0' ? '1' : '0'
+    selector!.vm.$emit('update:modelValue', selectedCode)
+    await wrapper.find('form').trigger('submit')
+
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { config: Record<string, string> }
+    expect(payload.config.refundSuccessCode).toBe(selectedCode)
     wrapper.unmount()
   })
 })

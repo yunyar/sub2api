@@ -22,11 +22,15 @@ const state = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
+  useI18n: () => ({ t: (key: string) => key })
+}))
 vi.mock('@/stores', () => ({
   useAuthStore: () => ({ user: { get id() { return state.account?.value ?? 1 }, get balance() { return state.balance } }, refreshUser: state.refreshUser }),
 }))
-vi.mock('@/api/playground', () => ({
+vi.mock('@/api/playground', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/api/playground')>(),
   PlaygroundImageGenerationError: state.PartialImageError,
   playgroundAPI: { streamChat: state.streamChat, generateImages: state.generateImages },
   playgroundModelSupportsEndpoint: (model: any, endpoint: string, fallback: boolean) =>

@@ -187,7 +187,7 @@ func TestResponsesBufferedFromNativeAnthropic_PartialEOFReturns502AndPartialUsag
 	require.Equal(t, 10, result.Usage.InputTokens)
 	require.Equal(t, 5, result.Usage.OutputTokens)
 	require.Equal(t, http.StatusBadGateway, rec.Code)
-	require.Contains(t, rec.Body.String(), "Upstream stream failed before completion")
+	require.Contains(t, rec.Body.String(), "upstream stream ended without a terminal event")
 }
 
 func TestResponsesStreamingFromNativeAnthropic_MessageStopReturnsWithConnectionOpen(t *testing.T) {
