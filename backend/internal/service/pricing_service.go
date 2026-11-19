@@ -259,8 +259,8 @@ type tokenPriceOverrides struct {
 // LiteLLMModelPricing LiteLLM价格数据结构
 // 只保留我们需要的字段，使用指针来处理可能缺失的值
 type LiteLLMModelPricing struct {
-	OfficialPricing                     bool    `json:"-"`
-	CacheCreationInputTokenCostExplicit bool    `json:"-"`
+	OfficialPricing                     bool `json:"-"`
+	CacheCreationInputTokenCostExplicit bool `json:"-"`
 	priceOverrides                      tokenPriceOverrides
 	InputCostPerToken                   float64 `json:"input_cost_per_token"`
 	InputCostPerTokenPriority           float64 `json:"input_cost_per_token_priority"`

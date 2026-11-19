@@ -236,7 +236,7 @@ func decodePlaygroundConversation(stored string) (playgroundConversation, error)
 	if err != nil {
 		return item, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(reader, int64(size)+1))
 	if err != nil || len(raw) != size {
 		return item, fmt.Errorf("invalid compressed playground conversation")
