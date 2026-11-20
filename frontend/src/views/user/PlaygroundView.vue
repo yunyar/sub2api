@@ -108,7 +108,7 @@
 
         <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :routing="workflowPresets.routing" :route="workflowRequestRoute" :route-valid="workflowRouteValid" :models="models" :models-loading="loadingModels" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" :attachments="attachments" :attachments-loading="loadingAttachments" @request-attachments="attachmentInput?.click()" @remove-attachment="removeAttachment" @consume-attachments="removeAttachments" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
         <div v-show="activeTab === 'standard'" class="standard-playground">
-        <div ref="viewport" class="conversation-scroll">
+        <div ref="viewport" class="conversation-scroll" @scroll.passive="onViewportScroll">
           <div v-if="!current.messages.length && !currentImages.length" class="welcome">
             <h2 class="welcome-title text-xl font-semibold sm:text-2xl">{{ t('playground.welcome') }}</h2>
             <div v-if="!mobile" class="mt-5 grid w-full max-w-lg gap-2 sm:grid-cols-2">
@@ -119,7 +119,21 @@
           <div v-else class="mx-auto w-full max-w-3xl space-y-7">
             <template v-for="message in current.messages" :key="message.id">
               <article class="message-entry" :class="message.role === 'user' ? 'flex justify-end' : 'assistant-message'">
-                <div v-if="message.role === 'user'" class="user-bubble">{{ message.content }}</div>
+                <div v-if="message.role === 'user'" class="user-message">
+                  <div v-if="editingMessageId === message.id" class="user-edit">
+                    <textarea v-model="editingText" rows="3" class="composer-input user-edit-input" :aria-label="t('common.edit')" :disabled="submitting" @keydown.enter.exact="onEditEnter" @keydown.esc="cancelEdit" />
+                    <div class="user-edit-actions">
+                      <button type="button" class="studio-view-link" :disabled="submitting" @click="cancelEdit">{{ t('common.cancel') }}</button>
+                      <button type="button" class="btn btn-primary btn-sm" :disabled="!editingText.trim() || busy || submitting" @click="submitEdit">{{ t('playground.send') }}</button>
+                    </div>
+                  </div>
+                  <template v-else>
+                    <div class="user-bubble">{{ message.content }}</div>
+                    <div v-if="!busy && !submitting" class="user-message-actions">
+                      <button type="button" class="text-xs text-gray-400 hover:text-primary-500 dark:text-dark-400" @click="startEdit(message)">{{ t('common.edit') }}</button>
+                    </div>
+                  </template>
+                </div>
                 <div v-else>
                   <span class="mb-2 block text-xs font-semibold text-gray-400 dark:text-dark-400">{{ message.model || current.model }}</span>
                   <p v-if="message.kind === 'image'">{{ pendingImageIds.includes(message.id) ? t('playground.generating') : (message.content || t('playground.imageUnavailable')) }}</p>
@@ -162,7 +176,7 @@
               <label class="text-xs">{{ t('playground.quality') }}<select v-model="imageQuality" class="input mt-2 w-full" :disabled="streaming || submitting"><option>auto</option><option>low</option><option>medium</option><option>high</option></select></label>
               <label class="text-xs">{{ t('playground.count') }}<select v-model.number="imageCount" class="input mt-2 w-full" :disabled="streaming || submitting"><option v-for="count in 10" :key="count" :value="count">{{ count }}</option></select></label>
             </div>
-            <form class="composer" @submit.prevent="send">
+            <form class="composer" @submit.prevent="send()">
               <div v-if="selectedImageReference" class="attachment-list">
                 <div class="attachment-item">
                   <img :src="selectedImageReference.url" alt="" class="attachment-thumb" />
@@ -337,6 +351,7 @@ import { resolvePlaygroundIntent, type PlaygroundMode } from '@/utils/playground
 import { createPlaygroundId } from '@/utils/playgroundId'
 import { resolvePlaygroundImageCount } from '@/utils/playgroundImageCount'
 import { selectPlaygroundContext } from '@/utils/playgroundContext'
+import { createStreamTyper } from '@/utils/playgroundStreamTyper'
 import { playgroundImageBlob, playgroundImageCache } from '@/utils/playgroundImageCache'
 import { playgroundImageExtension } from '@/utils/playgroundImageFormat'
 import { loadPlaygroundPreferences, savePlaygroundPreferences } from '@/utils/playgroundPreferences'
@@ -411,6 +426,8 @@ const generatingCount = ref(0)
 const pendingImageIds = ref<number[]>([])
 const saving = ref(false)
 const submitting = ref(false)
+const editingMessageId = ref<StoredMessage['id'] | null>(null)
+const editingText = ref('')
 const settingsOpen = ref(false)
 const activeTab = ref<'standard' | 'workflow'>('standard')
 const workflowPresets = ref<{ groupId: number; routing?: ConversationRouting; chatModel: string; imageModel: string }>({ groupId: 0, routing: { mode: 'fixed' }, chatModel: '', imageModel: '' })
@@ -866,7 +883,21 @@ function historyLimitError(conversation: PlaygroundConversation) {
   }
   return ''
 }
-async function scrollBottom() { await nextTick(); if (viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight }
+// 流式输出时只在用户停留在底部附近才跟随滚动，便于边看边往上翻
+let followFrame = 0
+let stickToBottom = true
+async function scrollBottom() { stickToBottom = true; await nextTick(); if (viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight }
+function onViewportScroll() {
+  const el = viewport.value
+  if (el) stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+function followBottom() {
+  if (!viewport.value || followFrame || !stickToBottom) return
+  followFrame = requestAnimationFrame(() => {
+    followFrame = 0
+    if (viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight
+  })
+}
 function newConversation() {
   if (busy.value) return
   const { groupId, routing, model, imageModel } = current.value
@@ -1065,6 +1096,31 @@ async function loadModels(route: PlaygroundRequestRoute | null, target: 'standar
   } }
   finally { if (request === modelRequest) loadingModels.value = false }
 }
+function startEdit(message: StoredMessage) {
+  if (busy.value || submitting.value) return
+  editingMessageId.value = message.id
+  // 附件展开的内容（文本附件正文、图片标记）不放进编辑框
+  editingText.value = message.content.replace(/\n\n--- [^\n]+ ---\n[\s\S]*$/, '').replace(/(\n\n\[Image: [^\]]+\])+$/, '')
+  void nextTick(() => {
+    const input = document.querySelector<HTMLTextAreaElement>('.user-edit-input')
+    input?.focus()
+    input?.setSelectionRange(input.value.length, input.value.length)
+  })
+}
+function cancelEdit() {
+  editingMessageId.value = null
+  editingText.value = ''
+}
+function submitEdit() {
+  if (editingMessageId.value === null) return
+  void send({ fromId: editingMessageId.value, content: editingText.value })
+}
+function onEditEnter(event: KeyboardEvent) {
+  if (!event.isComposing && !window.matchMedia?.('(pointer: coarse)').matches) {
+    event.preventDefault()
+    submitEdit()
+  }
+}
 function onEnter(event: KeyboardEvent) {
   if (!event.isComposing && !window.matchMedia?.('(pointer: coarse)').matches) {
     event.preventDefault()
@@ -1087,12 +1143,15 @@ function selectImageReference(image: ImageEntry) {
 function isImageRevisionPrompt(prompt: string): boolean {
   return /(?:再来|再生成|重画|重新画|换成|改成|换个|换一|改一|更写实|更真实|更亮|更暗|加上|去掉|去除|背景|颜色|构图|画风|风格|分辨率)|\b(?:another|redraw|regenerate|brighter|darker|background|colou?r|style|replace|remove|add)\b/i.test(prompt)
 }
-async function send() {
+// edit：重新编辑某条已发送的用户消息——替换该消息并丢弃其后的回复，再重新生成
+async function send(edit?: { fromId: StoredMessage['id']; content: string }) {
   if (!hasBalance.value) { error.value = t('playground.insufficientBalance'); return }
-  if (!canSend.value || submitting.value) return
+  if (edit
+    ? (!edit.content.trim() || busy.value || submitting.value || loadingModels.value || !currentRequestRoute.value)
+    : (!canSend.value || submitting.value)) return
   if (current.value.expiresAt && current.value.expiresAt <= Date.now()) { newConversation(); error.value = t('playground.expired'); return }
-  const prompt = draft.value.trim()
-  const attachmentSnapshot = attachments.value.map(attachment => ({ ...attachment }))
+  const prompt = edit ? edit.content.trim() : draft.value.trim()
+  const attachmentSnapshot = edit ? [] : attachments.value.map(attachment => ({ ...attachment }))
   const imageSnapshot = attachmentSnapshot.filter((attachment): attachment is ImageAttachment => attachment.kind === 'image')
   const textSnapshot = attachmentSnapshot.filter((attachment): attachment is TextAttachment => attachment.kind === 'text')
   const context = requestContext()
@@ -1100,7 +1159,11 @@ async function send() {
   const conversation = current.value
   const route = currentRequestRoute.value
   if (!route) { error.value = t('playground.selectGroup'); return }
-  const previousIntent = [...conversation.messages].reverse().find(message => message.role === 'assistant')?.kind
+  const editIndex = edit ? conversation.messages.findIndex(message => message.id === edit.fromId && message.role === 'user') : -1
+  if (edit && editIndex < 0) return
+  const messagesBefore = conversation.messages
+  const baseMessages = edit ? conversation.messages.slice(0, editIndex) : conversation.messages
+  const previousIntent = [...baseMessages].reverse().find(message => message.role === 'assistant')?.kind
   const kind = resolvePlaygroundIntent(prompt, previousIntent, imageMode.value)
   if ((imageMode.value === 'image' || kind === 'image') && textSnapshot.length) {
     error.value = t('playground.attachmentImageOnly')
@@ -1110,10 +1173,10 @@ async function send() {
   if (!model) { error.value = t(kind === 'image' ? 'playground.noImageModel' : 'playground.noChatModel'); return }
   const modelCapability = models.value.find(item => item.id === model)
   const implicitReference = kind === 'image' && !imageSnapshot.length && previousIntent === 'image' && isImageRevisionPrompt(prompt)
-    ? [...conversation.messages].reverse().find(message => message.role === 'assistant' && currentImages.value.some(image => image.messageId === message.id))
+    ? [...baseMessages].reverse().find(message => message.role === 'assistant' && currentImages.value.some(image => image.messageId === message.id))
     : undefined
   const referenceImage = kind === 'image'
-    ? selectedImageReference.value ?? currentImages.value.find(image => image.messageId === implicitReference?.id)
+    ? (edit ? undefined : selectedImageReference.value) ?? currentImages.value.find(image => image.messageId === implicitReference?.id)
     : undefined
   let referenceBlob: Blob | undefined
   const endpoint = kind === 'image'
@@ -1127,7 +1190,7 @@ async function send() {
   const systemPrompt = conversation.systemPrompt
   const temperature = conversation.temperature
   const priorImagePrompt = !referenceImage && previousIntent === 'image' && isImageRevisionPrompt(prompt)
-    ? conversation.messages
+    ? baseMessages
       .filter(message => message.role === 'user' && message.kind === 'image')
       .map(message => message.content.replace(/\n\n\[Image: [^\]]+\]/g, ''))
       .slice(-4)
@@ -1150,7 +1213,7 @@ async function send() {
   const initialSnapshot = JSON.parse(JSON.stringify({
     ...conversation,
     title,
-    messages: [...conversation.messages, userMessage]
+    messages: [...baseMessages, userMessage]
   })) as PlaygroundConversation
   const sizeError = historyLimitError(initialSnapshot)
   if (sizeError) { error.value = sizeError; return }
@@ -1189,7 +1252,8 @@ async function send() {
       if (isCurrentRequest(context)) submitting.value = false
     }
   }
-  conversation.messages.push(userMessage)
+  if (edit) conversation.messages = [...baseMessages, userMessage]
+  else conversation.messages.push(userMessage)
   conversation.title = title
   submitting.value = true
   let initialSaveSucceeded = false
@@ -1199,12 +1263,18 @@ async function send() {
     if (isCurrentRequest(context)) submitting.value = false
   }
   if (!initialSaveSucceeded || !isCurrentRequest(context)) {
-    if (isCurrentRequest(context)) conversation.messages = conversation.messages.filter(message => message.id !== userId)
+    if (isCurrentRequest(context)) {
+      conversation.messages = edit ? messagesBefore : conversation.messages.filter(message => message.id !== userId)
+    }
     return
   }
-  draft.value = ''
-  imageReferenceId.value = ''
-  removeAttachments(attachmentSnapshot.map(attachment => attachment.id))
+  if (edit) {
+    editingMessageId.value = null
+  } else {
+    draft.value = ''
+    imageReferenceId.value = ''
+    removeAttachments(attachmentSnapshot.map(attachment => attachment.id))
+  }
   error.value = ''
   if (kind === 'image') {
     generatingCount.value += 1
@@ -1284,6 +1354,13 @@ async function send() {
     const chatController = new AbortController()
     chatControllers.add(chatController)
     streamingCount.value += 1
+    // 增量先进缓冲，再按动画帧匀速写入，避免"一顿一顿"地蹦字
+    const typer = createStreamTyper((chunk) => {
+      if (!isCurrentRequest(context)) return
+      const assistant = conversation.messages.find(message => message.id === assistantId)
+      if (assistant) assistant.content += chunk
+      if (current.value.id === conversationId) followBottom()
+    })
     try {
       await playgroundAPI.streamChat({
         route,
@@ -1293,12 +1370,12 @@ async function send() {
         signal: chatController.signal,
         onDelta(delta) {
           if (!isCurrentRequest(context)) return
-          const assistant = conversation.messages.find(message => message.id === assistantId)
-          if (assistant) assistant.content += delta
-          if (current.value.id === conversationId) scrollBottom()
+          typer.push(delta)
         }
       })
+      await typer.finish()
     } catch (caught) {
+      typer.flush()
       if (isCurrentRequest(context) && (caught as Error).name !== 'AbortError') {
         error.value = caught instanceof Error ? caught.message : t('playground.requestFailed')
       }
@@ -1347,6 +1424,7 @@ watch(
     imageMode: imageMode.value
   })
 )
+watch(() => current.value.id, () => cancelEdit())
 watch(imageMode, (value) => {
   const preferences = loadPlaygroundPreferences(accountId.value)
   savePlaygroundPreferences(accountId.value, { ...preferences, imageMode: value })
@@ -1441,6 +1519,13 @@ onBeforeUnmount(() => { window.visualViewport?.removeEventListener('resize', upd
 .welcome { display:flex; height:100%; min-height:280px; flex-direction:column; align-items:center; justify-content:center; text-align:center; }
 .suggestion { border:1px solid #e5e7eb; border-radius:8px; padding:12px; text-align:left; font-size:13px; color:#6b7280; }
 .suggestion:hover { background:#f8f9fb; }
+.user-message { display:flex; flex-direction:column; align-items:flex-end; max-width:85%; min-width:0; }
+.user-message .user-bubble { max-width:100%; }
+.user-message-actions { margin-top:6px; padding-right:4px; }
+.user-edit { width:min(640px,80vw); max-width:100%; }
+.user-edit-input { width:100%; min-height:84px; border:1px solid #d1d5db; border-radius:16px; padding:12px 16px; resize:vertical; }
+:global(html.dark .user-edit-input) { border-color:#475569; }
+.user-edit-actions { display:flex; justify-content:flex-end; align-items:center; gap:16px; margin-top:8px; }
 .user-bubble { max-width:85%; border-radius:18px 18px 4px 18px; padding:12px 18px; background:#f0f2f6; white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.8; }
 .assistant-message { font-size:14px; line-height:1.9; overflow-wrap:anywhere; }
 .composer-area { flex-shrink:0; padding:12px 32px 20px; }

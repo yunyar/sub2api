@@ -86,6 +86,15 @@ vi.mock('@/utils/playgroundIntent', () => ({
     mode !== 'auto' ? mode : prompt.startsWith('draw') || (previous === 'image' && prompt === 'brighter') ? 'image' : 'chat'
 }))
 vi.mock('@/utils/playgroundId', () => ({ createPlaygroundId: () => `id-${++state.nextId}` }))
+// 平滑输出有独立单测；这里直接透传，保证增量同步写入，便于断言会话逻辑
+vi.mock('@/utils/playgroundStreamTyper', () => ({
+  createStreamTyper: (apply: (chunk: string) => void) => ({
+    push: (text: string) => { if (text) apply(text) },
+    finish: () => Promise.resolve(),
+    flush: () => {},
+    pending: 0
+  })
+}))
 vi.mock('@/utils/playgroundImageCache', () => ({
   playgroundImageBlob: async (url: string) => Object.assign(new Blob([url], { type: 'image/png' }), {
     arrayBuffer: async () => new TextEncoder().encode(url).buffer
@@ -426,6 +435,43 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.generateImages).not.toHaveBeenCalled()
     expect(state.streamChat).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('text reply')
+  })
+
+  it('edits a sent message, drops later replies and regenerates from the edited text', async () => {
+    state.preferenceMode = 'chat'
+    let reply = 0
+    state.streamChat.mockImplementation(async (input: { onDelta: (value: string) => void }) => input.onDelta(`reply ${++reply}`))
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('.mode-select').setValue('chat')
+    await wrapper.get('textarea.composer-input').setValue('first question')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await wrapper.get('textarea.composer-input').setValue('second question')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('reply 2')
+
+    const editButtons = wrapper.findAll('.user-message-actions button')
+    expect(editButtons).toHaveLength(2)
+    await editButtons[0].trigger('click')
+    const editor = wrapper.get('textarea.user-edit-input')
+    expect((editor.element as HTMLTextAreaElement).value).toBe('first question')
+    await editor.setValue('rewritten question')
+    await wrapper.get('.user-edit-actions .btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(state.streamChat).toHaveBeenCalledTimes(3)
+    const lastCall = state.streamChat.mock.calls[2][0] as { messages: Array<{ role: string; content: unknown }> }
+    const sentUser = lastCall.messages.filter(message => message.role === 'user').map(message => message.content)
+    expect(sentUser).toEqual(['rewritten question'])
+    const text = wrapper.text()
+    expect(text).toContain('rewritten question')
+    expect(text).toContain('reply 3')
+    expect(text).not.toContain('second question')
+    expect(text).not.toContain('reply 1')
+    expect(text).not.toContain('reply 2')
+    expect(wrapper.find('textarea.user-edit-input').exists()).toBe(false)
   })
 
   it('generates one image only when image mode is selected for an ordinary prompt', async () => {

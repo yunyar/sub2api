@@ -344,7 +344,7 @@
       // 只关心结构与 class 变化（忽略自己写入的元素）
       for (const m of muts) {
         const t = m.target.nodeType === 3 ? m.target.parentElement : m.target;
-        if (!t || t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower')) continue;
+        if (!t || t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower, .playground-markdown')) continue;
         if (m.type === 'characterData') { const s0 = st.get(m.target); if (s0 && s0.active && m.target.nodeValue === s0.mine) continue; }
         schedule(); break;
       }
