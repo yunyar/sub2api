@@ -434,12 +434,14 @@ body{background:var(--hp-bg) !important}
 #app .tab{border-radius:999px !important}
 #app .switch{transition:background .3s !important}
 #app .progress{border-radius:999px !important;overflow:hidden}
-#app .skeleton{background:linear-gradient(90deg,rgba(255,255,255,.4),rgba(255,230,236,.7),rgba(255,255,255,.4)) !important;background-size:200% 100% !important;animation:hp-sk 1.4s linear infinite !important}
+:root:not(.dark) #app .skeleton{background:linear-gradient(90deg,rgba(255,255,255,.4),rgba(255,230,236,.7),rgba(255,255,255,.4)) !important;background-size:200% 100% !important;animation:hp-sk 1.4s linear infinite !important}
 @keyframes hp-sk{to{background-position:-200% 0}}
+:root.dark #app .tabs{background:rgba(255,255,255,.06) !important}
 #app .empty-state-icon{filter:drop-shadow(0 10px 18px rgba(255,143,171,.3))}
 #app .code,#app pre{border-radius:14px !important}
-#app .bg-white:not(.btn):not(input):not(.input):not(.switch *):not(.rounded-full){background-color:rgba(255,255,255,.7) !important}
-#app .bg-gray-50:not(.min-h-screen){background-color:rgba(255,255,255,.4) !important}
+/* 仅浅色模式：深色模式下保留组件自身的 dark:bg-*，否则浅色文字落在白底上看不清 */
+:root:not(.dark) #app .bg-white:not(.btn):not(input):not(.input):not(.switch *):not(.rounded-full){background-color:rgba(255,255,255,.7) !important}
+:root:not(.dark) #app .bg-gray-50:not(.min-h-screen){background-color:rgba(255,255,255,.4) !important}
 #app .border-gray-100,#app .border-gray-200,#app .border-gray-200\/50{border-color:var(--hp-hair) !important}
 
 /* 滚动条 */

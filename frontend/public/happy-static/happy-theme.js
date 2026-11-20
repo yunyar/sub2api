@@ -241,6 +241,7 @@
   // 数据异步加载：每当 Vue 改写数字，就从旧值平滑滚到新值。只写同一个文本节点，Vue 再次改写时立即让位。
   const NUM = /(-?\d[\d,]*\.?\d*)/;
   const st = new WeakMap();
+  const TIME_LIKE = /\d\s*:\s*\d|\d{4}[-/]\d{1,2}[-/]\d{1,2}/;
   function countUp(node) {
     const text = node.nodeValue;
     let s = st.get(node);
@@ -279,8 +280,10 @@
       el.classList.contains('hp-num') || el.classList.add('hp-num');
       const r = el.getBoundingClientRect();
       if (r.bottom < 0 || r.top > vh) return;
+      // 倒计时 / 时间 / 日期（如 29:58、2026-11-20）不做数字滚动，否则每秒改写都会被动画打乱
+      if (el.closest('[data-hp-static]')) return;
       const tn = [...el.childNodes].find(n => n.nodeType === 3 && n.nodeValue.trim());
-      if (tn) countUp(tn);
+      if (tn && !TIME_LIKE.test(tn.nodeValue)) countUp(tn);
     });
   }
   addEventListener('scroll', () => schedule(), {passive: true});

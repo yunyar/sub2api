@@ -106,7 +106,7 @@
         </div>
         <div class="card p-4 text-center">
           <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('payment.qr.expiresIn') }}</p>
-          <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white">{{ countdownDisplay }}</p>
+          <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white" data-hp-static>{{ countdownDisplay }}</p>
           <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('payment.qr.waitingPayment') }}</p>
         </div>
       </template>
@@ -130,7 +130,7 @@
               </div>
               <div class="flex items-start justify-between gap-4">
                 <span class="text-gray-500 dark:text-gray-400">{{ t('payment.qr.expiresIn') }}</span>
-                <span class="font-semibold tabular-nums text-gray-900 dark:text-white">{{ countdownDisplay }}</span>
+                <span class="font-semibold tabular-nums text-gray-900 dark:text-white" data-hp-static>{{ countdownDisplay }}</span>
               </div>
             </div>
             <div :class="['relative rounded-lg border-2 p-4', qrBorderClass]">
@@ -192,7 +192,7 @@
       </div>
       <div class="card p-4 text-center">
         <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('payment.qr.expiresIn') }}</p>
-        <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white">{{ countdownDisplay }}</p>
+        <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white" data-hp-static>{{ countdownDisplay }}</p>
         <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('payment.qr.waitingPayment') }}</p>
       </div>
       <button class="btn btn-secondary w-full" :disabled="cancelling" @click="handleCancel">
@@ -212,7 +212,7 @@
         </div>
       </div>
       <div class="card p-4 text-center">
-        <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white">{{ countdownDisplay }}</p>
+        <p class="mt-1 text-2xl font-bold tabular-nums text-gray-900 dark:text-white" data-hp-static>{{ countdownDisplay }}</p>
         <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('payment.qr.waitingPayment') }}</p>
       </div>
       <button class="btn btn-secondary w-full" :disabled="cancelling" @click="handleCancel">
