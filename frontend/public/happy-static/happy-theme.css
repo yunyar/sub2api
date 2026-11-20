@@ -335,6 +335,8 @@ body{background:var(--hp-bg) !important}
 }
 #app .stat-card:hover,#app .card.hp-lift:hover{transform:translateY(-3px);box-shadow:0 20px 44px -18px rgba(120,60,60,.28),inset 0 1px 0 rgba(255,255,255,.7) !important}
 #app .card-glass{border-radius:28px !important}
+/* backdrop-filter 让每张卡片自成层叠上下文，卡片内未 Teleport 的下拉（如时间范围）会被后面的卡片盖住：含展开下拉的卡片整体抬高 */
+#app .card:has(.date-picker-dropdown,[role="listbox"],[role="menu"]),#app .stat-card:has(.date-picker-dropdown,[role="listbox"],[role="menu"]){position:relative;z-index:20}
 #app .card-header{border-color:var(--hp-hair) !important}
 
 #app .sidebar{
