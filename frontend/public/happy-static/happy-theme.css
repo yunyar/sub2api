@@ -829,3 +829,28 @@ body > div.fixed.right-4.top-4 .bg-blue-500{background:linear-gradient(90deg,#b9
   .hp-sprout-grow .hp-sprout-pot,.hp-hint,.hp-hint-out{animation:none !important}
   .hp-signoff{transition:none}
 }
+
+/* ==========================================================
+ * 表格 / 卡片内实色面板：让卡片的玻璃透出来
+ * DataTable 的 tbody、表头、固定列原本是纯白 / 纯深蓝，会把整张玻璃卡片盖成实色。
+ * 表头与固定列在滚动时要遮住下面的行，所以用接近不透明、但与玻璃同色调的暖色。
+ * ========================================================== */
+#app :is(.card,.stat-card,.card-glass) :is(table,tbody,.table-body,tbody tr){background:transparent !important}
+#app :is(.card,.stat-card,.card-glass) :is(thead,.table-header){background:rgba(255,250,249,.72) !important}
+:root.dark #app :is(.card,.stat-card,.card-glass) :is(thead,.table-header){background:rgba(44,38,48,.72) !important}
+#app :is(.card,.stat-card,.card-glass) :is(.sticky-header-cell,th.sticky-col,tbody .sticky-col){background:transparent !important}
+/* 只有表格真的横向滚动时（DataTable 加 .is-scrollable），固定列才需要不透明底来遮住滑过的内容 */
+#app :is(.card,.stat-card,.card-glass) .is-scrollable :is(.sticky-header-cell.sticky-col,th.sticky-col){background:rgba(255,250,249,.97) !important}
+:root.dark #app :is(.card,.stat-card,.card-glass) .is-scrollable :is(.sticky-header-cell.sticky-col,th.sticky-col){background:rgba(40,35,44,.97) !important}
+#app :is(.card,.stat-card,.card-glass) .is-scrollable tbody .sticky-col{background:rgba(255,251,250,.97) !important}
+:root.dark #app :is(.card,.stat-card,.card-glass) .is-scrollable tbody .sticky-col{background:rgba(34,30,38,.97) !important}
+#app :is(.card,.stat-card,.card-glass) .is-scrollable tbody tr:hover .sticky-col{background:rgba(255,240,244,.98) !important}
+:root.dark #app :is(.card,.stat-card,.card-glass) .is-scrollable tbody tr:hover .sticky-col{background:rgba(48,38,46,.98) !important}
+#app :is(.card,.stat-card,.card-glass) tbody tr:hover{background:rgba(255,236,240,.45) !important}
+:root.dark #app :is(.card,.stat-card,.card-glass) tbody tr:hover{background:rgba(255,143,171,.06) !important}
+:root.dark #app :is(.card,.stat-card,.card-glass) :is(.divide-gray-200,.divide-dark-700) > * + *{border-color:rgba(255,255,255,.07) !important}
+:root:not(.dark) #app :is(.card,.stat-card,.card-glass) :is(.divide-gray-200,.divide-gray-100) > * + *{border-color:rgba(29,29,31,.07) !important}
+
+/* 卡片里其它大块实色面板（无边框的 bg-white / dark:bg-dark-800/900/950） */
+:root:not(.dark) #app :is(.card,.stat-card,.card-glass) :is(div,section,article,ul,aside,header,footer).bg-white:not(:is(.absolute,.fixed,.rounded-full,.shadow-lg,.shadow-xl,.dropdown)){background:rgba(255,255,255,.5) !important}
+:root.dark #app :is(.card,.stat-card,.card-glass) :is(div,section,article,ul,aside,header,footer):is([class*="dark:bg-dark-800"],[class*="dark:bg-dark-900"],[class*="dark:bg-dark-950"]):not(:is(.absolute,.fixed,.rounded-full,.shadow-lg,.shadow-xl,.dropdown,[class*="hover:"])){background:rgba(255,255,255,.04) !important}
