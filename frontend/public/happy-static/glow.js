@@ -18,8 +18,11 @@
     return `rgba(${A.map((v, k) => Math.round(v + (B[k] - v) * f)).join(',')},${a})`;
   };
 
-  let cv, ctx, W = 0, H = 0, D = 1, running = false;
+  let cv, ctx, W = 0, H = 0, D = 1, running = false, lastMove = 0;
   const mouse = {x: -1e4, y: -1e4, seen: false};
+  // 低性能模式（html.hp-lite）下整个流光层停用
+  const lite = () => document.documentElement.classList.contains('hp-lite');
+  const radii = new WeakMap();
 
   /* ---------- 边框光 ---------- */
   const FRAME = 'button,a.btn,.btn,input,textarea,select,.card,.stat-card,.card-glass,.glass,.badge,.chip,.pill,[role="button"],.sidebar-link';
@@ -40,7 +43,9 @@
     addEventListener('resize', resize);
     if (fine) {
       addEventListener('pointermove', onMove, {passive: true});
-      document.addEventListener('pointerleave', () => { mouse.seen = false; edges.forEach(e => e.on = false); });
+      document.addEventListener('pointerleave', () => { mouse.seen = false; edges.forEach(e => e.on = false); kick(); });
+      // 滚动时卡片移动，光带要跟着重画
+      addEventListener('scroll', () => { if (edges.length) { lastMove = performance.now(); kick(); } }, {passive: true, capture: true});
     }
     addEventListener('pointerdown', onDown, {passive: true});
   }
@@ -52,12 +57,16 @@
   const kick = () => { if (!running) { running = true; requestAnimationFrame(frame); } };
 
   function onMove(e) {
+    if (lite()) return;
+    lastMove = performance.now();
     mouse.seen = true;
     mouse.x = e.clientX; mouse.y = e.clientY;
     hover(e.target);
     kick();
   }
   function onDown(e) {
+    if (lite()) return;
+    lastMove = performance.now();
     ripples.push({x: e.clientX, y: e.clientY, t0: performance.now()});
     if (e.pointerType !== 'mouse') {          // 触屏：轻点的元素边框闪一下
       const el = frameOf(e.target);
@@ -88,7 +97,10 @@
   function track(el) {
     const r = el.getBoundingClientRect();
     if (!r.width) return null;
-    const rad = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, r.width / 2, r.height / 2);
+    // 圆角只读一次（getComputedStyle 每帧调用会触发样式计算）
+    let r0 = radii.get(el);
+    if (r0 === undefined) { r0 = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; radii.set(el, r0); }
+    const rad = Math.min(r0, r.width / 2, r.height / 2);
     const L = r.left + .5, T = r.top + .5, Rr = r.right - .5, B = r.bottom - .5;
     const w = Rr - L - 2 * rad, h = B - T - 2 * rad, arc = Math.PI * rad / 2;
     const seg = [w, arc, h, arc, w, arc, h, arc], P = seg.reduce((a, b) => a + b, 0);
@@ -113,30 +125,30 @@
 
   /* ---------- 绘制 ---------- */
   function drawEdges(now) {
-    let alive = false;
+    let alive = false, busy = false;
     for (let j = edges.length - 1; j >= 0; j--) {
       const e = edges[j];
       if (!e.el.isConnected) { edges.splice(j, 1); continue; }
       e.a += ((e.on ? 1 : 0) - e.a) * (e.on ? .16 : .1);
       if (!e.on && e.a < .02) { edges.splice(j, 1); continue; }
       alive = true;
+      if (!e.on || e.a < .98) busy = true;
       const tr = track(e.el); if (!tr) continue;
       // 沿最短方向滑向鼠标最近点
-      if (e.on) { let d = tr.near(mouse.x, mouse.y) - e.s; d -= Math.round(d / tr.P) * tr.P; e.s += d * .22; }
+      if (e.on) { let d = tr.near(mouse.x, mouse.y) - e.s; d -= Math.round(d / tr.P) * tr.P; e.s += d * .22; if (Math.abs(d) > .5) busy = true; }
       const len = Math.min(tr.P * .32, 170), steps = 36, hue = now / 2400;
       ctx.lineCap = 'round';
       for (let i = 0; i < steps; i++) {
         const t0 = i / steps, t1 = (i + 1) / steps, tm = (t0 + t1) / 2;
         const [x0, y0] = tr.at(e.s - len / 2 + len * t0), [x1, y1] = tr.at(e.s - len / 2 + len * t1);
         const prof = Math.pow(Math.sin(Math.PI * tm), 1.6) * e.a;
-        ctx.strokeStyle = colorAt(hue + tm * 2.2, .95 * prof);
-        ctx.shadowColor = colorAt(hue + tm * 2.2, .9 * prof); ctx.shadowBlur = 12;
-        ctx.lineWidth = 2.2;
-        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+        // 用一道宽而淡的描边代替 shadowBlur（shadowBlur 每段都要做一次高斯模糊，很耗 GPU）
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+        ctx.strokeStyle = colorAt(hue + tm * 2.2, .28 * prof); ctx.lineWidth = 7; ctx.stroke();
+        ctx.strokeStyle = colorAt(hue + tm * 2.2, .95 * prof); ctx.lineWidth = 2.2; ctx.stroke();
       }
     }
-    ctx.shadowBlur = 0;
-    return alive;
+    return {alive, busy};
   }
 
   function drawRipples(now) {
@@ -155,9 +167,10 @@
   function frame(now) {
     ctx.setTransform(D, 0, 0, D, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    const a = drawEdges(now), c = drawRipples(now);
-    if (a || c) requestAnimationFrame(frame);
-    else { running = false; ctx.clearRect(0, 0, W, H); }
+    const {alive, busy} = drawEdges(now), c = drawRipples(now);
+    // 鼠标静止且光带已就位时停帧：画面保持最后一帧，不再每帧重绘
+    if (c || busy || (alive && now - lastMove < 160)) requestAnimationFrame(frame);
+    else { running = false; if (!alive) ctx.clearRect(0, 0, W, H); }
   }
 
   if (document.body) init(); else addEventListener('DOMContentLoaded', init);

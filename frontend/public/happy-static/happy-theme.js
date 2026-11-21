@@ -7,6 +7,38 @@
   window.__happyTheme = true;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  /* ---------- 性能档位：弱设备自动切到轻量模式（html.hp-lite） ----------
+   * 轻量模式：卡片不做实时模糊（改用更实的半透明底）、不飘花瓣、不画流光。
+   * 手动覆盖：地址后加 ?hp-lite=1 强制轻量，?hp-lite=0 恢复自动判断。 */
+  const LITE_KEY = 'hp-lite';
+  const root = document.documentElement;
+  const store = {
+    get() { try { return localStorage.getItem(LITE_KEY); } catch (e) { return null; } },
+    set(v) { try { if (v) localStorage.setItem(LITE_KEY, '1'); else localStorage.setItem(LITE_KEY, ''); } catch (e) { /* 隐私模式 */ } },
+  };
+  const q = new URLSearchParams(location.search).get('hp-lite');
+  if (q === '1') store.set(true);
+  else if (q === '0') store.set(false);
+  const nav = navigator;
+  const weak = (nav.hardwareConcurrency && nav.hardwareConcurrency <= 2) || (nav.deviceMemory && nav.deviceMemory <= 2) ||
+    (nav.connection && nav.connection.saveData) || matchMedia('(prefers-reduced-transparency: reduce)').matches;
+  if (store.get() === '1' || weak) root.classList.add('hp-lite');
+  // 实测帧率：页面空闲时采 60 帧，中位帧时长超过 25ms（约 40fps 以下）就切轻量并记住
+  function probe() {
+    if (root.classList.contains('hp-lite') || document.hidden || q === '0') return;
+    const times = [];
+    let last = 0;
+    const step = now => {
+      if (document.hidden) return;
+      if (last) times.push(now - last);
+      last = now;
+      if (times.length < 60) { requestAnimationFrame(step); return; }
+      times.sort((a, b) => a - b);
+      if (times[30] > 25) { root.classList.add('hp-lite'); store.set(true); }
+    };
+    requestAnimationFrame(step);
+  }
+
   /* ---------- 花朵生成（与首页同一套） ---------- */
   const P = {
     round: (l, w) => `M0 0C${w} ${-l*.25} ${w*1.05} ${-l*.85} 0 ${-l}C${-w*1.05} ${-l*.85} ${-w} ${-l*.25} 0 0Z`,
@@ -44,10 +76,10 @@
     a.className = 'hp-aurora'; a.innerHTML = '<i></i><i></i><i></i><i></i>';
     const g = document.createElement('div'); g.className = 'hp-grain';
     document.body.prepend(a, g);
-    if (reduce) return;
+    if (reduce || root.classList.contains('hp-lite')) return;
     const rain = document.createElement('div'); rain.className = 'hp-rain';
     const COL = [['#fff1f5', '#ffb8cc'], ['#ffffff', '#ffd3de'], ['#fff4ec', '#ffc7a8'], ['#f6f0ff', '#d4c4ff']];
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 6; i++) {
       const [c1, c2] = COL[i % COL.length], d = document.createElement('i');
       d.style.cssText = `--x:${Math.random() * 100}%;--w:${7 + Math.random() * 7}px;--t:${16 + Math.random() * 14}s;--dl:${-Math.random() * 30}s;--sx:${(Math.random() - .5) * 140}px;--a:${c1};--b:${c2}`;
       rain.appendChild(d);
@@ -90,7 +122,14 @@
   function boot() {
     decorate();
     flowerLogos();
-    new MutationObserver(flowerLogos).observe(document.getElementById('app') || document.body, {childList: true, subtree: true});
+    // 合并同一时段的 DOM 变动，避免每次增删节点都同步全量查询
+    let queued = false;
+    new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      setTimeout(() => { queued = false; flowerLogos(); }, 150);
+    }).observe(document.getElementById('app') || document.body, {childList: true, subtree: true});
+    setTimeout(probe, 2500);
   }
   if (document.body) boot(); else addEventListener('DOMContentLoaded', boot);
 })();
@@ -274,37 +313,57 @@
     // 兜底：标签页在后台时 rAF 暂停，到点直接写回真实值
     setTimeout(() => { if (s.active && node.nodeValue === s.mine) { node.nodeValue = text; s.mine = text; s.active = false; } }, dur + 400);
   }
+  // 倒计时 / 时间 / 日期（如 29:58、2026-11-20）不做数字滚动，否则每秒改写都会被动画打乱
+  function maybeCount(node) {
+    const el = node.parentElement;
+    if (!el || el.closest('[data-hp-static]') || TIME_LIKE.test(node.nodeValue)) return;
+    countUp(node);
+  }
+  const textOf = el => [...el.childNodes].find(n => n.nodeType === 3 && n.nodeValue.trim());
+  // 进入视口才开始滚动（取代原先每次滚动都全量扫描 + getBoundingClientRect）
+  const seen = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      seen.unobserve(en.target);
+      en.target.dataset.hpSeen = '1';
+      const tn = textOf(en.target);
+      if (tn) maybeCount(tn);
+    }
+  }) : null;
   function scanNumbers() {
-    const vh = innerHeight;
-    $$('#app main .card .text-xl.font-bold, #app main .card .text-2xl.font-bold, #app main .card .text-3xl.font-bold, #app .stat-value').forEach(el => {
-      el.classList.contains('hp-num') || el.classList.add('hp-num');
-      const r = el.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > vh) return;
-      // 倒计时 / 时间 / 日期（如 29:58、2026-11-20）不做数字滚动，否则每秒改写都会被动画打乱
-      if (el.closest('[data-hp-static]')) return;
-      const tn = [...el.childNodes].find(n => n.nodeType === 3 && n.nodeValue.trim());
-      if (tn && !TIME_LIKE.test(tn.nodeValue)) countUp(tn);
+    $$('#app main .card .text-xl.font-bold:not(.hp-num), #app main .card .text-2xl.font-bold:not(.hp-num), #app main .card .text-3xl.font-bold:not(.hp-num), #app .stat-value:not(.hp-num)').forEach(el => {
+      el.classList.add('hp-num');
+      if (seen) seen.observe(el);
+      else { el.dataset.hpSeen = '1'; const tn = textOf(el); if (tn) maybeCount(tn); }
     });
   }
-  addEventListener('scroll', () => schedule(), {passive: true});
 
   /* ================= 卡片：聚光 + 轻微倾斜 ================= */
   if (fine) {
-    let tiltEl = null;
-    document.addEventListener('pointermove', e => {
+    let tiltEl = null, lastEvent = null, moveQueued = false;
+    const untilt = () => { if (tiltEl) { tiltEl.style.transform = ''; tiltEl.style.willChange = ''; tiltEl = null; } };
+    document.addEventListener('pointermove', ev => {
+      lastEvent = ev;
+      if (moveQueued) return;
+      moveQueued = true;
+      raf(() => { moveQueued = false; onPointer(lastEvent); });
+    }, {passive: true});
+    function onPointer(e) {
+      if (document.documentElement.classList.contains('hp-lite')) { untilt(); return; }
       const card = e.target.closest && e.target.closest('#app .card, #app .stat-card, .hp-hello');
-      if (tiltEl && tiltEl !== card) { tiltEl.style.transform = ''; tiltEl = null; }
+      if (tiltEl && tiltEl !== card) untilt();
       if (!card) return;
       const r = card.getBoundingClientRect();
       card.style.setProperty('--hp-mx', (e.clientX - r.left) + 'px');
       card.style.setProperty('--hp-my', (e.clientY - r.top) + 'px');
       if (!reduce && r.height < 200 && r.width < 520 && card.closest('.grid')) {
         const px = (e.clientX - r.left) / r.width - .5, py = (e.clientY - r.top) / r.height - .5;
+        card.style.willChange = 'transform';
         card.style.transform = `perspective(900px) rotateX(${-py * 5}deg) rotateY(${px * 5}deg) translateY(-2px)`;
         tiltEl = card;
       }
-    }, {passive: true});
-    document.addEventListener('pointerleave', () => { if (tiltEl) tiltEl.style.transform = ''; }, true);
+    }
+    document.addEventListener('pointerleave', e => { if (e.target === tiltEl) untilt(); }, true);
   }
 
   /* ================= 按钮花瓣 / 复制撒花 ================= */
@@ -336,18 +395,37 @@
     scanNumbers();
     emptyFlowers();
   }
-  function schedule() { if (!pending) { pending = true; setTimeout(scan, 60); } }
+  // 增删节点后合并成一次扫描（150ms 内的变动只扫一次）
+  function schedule() { if (!pending) { pending = true; setTimeout(scan, 150); } }
+  let pillQueued = false;
+  function schedulePill() { if (!pillQueued) { pillQueued = true; raf(() => { pillQueued = false; placePill(false); }); } }
   function boot() {
     const app = $('#app');
     if (!app) return;
     new MutationObserver(muts => {
-      // 只关心结构与 class 变化（忽略自己写入的元素）
+      // 按变动类型精确处理，不再因任意文字更新（计时器、流式输出、表格刷新）触发整页扫描
+      let structural = false;
       for (const m of muts) {
-        const t = m.target.nodeType === 3 ? m.target.parentElement : m.target;
-        if (!t || t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower, .playground-markdown')) continue;
-        if (m.type === 'characterData') { const s0 = st.get(m.target); if (s0 && s0.active && m.target.nodeValue === s0.mine) continue; }
-        schedule(); break;
+        if (m.type === 'characterData') {
+          // 只有已登记的统计数字才需要跟着滚动
+          const p = m.target.parentElement;
+          if (p && p.classList.contains('hp-num') && p.dataset.hpSeen) {
+            const s0 = st.get(m.target);
+            if (!(s0 && s0.active && m.target.nodeValue === s0.mine)) maybeCount(m.target);
+          }
+          continue;
+        }
+        if (m.type === 'attributes') {
+          // class 变化只影响侧边栏指示器
+          if (m.target.classList && m.target.classList.contains('sidebar-link')) schedulePill();
+          continue;
+        }
+        if (structural) continue;
+        const t = m.target;
+        if (t.closest && t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower, .playground-markdown')) continue;
+        structural = true;
       }
+      if (structural) schedule();
     }).observe(app, {childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class']});
     addEventListener('resize', () => placePill(true));
     scan();
@@ -375,8 +453,11 @@
     return `rgba(${A.map((v, k) => Math.round(v + (B[k] - v) * f)).join(',')},${a})`;
   };
 
-  let cv, ctx, W = 0, H = 0, D = 1, running = false;
+  let cv, ctx, W = 0, H = 0, D = 1, running = false, lastMove = 0;
   const mouse = {x: -1e4, y: -1e4, seen: false};
+  // 低性能模式（html.hp-lite）下整个流光层停用
+  const lite = () => document.documentElement.classList.contains('hp-lite');
+  const radii = new WeakMap();
 
   /* ---------- 边框光 ---------- */
   const FRAME = 'button,a.btn,.btn,input,textarea,select,.card,.stat-card,.card-glass,.glass,.badge,.chip,.pill,[role="button"],.sidebar-link';
@@ -397,7 +478,9 @@
     addEventListener('resize', resize);
     if (fine) {
       addEventListener('pointermove', onMove, {passive: true});
-      document.addEventListener('pointerleave', () => { mouse.seen = false; edges.forEach(e => e.on = false); });
+      document.addEventListener('pointerleave', () => { mouse.seen = false; edges.forEach(e => e.on = false); kick(); });
+      // 滚动时卡片移动，光带要跟着重画
+      addEventListener('scroll', () => { if (edges.length) { lastMove = performance.now(); kick(); } }, {passive: true, capture: true});
     }
     addEventListener('pointerdown', onDown, {passive: true});
   }
@@ -409,12 +492,16 @@
   const kick = () => { if (!running) { running = true; requestAnimationFrame(frame); } };
 
   function onMove(e) {
+    if (lite()) return;
+    lastMove = performance.now();
     mouse.seen = true;
     mouse.x = e.clientX; mouse.y = e.clientY;
     hover(e.target);
     kick();
   }
   function onDown(e) {
+    if (lite()) return;
+    lastMove = performance.now();
     ripples.push({x: e.clientX, y: e.clientY, t0: performance.now()});
     if (e.pointerType !== 'mouse') {          // 触屏：轻点的元素边框闪一下
       const el = frameOf(e.target);
@@ -445,7 +532,10 @@
   function track(el) {
     const r = el.getBoundingClientRect();
     if (!r.width) return null;
-    const rad = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, r.width / 2, r.height / 2);
+    // 圆角只读一次（getComputedStyle 每帧调用会触发样式计算）
+    let r0 = radii.get(el);
+    if (r0 === undefined) { r0 = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; radii.set(el, r0); }
+    const rad = Math.min(r0, r.width / 2, r.height / 2);
     const L = r.left + .5, T = r.top + .5, Rr = r.right - .5, B = r.bottom - .5;
     const w = Rr - L - 2 * rad, h = B - T - 2 * rad, arc = Math.PI * rad / 2;
     const seg = [w, arc, h, arc, w, arc, h, arc], P = seg.reduce((a, b) => a + b, 0);
@@ -470,30 +560,30 @@
 
   /* ---------- 绘制 ---------- */
   function drawEdges(now) {
-    let alive = false;
+    let alive = false, busy = false;
     for (let j = edges.length - 1; j >= 0; j--) {
       const e = edges[j];
       if (!e.el.isConnected) { edges.splice(j, 1); continue; }
       e.a += ((e.on ? 1 : 0) - e.a) * (e.on ? .16 : .1);
       if (!e.on && e.a < .02) { edges.splice(j, 1); continue; }
       alive = true;
+      if (!e.on || e.a < .98) busy = true;
       const tr = track(e.el); if (!tr) continue;
       // 沿最短方向滑向鼠标最近点
-      if (e.on) { let d = tr.near(mouse.x, mouse.y) - e.s; d -= Math.round(d / tr.P) * tr.P; e.s += d * .22; }
+      if (e.on) { let d = tr.near(mouse.x, mouse.y) - e.s; d -= Math.round(d / tr.P) * tr.P; e.s += d * .22; if (Math.abs(d) > .5) busy = true; }
       const len = Math.min(tr.P * .32, 170), steps = 36, hue = now / 2400;
       ctx.lineCap = 'round';
       for (let i = 0; i < steps; i++) {
         const t0 = i / steps, t1 = (i + 1) / steps, tm = (t0 + t1) / 2;
         const [x0, y0] = tr.at(e.s - len / 2 + len * t0), [x1, y1] = tr.at(e.s - len / 2 + len * t1);
         const prof = Math.pow(Math.sin(Math.PI * tm), 1.6) * e.a;
-        ctx.strokeStyle = colorAt(hue + tm * 2.2, .95 * prof);
-        ctx.shadowColor = colorAt(hue + tm * 2.2, .9 * prof); ctx.shadowBlur = 12;
-        ctx.lineWidth = 2.2;
-        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+        // 用一道宽而淡的描边代替 shadowBlur（shadowBlur 每段都要做一次高斯模糊，很耗 GPU）
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
+        ctx.strokeStyle = colorAt(hue + tm * 2.2, .28 * prof); ctx.lineWidth = 7; ctx.stroke();
+        ctx.strokeStyle = colorAt(hue + tm * 2.2, .95 * prof); ctx.lineWidth = 2.2; ctx.stroke();
       }
     }
-    ctx.shadowBlur = 0;
-    return alive;
+    return {alive, busy};
   }
 
   function drawRipples(now) {
@@ -512,9 +602,10 @@
   function frame(now) {
     ctx.setTransform(D, 0, 0, D, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    const a = drawEdges(now), c = drawRipples(now);
-    if (a || c) requestAnimationFrame(frame);
-    else { running = false; ctx.clearRect(0, 0, W, H); }
+    const {alive, busy} = drawEdges(now), c = drawRipples(now);
+    // 鼠标静止且光带已就位时停帧：画面保持最后一帧，不再每帧重绘
+    if (c || busy || (alive && now - lastMove < 160)) requestAnimationFrame(frame);
+    else { running = false; if (!alive) ctx.clearRect(0, 0, W, H); }
   }
 
   if (document.body) init(); else addEventListener('DOMContentLoaded', init);
