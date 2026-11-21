@@ -163,6 +163,21 @@
         }}</span>
       </button>
 
+      <!-- Motion Toggle：完整动效 / 轻量模式（Happy 主题） -->
+      <button
+        @click="toggleMotion"
+        class="sidebar-link mb-2 w-full"
+        :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
+        :title="sidebarCollapsed ? (isLiteMotion ? t('nav.fullMotion') : t('nav.liteMotion')) : t('nav.motionHint')"
+        :aria-pressed="isLiteMotion ? 'true' : 'false'"
+        data-testid="motion-toggle"
+      >
+        <Icon :name="isLiteMotion ? 'sparkles' : 'bolt'" size="md" class="flex-shrink-0" :class="isLiteMotion ? 'text-primary-500' : ''" />
+        <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{
+          isLiteMotion ? t('nav.fullMotion') : t('nav.liteMotion')
+        }}</span>
+      </button>
+
       <!-- Collapse Button -->
       <button
         @click="toggleSidebar"
@@ -885,6 +900,25 @@ function toggleSidebar() {
   appStore.toggleSidebar()
 }
 
+// 动效档位由 public/happy-static/happy-theme.js 管理（window.happyMotion）；脚本缺席时直接写偏好并切换 class
+type MotionMode = 'full' | 'lite'
+const MOTION_KEY = 'hp-motion'
+const isLiteMotion = ref(document.documentElement.classList.contains('hp-lite'))
+function syncMotion() {
+  isLiteMotion.value = document.documentElement.classList.contains('hp-lite')
+}
+function toggleMotion() {
+  const next: MotionMode = isLiteMotion.value ? 'full' : 'lite'
+  const api = (window as unknown as { happyMotion?: { set: (mode: MotionMode) => void } }).happyMotion
+  if (api) {
+    api.set(next)
+  } else {
+    try { localStorage.setItem(MOTION_KEY, next) } catch { /* 隐私模式 */ }
+    document.documentElement.classList.toggle('hp-lite', next === 'lite')
+  }
+  syncMotion()
+}
+
 function toggleTheme() {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
@@ -976,6 +1010,8 @@ watch(
 )
 
 onMounted(() => {
+  window.addEventListener('hp-motion-change', syncMotion)
+  syncMotion()
   void refreshBatchImageAccess()
   if (isAdmin.value) {
     adminSettingsStore.fetch()
@@ -991,6 +1027,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('hp-motion-change', syncMotion)
   if (sidebarNavRef.value) {
     appStore.sidebarScrollTop = sidebarNavRef.value.scrollTop
   }

@@ -7,37 +7,74 @@
   window.__happyTheme = true;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  /* ---------- 性能档位：弱设备自动切到轻量模式（html.hp-lite） ----------
-   * 轻量模式：卡片不做实时模糊（改用更实的半透明底）、不飘花瓣、不画流光。
-   * 手动覆盖：地址后加 ?hp-lite=1 强制轻量，?hp-lite=0 恢复自动判断。 */
-  const LITE_KEY = 'hp-lite';
+  /* ---------- 动效档位：完整动效 / 轻量模式（html.hp-lite），由用户决定 ----------
+   * localStorage['hp-motion']：'full' 完整动效 / 'lite' 轻量；未设置时默认完整动效，
+   * 仅当系统开启「减少透明度」或省流量时默认轻量。侧边栏底部有切换按钮。
+   * 轻量模式：卡片不做实时模糊（改用更实的半透明底）、不飘花瓣、不画流光。 */
+  const MOTION_KEY = 'hp-motion';
+  const HINT_KEY = 'hp-motion-hint';
   const root = document.documentElement;
-  const store = {
-    get() { try { return localStorage.getItem(LITE_KEY); } catch (e) { return null; } },
-    set(v) { try { if (v) localStorage.setItem(LITE_KEY, '1'); else localStorage.setItem(LITE_KEY, ''); } catch (e) { /* 隐私模式 */ } },
+  const ls = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 隐私模式 */ } },
   };
-  const q = new URLSearchParams(location.search).get('hp-lite');
-  if (q === '1') store.set(true);
-  else if (q === '0') store.set(false);
   const nav = navigator;
-  const weak = (nav.hardwareConcurrency && nav.hardwareConcurrency <= 2) || (nav.deviceMemory && nav.deviceMemory <= 2) ||
-    (nav.connection && nav.connection.saveData) || matchMedia('(prefers-reduced-transparency: reduce)').matches;
-  if (store.get() === '1' || weak) root.classList.add('hp-lite');
-  // 实测帧率：页面空闲时采 60 帧，中位帧时长超过 25ms（约 40fps 以下）就切轻量并记住
+  const osPrefersLite = Boolean((nav.connection && nav.connection.saveData) || matchMedia('(prefers-reduced-transparency: reduce)').matches);
+  const chosen = () => { const v = ls.get(MOTION_KEY); return v === 'full' || v === 'lite' ? v : null; };
+  const mode = () => chosen() || (osPrefersLite ? 'lite' : 'full');
+  function applyMotion() {
+    const lite = mode() === 'lite';
+    root.classList.toggle('hp-lite', lite);
+    return lite;
+  }
+  function setMotion(next) {
+    if (next !== 'full' && next !== 'lite') return;
+    ls.set(MOTION_KEY, next);
+    applyMotion();
+    hideHint();
+    dispatchEvent(new CustomEvent('hp-motion-change', {detail: {mode: next}}));
+  }
+  window.happyMotion = {mode, set: setMotion, chosen};
+  applyMotion();
+  addEventListener('storage', e => { if (e.key === MOTION_KEY) applyMotion(); });
+
+  // 帧率检测只用来「建议」，绝不替用户切换：页面空闲时采 60 帧，中位帧时长超过 25ms（约 40fps 以下）就轻轻提示一次
+  let hintEl = null;
+  function hideHint() { if (hintEl) { hintEl.classList.add('hp-hint-out'); const el = hintEl; hintEl = null; setTimeout(() => el.remove(), 400); } }
+  function showHint() {
+    if (hintEl || chosen() || ls.get(HINT_KEY)) return;
+    ls.set(HINT_KEY, '1');
+    hintEl = document.createElement('div');
+    hintEl.className = 'hp-hint';
+    hintEl.setAttribute('role', 'status');
+    hintEl.innerHTML = '<span class="hp-hint-leaf" aria-hidden="true"></span><span class="hp-hint-text">页面有点吃力？轻量模式会更顺滑，动效随时可以在侧边栏底部切回来。</span>' +
+      '<button type="button" data-act="lite">切换轻量</button><button type="button" data-act="keep">保持动效</button>';
+    hintEl.addEventListener('click', e => {
+      const act = e.target.closest('button') && e.target.closest('button').dataset.act;
+      if (act === 'lite') setMotion('lite');
+      else if (act === 'keep') setMotion('full');
+    });
+    document.body.appendChild(hintEl);
+    setTimeout(hideHint, 15000);
+  }
   function probe() {
-    if (root.classList.contains('hp-lite') || document.hidden || q === '0') return;
+    if (root.classList.contains('hp-lite') || document.hidden || chosen() || ls.get(HINT_KEY)) return;
     const times = [];
-    let last = 0;
+    let prev = 0;
     const step = now => {
       if (document.hidden) return;
-      if (last) times.push(now - last);
-      last = now;
+      if (prev) times.push(now - prev);
+      prev = now;
       if (times.length < 60) { requestAnimationFrame(step); return; }
       times.sort((a, b) => a - b);
-      if (times[30] > 25) { root.classList.add('hp-lite'); store.set(true); }
+      if (times[30] > 25) showHint();
     };
     requestAnimationFrame(step);
   }
+
+  /* ---------- 小心思：按时段微调背景色温（清晨偏桃、白天偏暖黄、傍晚偏紫、夜里偏青） ---------- */
+  const hour = new Date().getHours();
+  root.dataset.hpDaypart = hour < 5 ? 'night' : hour < 9 ? 'dawn' : hour < 17 ? 'day' : hour < 20 ? 'dusk' : 'night';
 
   /* ---------- 花朵生成（与首页同一套） ---------- */
   const P = {
@@ -76,7 +113,7 @@
     a.className = 'hp-aurora'; a.innerHTML = '<i></i><i></i><i></i><i></i>';
     const g = document.createElement('div'); g.className = 'hp-grain';
     document.body.prepend(a, g);
-    if (reduce || root.classList.contains('hp-lite')) return;
+    if (reduce) return;
     const rain = document.createElement('div'); rain.className = 'hp-rain';
     const COL = [['#fff1f5', '#ffb8cc'], ['#ffffff', '#ffd3de'], ['#fff4ec', '#ffc7a8'], ['#f6f0ff', '#d4c4ff']];
     for (let i = 0; i < 6; i++) {
@@ -216,6 +253,7 @@
     }
     setTimeout(() => placePill(false), 30);
     setTimeout(scan, 120);
+    nurture();
   }
   for (const k of ['pushState', 'replaceState']) {
     const o = history[k];
@@ -342,13 +380,7 @@
   if (fine) {
     let tiltEl = null, lastEvent = null, moveQueued = false;
     const untilt = () => { if (tiltEl) { tiltEl.style.transform = ''; tiltEl.style.willChange = ''; tiltEl = null; } };
-    document.addEventListener('pointermove', ev => {
-      lastEvent = ev;
-      if (moveQueued) return;
-      moveQueued = true;
-      raf(() => { moveQueued = false; onPointer(lastEvent); });
-    }, {passive: true});
-    function onPointer(e) {
+    const onPointer = e => {
       if (document.documentElement.classList.contains('hp-lite')) { untilt(); return; }
       const card = e.target.closest && e.target.closest('#app .card, #app .stat-card, .hp-hello');
       if (tiltEl && tiltEl !== card) untilt();
@@ -362,7 +394,13 @@
         card.style.transform = `perspective(900px) rotateX(${-py * 5}deg) rotateY(${px * 5}deg) translateY(-2px)`;
         tiltEl = card;
       }
-    }
+    };
+    document.addEventListener('pointermove', ev => {
+      lastEvent = ev;
+      if (moveQueued) return;
+      moveQueued = true;
+      raf(() => { moveQueued = false; onPointer(lastEvent); });
+    }, {passive: true});
     document.addEventListener('pointerleave', e => { if (e.target === tiltEl) untilt(); }, true);
   }
 
@@ -371,7 +409,7 @@
     const b = e.target.closest && e.target.closest('button, a, [role="button"]');
     if (!b || b.disabled) return;
     const label = (b.innerText + ' ' + (b.title || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
-    if (/复制|copy/.test(label)) burst(e.clientX, e.clientY, 16, 1.3);
+    if (/复制|copy/.test(label)) { burst(e.clientX, e.clientY, 16, 1.3); nurture(); }
     else if (b.matches('#app .btn-primary, #app .bg-gradient-to-r.from-primary-500, #app .bg-primary-500, #app .bg-primary-600')) burst(e.clientX, e.clientY, 7, .8);
   }, true);
 
@@ -386,6 +424,102 @@
     });
   }
 
+  /* ================= 小心思：今日小苗 =================
+   * 侧边栏底部一株小苗，每次页面跳转、复制都算「陪你走一步」，按天从种子长到开花。不打扰，只在长大时轻轻冒几片花瓣。 */
+  const SPROUT_KEY = 'hp-sprout';
+  const SPROUT_AT = [0, 3, 8, 15, 25];
+  const SPROUT_TEXT = ['一粒种子', '冒出新芽', '舒展两叶', '含苞待放', '今天开花啦'];
+  const sproutStage = n => SPROUT_AT.filter(x => n >= x).length - 1;
+  function sproutState() {
+    const d = new Date().toDateString();
+    let st = null;
+    try { st = JSON.parse(localStorage.getItem(SPROUT_KEY) || 'null'); } catch (e) { st = null; }
+    return st && st.d === d && typeof st.n === 'number' ? st : {d, n: 0};
+  }
+  function sproutSVG(stage) {
+    const stem = stage >= 1 ? `<path d="M16 27 C16 ${24 - stage * 2} 16.4 ${21 - stage * 2} 16 ${19 - stage * 2.2}" stroke="#7ad7c0" stroke-width="1.8" fill="none" stroke-linecap="round"/>` : '';
+    const leafL = stage >= 1 ? '<path class="hp-leaf l" d="M16 22 C12.5 22 10.5 19.6 10.6 17.4 C13.4 17.4 15.6 19.2 16 22Z" fill="#9fe3cf"/>' : '';
+    const leafR = stage >= 2 ? '<path class="hp-leaf r" d="M16 19.5 C19.6 19.6 21.6 17.2 21.4 15 C18.6 15 16.4 16.8 16 19.5Z" fill="#7ad7c0"/>' : '';
+    const top = 19 - stage * 2.2;
+    const bud = stage === 3 ? `<path d="M16 ${top - 4.2} C18.2 ${top - 2.6} 18 ${top} 16 ${top + .4} C14 ${top} 13.8 ${top - 2.6} 16 ${top - 4.2}Z" fill="#ff8fab"/>` : '';
+    let bloom = '';
+    if (stage >= 4) {
+      for (let k = 0; k < 5; k++) bloom += `<ellipse cx="16" cy="${top - 3.2}" rx="2.2" ry="3.2" fill="${k % 2 ? '#ffb3c8' : '#ff8fab'}" transform="rotate(${k * 72} 16 ${top})"/>`;
+      bloom = `<g class="hp-bloom">${bloom}<circle cx="16" cy="${top}" r="1.7" fill="#ffd76a"/></g>`;
+    }
+    const seed = stage === 0 ? '<ellipse cx="16" cy="25.6" rx="2.4" ry="1.7" fill="#ffd76a"/>' : '';
+    return `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 27.5 Q16 25.6 25 27.5" stroke="#e7c9b8" stroke-width="1.6" fill="none" stroke-linecap="round"/>${seed}${stem}${leafL}${leafR}${bud}${bloom}</svg>`;
+  }
+  let sproutEl = null;
+  function renderSprout(grew) {
+    if (!sproutEl) return;
+    const st = sproutState(), stage = sproutStage(st.n);
+    sproutEl.dataset.stage = stage;
+    sproutEl.title = `今天一起走过 ${st.n} 步 · ${SPROUT_TEXT[stage]}`;
+    sproutEl.innerHTML = `<span class="hp-sprout-pot">${sproutSVG(stage)}</span><span class="hp-sprout-text">${SPROUT_TEXT[stage]}</span>`;
+    if (grew) {
+      sproutEl.classList.remove('hp-sprout-grow'); void sproutEl.offsetWidth; sproutEl.classList.add('hp-sprout-grow');
+      const r = sproutEl.querySelector('svg').getBoundingClientRect();
+      burst(r.left + r.width / 2, r.top + r.height * .4, 5, .55);
+    }
+  }
+  function placeSprout() {
+    const bottom = $('#app .sidebar > .mt-auto');
+    if (!bottom) return;
+    if (sproutEl && bottom.contains(sproutEl)) return;
+    sproutEl = document.createElement('div');
+    sproutEl.className = 'hp-sprout';
+    bottom.prepend(sproutEl);
+    renderSprout(false);
+  }
+  function nurture() {
+    const st = sproutState(), before = sproutStage(st.n);
+    st.n += 1;
+    try { localStorage.setItem(SPROUT_KEY, JSON.stringify(st)); } catch (e) { /* 隐私模式 */ }
+    if (sproutEl && sproutEl.isConnected) renderSprout(sproutStage(st.n) > before);
+  }
+
+  /* ================= 小心思：页尾落款 ================= */
+  const fadeIn = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+    for (const en of entries) if (en.isIntersecting) { en.target.classList.add('hp-in'); fadeIn.unobserve(en.target); }
+  }, {threshold: .6}) : null;
+  function signOff() {
+    const main = $('#app main');
+    const old = $('.hp-signoff');
+    if (!main || $('#app .studio')) { old && old.remove(); return; }
+    if (old && old.parentElement === main && main.lastElementChild === old) return;
+    const el = old || document.createElement('p');
+    if (!old) {
+      el.className = 'hp-signoff';
+      el.innerHTML = '<span class="hp-signoff-mark" aria-hidden="true"></span>善意流动 · 万物共生';
+    }
+    main.appendChild(el);
+    if (fadeIn && !el.classList.contains('hp-in')) fadeIn.observe(el); else el.classList.add('hp-in');
+  }
+
+  /* ================= 小心思：成功提示冒几片花瓣 ================= */
+  // 只盯 Toast 自己的容器（Teleport 到 body 的 fixed 容器），不监听整页
+  let toastBox = null;
+  const seenToasts = new WeakSet();
+  function watchToasts() {
+    const box = [...document.body.children].find(el => el.matches('div.fixed.right-4.top-4'));
+    if (!box || box === toastBox) return;
+    toastBox = box;
+    new MutationObserver(muts => {
+      for (const m of muts) for (const n of m.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        const ok = n.matches && n.matches('.border-green-500') ? n : n.querySelector && n.querySelector('.border-green-500');
+        if (!ok || seenToasts.has(ok)) continue;
+        seenToasts.add(ok);
+        setTimeout(() => {
+          if (!ok.isConnected || document.documentElement.classList.contains('hp-lite')) return;
+          const r = ok.getBoundingClientRect();
+          burst(r.left + 18, r.top + r.height / 2, 6, .6);
+        }, 260);
+      }
+    }).observe(box, {childList: true, subtree: true});
+  }
+
   /* ================= 调度 ================= */
   let pending = false;
   function scan() {
@@ -394,6 +528,9 @@
     dashBanner();
     scanNumbers();
     emptyFlowers();
+    placeSprout();
+    signOff();
+    watchToasts();
   }
   // 增删节点后合并成一次扫描（150ms 内的变动只扫一次）
   function schedule() { if (!pending) { pending = true; setTimeout(scan, 150); } }
@@ -422,7 +559,7 @@
         }
         if (structural) continue;
         const t = m.target;
-        if (t.closest && t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower, .playground-markdown')) continue;
+        if (t.closest && t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower, .playground-markdown, .hp-sprout')) continue;
         structural = true;
       }
       if (structural) schedule();

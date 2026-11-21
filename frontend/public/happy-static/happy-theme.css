@@ -761,3 +761,71 @@ body:has(#app .studio) .hp-rain{display:none}
 .hp-lite #app header.glass::after,.hp-lite #app .text-gradient,.hp-lite .hp-logo-flower .spin,.hp-lite .hp-logo-flower .layer,
 .hp-lite .hp-nav-bud,.hp-lite .hp-hello::before,.hp-lite .hp-hero-spin,.hp-lite .hp-wave{animation:none !important}
 .hp-lite #app .card,.hp-lite #app .stat-card,.hp-lite #app main > *{animation:none !important}
+
+/* ==========================================================
+ * 小心思（不张扬，但有点趣）：善意流动 · 万物共生
+ * ========================================================== */
+
+/* 按时段微调背景色温：清晨偏桃、白天暖黄、傍晚偏紫、夜里偏青 */
+:root[data-hp-daypart="dawn"] .hp-aurora i:nth-child(1){background:radial-gradient(circle,rgba(255,168,140,.9) 0,rgba(255,168,140,.38) 35%,transparent 68%)}
+:root[data-hp-daypart="day"] .hp-aurora i:nth-child(4){background:radial-gradient(circle,rgba(255,214,120,.85) 0,rgba(255,214,120,.32) 35%,transparent 68%)}
+:root[data-hp-daypart="dusk"] .hp-aurora i:nth-child(3){background:radial-gradient(circle,rgba(186,160,255,.95) 0,rgba(186,160,255,.38) 35%,transparent 68%)}
+:root[data-hp-daypart="night"] .hp-aurora i:nth-child(2){background:radial-gradient(circle,rgba(130,214,200,.9) 0,rgba(130,214,200,.34) 35%,transparent 68%)}
+
+/* 今日小苗（侧边栏底部） */
+.hp-sprout{display:flex;align-items:center;gap:10px;margin:0 4px 10px;padding:6px 10px;border-radius:14px;color:var(--hp-ink-3);font-size:12px;
+  background:linear-gradient(120deg,rgba(255,143,171,.08),rgba(122,215,192,.08));cursor:default;user-select:none}
+:root.dark .hp-sprout{background:linear-gradient(120deg,rgba(255,143,171,.07),rgba(122,215,192,.06))}
+.hp-sprout-pot{display:block;width:28px;height:28px;flex:none}
+.hp-sprout-pot svg{width:100%;height:100%;overflow:visible}
+.hp-sprout-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#app .sidebar:has(.sidebar-label-collapsed) .hp-sprout{justify-content:center;padding:6px 0}
+#app .sidebar:has(.sidebar-label-collapsed) .hp-sprout-text{display:none}
+.hp-sprout .hp-leaf{transform-box:fill-box;transform-origin:100% 100%;transition:transform .6s cubic-bezier(.34,1.6,.5,1)}
+.hp-sprout .hp-leaf.r{transform-origin:0 100%}
+.hp-sprout:hover .hp-leaf.l{transform:rotate(-10deg)}
+.hp-sprout:hover .hp-leaf.r{transform:rotate(10deg)}
+.hp-sprout .hp-bloom{transform-box:fill-box;transform-origin:50% 50%;transition:transform 1.2s cubic-bezier(.34,1.4,.5,1)}
+.hp-sprout:hover .hp-bloom{transform:rotate(36deg)}
+.hp-sprout-grow .hp-sprout-pot{animation:hp-sprout-grow .9s cubic-bezier(.34,1.6,.5,1)}
+@keyframes hp-sprout-grow{0%{transform:scale(.7) translateY(3px)}60%{transform:scale(1.12)}100%{transform:none}}
+
+/* 页尾落款：滚到页面底部才淡淡出现 */
+.hp-signoff{display:flex;align-items:center;justify-content:center;gap:8px;margin:40px 0 4px;font-size:12px;letter-spacing:.24em;color:var(--hp-ink-3);
+  opacity:0;transform:translateY(6px);transition:opacity 1.2s ease,transform 1.2s ease;user-select:none}
+.hp-signoff.hp-in{opacity:.55;transform:none}
+.hp-signoff-mark{width:12px;height:12px;border-radius:50%;
+  background:conic-gradient(from 0deg,#ffb38a,#ff8fab,#b9a7ff,#7ad7c0,#ffd76a,#ffb38a);
+  -webkit-mask:radial-gradient(circle,transparent 2.5px,#000 3px);mask:radial-gradient(circle,transparent 2.5px,#000 3px)}
+
+/* 提示条（建议轻量模式，只出现一次） */
+.hp-hint{position:fixed;left:50%;bottom:24px;z-index:2147482000;display:flex;align-items:center;gap:12px;max-width:min(640px,calc(100vw - 32px));
+  padding:12px 14px 12px 16px;border-radius:18px;font-size:13px;line-height:1.5;color:var(--hp-ink);
+  background:var(--hp-glass-solid);border:1px solid var(--hp-stroke);box-shadow:0 18px 40px -18px rgba(60,30,40,.35);
+  transform:translateX(-50%);animation:hp-hint-in .6s cubic-bezier(.34,1.4,.5,1) both}
+.hp-hint-out{animation:hp-hint-out .35s ease-in both}
+@keyframes hp-hint-in{from{opacity:0;transform:translate(-50%,16px)}to{opacity:1;transform:translateX(-50%)}}
+@keyframes hp-hint-out{to{opacity:0;transform:translate(-50%,10px)}}
+.hp-hint-leaf{width:14px;height:14px;flex:none;border-radius:0 100% 0 100%;background:linear-gradient(135deg,#9fe3cf,#7ad7c0)}
+.hp-hint-text{flex:1}
+.hp-hint button{flex:none;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;
+  border:1px solid var(--hp-stroke);background:rgba(255,255,255,.5);color:var(--hp-ink)}
+.hp-hint button[data-act="lite"]{background:linear-gradient(120deg,#ffb38a,#ff8fab);border-color:transparent;color:#fff}
+:root.dark .hp-hint button{background:rgba(255,255,255,.08)}
+:root.dark .hp-hint button[data-act="lite"]{background:linear-gradient(120deg,#e98a6a,#e46f93);color:#fff}
+
+/* 通知：玻璃底 + 与主题统一的色条（仍保留成功 / 失败 / 警告的辨识度） */
+body > div.fixed.right-4.top-4 > div{background:var(--hp-glass-solid) !important;-webkit-backdrop-filter:var(--hp-blur);backdrop-filter:var(--hp-blur);
+  border-radius:16px !important;box-shadow:0 18px 40px -18px rgba(60,30,40,.35) !important}
+body > div.fixed.right-4.top-4 > div.border-green-500{border-left-color:#4fc4a6 !important}
+body > div.fixed.right-4.top-4 > div.border-blue-500{border-left-color:#9a86ff !important}
+body > div.fixed.right-4.top-4 > div.border-yellow-500{border-left-color:#f3b54a !important}
+body > div.fixed.right-4.top-4 > div.border-red-500{border-left-color:#ef5f7d !important}
+body > div.fixed.right-4.top-4 .bg-green-500{background:linear-gradient(90deg,#7ad7c0,#4fc4a6) !important}
+body > div.fixed.right-4.top-4 .bg-blue-500{background:linear-gradient(90deg,#b9a7ff,#9a86ff) !important}
+.hp-lite body > div.fixed.right-4.top-4 > div,:root.hp-lite body > div.fixed.right-4.top-4 > div{-webkit-backdrop-filter:none !important;backdrop-filter:none !important}
+
+@media (prefers-reduced-motion:reduce){
+  .hp-sprout-grow .hp-sprout-pot,.hp-hint,.hp-hint-out{animation:none !important}
+  .hp-signoff{transition:none}
+}
