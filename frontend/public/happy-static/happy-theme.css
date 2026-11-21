@@ -854,3 +854,44 @@ body > div.fixed.right-4.top-4 .bg-blue-500{background:linear-gradient(90deg,#b9
 /* 卡片里其它大块实色面板（无边框的 bg-white / dark:bg-dark-800/900/950） */
 :root:not(.dark) #app :is(.card,.stat-card,.card-glass) :is(div,section,article,ul,aside,header,footer).bg-white:not(:is(.absolute,.fixed,.rounded-full,.shadow-lg,.shadow-xl,.dropdown)){background:rgba(255,255,255,.5) !important}
 :root.dark #app :is(.card,.stat-card,.card-glass) :is(div,section,article,ul,aside,header,footer):is([class*="dark:bg-dark-800"],[class*="dark:bg-dark-900"],[class*="dark:bg-dark-950"]):not(:is(.absolute,.fixed,.rounded-full,.shadow-lg,.shadow-xl,.dropdown,[class*="hover:"])){background:rgba(255,255,255,.04) !important}
+
+/* ==========================================================
+ * 下拉框：玻璃材质
+ * - Select（Teleport 到 body）：真实毛玻璃
+ * - 卡片内的下拉（时间范围、列设置等）：外层卡片已有 backdrop-filter，嵌套的模糊只能采样到卡片本身，
+ *   伸出卡片的部分会变成透明看不清，所以用接近不透明、同色调的玻璃底
+ * 选项的悬停 / 选中 / 聚焦统一成主题粉色调
+ * ========================================================== */
+.select-dropdown-portal{
+  background:linear-gradient(140deg,rgba(255,255,255,.86),rgba(255,255,255,.74)) !important;
+  -webkit-backdrop-filter:var(--hp-blur);backdrop-filter:var(--hp-blur);
+  border:1px solid var(--hp-stroke) !important;border-radius:16px !important;
+  box-shadow:0 24px 50px -20px rgba(60,30,40,.35),inset 0 1px 0 rgba(255,255,255,.7) !important}
+:root.dark .select-dropdown-portal{
+  background:linear-gradient(140deg,rgba(46,40,50,.9),rgba(32,28,36,.86)) !important;
+  border-color:rgba(255,255,255,.1) !important;
+  box-shadow:0 24px 50px -20px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.06) !important}
+#app .date-picker-dropdown,
+#app .card .absolute:is(.shadow-lg,.shadow-xl):is(.bg-white,[class*="dark:bg-dark-"]):not(.rounded-full){
+  background:linear-gradient(140deg,rgba(255,255,255,.97),rgba(255,250,249,.94)) !important;
+  -webkit-backdrop-filter:none !important;backdrop-filter:none !important;
+  border:1px solid rgba(255,255,255,.9) !important;border-radius:16px !important;
+  box-shadow:0 24px 50px -20px rgba(60,30,40,.35),0 0 0 1px rgba(29,29,31,.05) !important}
+:root.dark #app .date-picker-dropdown,
+:root.dark #app .card .absolute:is(.shadow-lg,.shadow-xl):is(.bg-white,[class*="dark:bg-dark-"]):not(.rounded-full){
+  background:linear-gradient(140deg,rgba(44,38,48,.98),rgba(32,28,36,.97)) !important;
+  border-color:rgba(255,255,255,.1) !important;
+  box-shadow:0 24px 50px -20px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.05) !important}
+/* 选项状态 */
+.select-dropdown-portal .select-option:hover,.select-dropdown-portal .select-option-focused,
+#app .card .absolute.shadow-lg :is(button,a,li):hover{background:rgba(255,143,171,.1) !important}
+:root.dark .select-dropdown-portal .select-option:hover,:root.dark .select-dropdown-portal .select-option-focused,
+:root.dark #app .card .absolute.shadow-lg :is(button,a,li):hover{background:rgba(255,143,171,.1) !important}
+.select-dropdown-portal .select-option-selected{background:rgba(255,143,171,.16) !important}
+.select-dropdown-portal .select-option-group,.select-dropdown-portal .select-option-group:hover{background:rgba(29,29,31,.035) !important}
+:root.dark .select-dropdown-portal .select-option-group,:root.dark .select-dropdown-portal .select-option-group:hover{background:rgba(255,255,255,.04) !important}
+.select-dropdown-portal .select-search{border-color:var(--hp-hair) !important}
+.select-dropdown-portal .select-option{border-radius:10px;margin:0 6px}
+/* 时间范围里的快捷项 / 输入框随玻璃 */
+#app .date-picker-dropdown .date-picker-divider{background:var(--hp-hair) !important}
+:root.hp-lite .select-dropdown-portal{-webkit-backdrop-filter:none !important;backdrop-filter:none !important;background:var(--hp-glass-solid) !important}

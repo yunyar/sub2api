@@ -484,6 +484,7 @@
 </template>
 
 <script setup lang="ts">
+import { useIsDark } from '@/composables/useIsDark'
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
@@ -532,9 +533,7 @@ const loading = ref(false)
 const stats = ref<AccountUsageStatsResponse | null>(null)
 
 // Dark mode detection
-const isDarkMode = computed(() => {
-  return document.documentElement.classList.contains('dark')
-})
+const isDarkMode = useIsDark()
 
 // Chart colors
 const chartColors = computed(() => ({
