@@ -46,7 +46,9 @@ func TestPlaygroundImageBalanceWithPostgres(t *testing.T) {
 	require.NoError(t, err)
 	_, err = database.ExecContext(t.Context(), string(migration))
 	require.NoError(t, err)
-	repo := &usageBillingRepository{db: database}
+	repo := service.ProvideUsageBillingRepository(service.NewUsageBillingLaneCombiner(NewUsageBillingRepository(nil, database)))
+	settler, ok := repo.(service.PlaygroundImageBillingRepository)
+	require.True(t, ok)
 	newHold := func(userID int64, suffix string, amount float64) *service.BatchImageBalanceHoldCommand {
 		batchID := fmt.Sprintf("playground-image:%d:%s", userID, suffix)
 		return &service.BatchImageBalanceHoldCommand{BatchID: batchID, RequestID: service.BatchImageHoldRequestID(batchID), UserID: userID, APIKeyID: userID, HoldAmount: amount, UnitAmount: amount, RequestedCount: 1}
@@ -56,7 +58,7 @@ func TestPlaygroundImageBalanceWithPostgres(t *testing.T) {
 		capture.RequestID = service.PlaygroundImageTerminalRequestID(hold.BatchID)
 		capture.RequestFingerprint = ""
 		capture.ActualAmount = amount
-		return repo.SettlePlaygroundImageBalance(t.Context(), &capture, &service.UsageBillingCommand{RequestID: "usage:" + hold.BatchID, APIKeyID: hold.APIKeyID, UserID: hold.UserID})
+		return settler.SettlePlaygroundImageBalance(t.Context(), &capture, &service.UsageBillingCommand{RequestID: "usage:" + hold.BatchID, APIKeyID: hold.APIKeyID, UserID: hold.UserID})
 	}
 	release := func(hold *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
 		refund := *hold

@@ -31,11 +31,13 @@ type laneTestRepo struct {
 	// started 每条命令开始结算时写入其 requestID。
 	started chan string
 
-	batchErr    error
-	batchPanic  bool
-	applyPanic  map[string]bool
-	outcomeErrs map[string]error
-	holdCalls   atomic.Int32
+	batchErr     error
+	batchPanic   bool
+	applyPanic   map[string]bool
+	outcomeErrs  map[string]error
+	holdCalls    atomic.Int32
+	settledHold  *BatchImageBalanceHoldCommand
+	settledUsage *UsageBillingCommand
 	// deadlines 记录每条单条 Apply 收到的上下文截止时间。
 	deadlines map[string]time.Time
 }
@@ -160,6 +162,12 @@ func (r *laneTestRepo) ReleaseBatchImageBalance(context.Context, *BatchImageBala
 	return &BatchImageBalanceHoldResult{Applied: true}, nil
 }
 
+func (r *laneTestRepo) SettlePlaygroundImageBalance(_ context.Context, hold *BatchImageBalanceHoldCommand, usage *UsageBillingCommand) (*UsageBillingApplyResult, error) {
+	r.settledHold = hold
+	r.settledUsage = usage
+	return &UsageBillingApplyResult{Applied: true}, nil
+}
+
 func (r *laneTestRepo) block(requestID string) chan struct{} {
 	ch := make(chan struct{})
 	r.mu.Lock()
@@ -247,6 +255,23 @@ func TestUsageBillingLane_HoldMethodsPassThrough(t *testing.T) {
 	_, err = c.ReleaseBatchImageBalance(ctx, &BatchImageBalanceHoldCommand{})
 	require.NoError(t, err)
 	require.EqualValues(t, 3, repo.holdCalls.Load())
+}
+
+func TestUsageBillingLane_PlaygroundSettlementPassesThrough(t *testing.T) {
+	repo := newLaneTestRepo()
+	billingRepo := ProvideUsageBillingRepository(NewUsageBillingLaneCombiner(repo))
+	settler, ok := billingRepo.(PlaygroundImageBillingRepository)
+	require.True(t, ok, "the gateway billing repository must support Playground settlement")
+
+	hold := &BatchImageBalanceHoldCommand{HoldAmount: 1.1256, ActualAmount: 0.8442}
+	usage := &UsageBillingCommand{RequestID: "playground-image-usage"}
+	result, err := settler.SettlePlaygroundImageBalance(t.Context(), hold, usage)
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Same(t, hold, repo.settledHold)
+	require.Same(t, usage, repo.settledUsage)
+	require.Empty(t, repo.applyCalls)
+	require.Empty(t, repo.batchCalls)
 }
 
 func TestUsageBillingLane_MissingRequestIDAppliesDirectly(t *testing.T) {

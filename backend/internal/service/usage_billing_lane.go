@@ -118,6 +118,10 @@ func (c *UsageBillingLaneCombiner) ReleaseBatchImageBalance(ctx context.Context,
 	return c.repo.ReleaseBatchImageBalance(ctx, cmd)
 }
 
+func (c *UsageBillingLaneCombiner) SettlePlaygroundImageBalance(ctx context.Context, hold *BatchImageBalanceHoldCommand, usage *UsageBillingCommand) (*UsageBillingApplyResult, error) {
+	return c.repo.SettlePlaygroundImageBalance(ctx, hold, usage)
+}
+
 // Stop 拒收新命令（之后的 Apply 直接调用底层仓储），并等待所有通道结算完已排队的命令。可重复调用。
 func (c *UsageBillingLaneCombiner) Stop() {
 	if c == nil {
