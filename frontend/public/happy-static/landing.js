@@ -205,6 +205,11 @@ addEventListener('scroll', () => { if (nav.classList.contains('open') && Math.ab
 /* ---------- 进场动画 ---------- */
 const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); } }), {threshold: .12, rootMargin: '0px 0px -40px'});
 $$('.reveal').forEach(el => io.observe(el));
+// 兜底：个别浏览器里观察器没触发时，已在视口内的元素也要显示出来
+const revealVisible = () => $$('.reveal:not(.in)').forEach(el => { const r = el.getBoundingClientRect(); if (r.top < innerHeight && r.bottom > 0) el.classList.add('in'); });
+let revealQueued = false;
+addEventListener('scroll', () => { if (revealQueued) return; revealQueued = true; setTimeout(() => { revealQueued = false; revealVisible(); }, 400); }, {passive: true});
+setTimeout(revealVisible, 1500);
 
 /* ---------- 数字滚动 ---------- */
 const cio = new IntersectionObserver(es => es.forEach(e => {
