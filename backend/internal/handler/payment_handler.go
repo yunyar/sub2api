@@ -34,12 +34,16 @@ func NewPaymentHandler(paymentService *service.PaymentService, configService *se
 // GetPaymentConfig returns the payment system configuration.
 // GET /api/v1/payment/config
 func (h *PaymentHandler) GetPaymentConfig(c *gin.Context) {
+	subject, ok := requireAuth(c)
+	if !ok {
+		return
+	}
 	cfg, err := h.configService.GetPaymentConfig(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, cfg)
+	response.Success(c, cfg.RechargePromotionForUser(subject.UserID))
 }
 
 // GetPlans returns subscription plans available for sale.
@@ -95,6 +99,10 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 // payment methods with limits, subscription plans, and configuration.
 // GET /api/v1/payment/checkout-info
 func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
+	subject, ok := requireAuth(c)
+	if !ok {
+		return
+	}
 	ctx := c.Request.Context()
 
 	// Fetch limits (methods + global range)
@@ -110,6 +118,7 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	cfg = cfg.RechargePromotionForUser(subject.UserID)
 	alipayMobilePrecreateDeepLink := false
 	if cfg.AlipayMobilePrecreateDeepLink {
 		alipayMobilePrecreateDeepLink, err = h.configService.UsesOfficialAlipayVisibleMethod(ctx)

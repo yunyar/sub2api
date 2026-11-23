@@ -333,7 +333,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -366,6 +366,8 @@ type TextAttachment = { id: string; name: string; kind: 'text'; text: string; si
 type ImageAttachment = { id: string; name: string; kind: 'image'; dataUrl: string; size: number }
 type PlaygroundAttachment = TextAttachment | ImageAttachment
 type RequestContext = { accountId: number | null; epoch: number; conversationId: string }
+defineOptions({ name: 'PlaygroundView' })
+
 const maxMessageBytes = 1024 * 1024
 const maxConversationBytes = 4 * 1024 * 1024
 const textAttachmentExtensions = new Set([
@@ -395,6 +397,14 @@ const mobileModelLabel = computed(() => {
 function updateMobileViewport() {
   const viewport = window.visualViewport
   mobileViewportHeight.value = viewport?.scale === 1 ? Math.round(viewport.height) : 0
+}
+
+function syncMobileViewport() {
+  window.visualViewport?.removeEventListener('resize', updateMobileViewport)
+  if (pageActive && props.mobile) {
+    updateMobileViewport()
+    window.visualViewport?.addEventListener('resize', updateMobileViewport)
+  }
 }
 
 function closeMobilePanels() {
@@ -460,6 +470,7 @@ let accountEpoch = 0
 let attachmentQueue: Promise<void> = Promise.resolve()
 let attachmentBatchCount = 0
 let disposed = false
+let pageActive = true
 let saveQueue: Promise<boolean> = Promise.resolve(true)
 let lastMessageId = Date.now()
 const acceptedRevisions = new Map<string, number>()
@@ -892,7 +903,7 @@ function onViewportScroll() {
   if (el) stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
 }
 function followBottom() {
-  if (!viewport.value || followFrame || !stickToBottom) return
+  if (!pageActive || !viewport.value || followFrame || !stickToBottom) return
   followFrame = requestAnimationFrame(() => {
     followFrame = 0
     if (viewport.value) viewport.value.scrollTop = viewport.value.scrollHeight
@@ -1025,6 +1036,7 @@ async function saveConversation(snapshot = JSON.parse(JSON.stringify(current.val
       acceptedRevisions.set(saved.id, saved.revision)
       if (current.value.id === saved.id) {
         current.value.revision = saved.revision; current.value.expiresAt = saved.expiresAt
+        if (accountId.value !== null) saveLastConversation(accountId.value, saved.id)
       }
       conversations.value = [saved, ...conversations.value.filter(item => item.id !== saved.id)]
       saveError.value = ''
@@ -1371,6 +1383,7 @@ async function send(edit?: { fromId: StoredMessage['id']; content: string }) {
         onDelta(delta) {
           if (!isCurrentRequest(context)) return
           typer.push(delta)
+          if (!pageActive) typer.flush()
         }
       })
       await typer.finish()
@@ -1467,11 +1480,21 @@ watch(accountId, (account, previousAccount) => {
   }
   void initializeRouteOptions(account)
 })
+watch(() => props.mobile, syncMobileViewport)
+onActivated(() => {
+  pageActive = true
+  syncMobileViewport()
+  followBottom()
+})
+onDeactivated(() => {
+  pageActive = false
+  syncMobileViewport()
+  preview.value = null
+  autoRoutingEditorOpen.value = false
+  deleteTarget.value = ''
+})
 onMounted(async () => {
-  if (props.mobile) {
-    updateMobileViewport()
-    window.visualViewport?.addEventListener('resize', updateMobileViewport)
-  }
+  syncMobileViewport()
   timer = setInterval(() => {
     now.value = Date.now()
     const expiredImages = images.value.filter(image => image.expiresAt && image.expiresAt <= now.value)

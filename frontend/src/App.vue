@@ -153,7 +153,11 @@ onMounted(async () => {
 
 <template>
   <NavigationProgress />
-  <RouterView />
+  <RouterView v-slot="{ Component }">
+    <KeepAlive :key="authStore.user?.id ?? 'signed-out'" include="PlaygroundView">
+      <component :is="Component" />
+    </KeepAlive>
+  </RouterView>
   <Toast />
   <AnnouncementPopup />
   <AdminComplianceDialog />

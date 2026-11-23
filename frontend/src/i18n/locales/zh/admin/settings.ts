@@ -788,6 +788,7 @@ export default {
         rechargeFeeRateHint: '用户充值时额外收取的手续费百分比，0 表示不收取手续费',
         rechargeFeePreview: '预览：充值 100 元，手续费 {fee} 元',
         rechargeBonus: {
+          excludedUsers: '不参与充值优惠的账号',
           label: '充值优惠阶梯',
           hint: '余额充值按用户输入的金额命中档位（取不超过该金额的最大档）；不配置则无优惠。订阅订单不参与。',
           modeLabel: '优惠方式',

@@ -8453,7 +8453,20 @@
             v-model="form.payment_recharge_bonus_tiers"
             v-model:mode="form.payment_recharge_bonus_mode"
             v-model:notice="form.payment_recharge_bonus_notice"
-          />
+          >
+            <template #exclusions>
+              <div
+                class="border-t border-gray-100 pt-4 dark:border-dark-700"
+                role="group"
+                aria-labelledby="recharge-promotion-exclusions"
+              >
+                <p id="recharge-promotion-exclusions" class="input-label">
+                  {{ t("admin.settings.payment.rechargeBonus.excludedUsers") }}
+                </p>
+                <OpenAIFastPolicyUserSelector v-model="form.payment_recharge_bonus_excluded_user_ids" />
+              </div>
+            </template>
+          </RechargeBonusTierEditor>
 
           <!-- Provider Management -->
           <PaymentProviderList
@@ -9762,6 +9775,7 @@ type SettingsForm = Omit<
   payment_recharge_bonus_tiers: RechargeBonusTierDraft[];
   payment_recharge_bonus_mode: RechargeBonusMode;
   payment_recharge_bonus_notice: string;
+  payment_recharge_bonus_excluded_user_ids: number[];
   // 系统全局平台限额 map；form 内始终归一化为全部平台对象（模板非空绑定依赖此不变量）
   default_platform_quotas: DefaultPlatformQuotasMap;
   account_scheduling_thresholds: ReturnType<typeof normalizeAccountSchedulingThresholdsMap>;
@@ -9835,6 +9849,7 @@ const form = reactive<SettingsForm>({
   payment_recharge_bonus_tiers: [],
   payment_recharge_bonus_mode: "bonus",
   payment_recharge_bonus_notice: "",
+  payment_recharge_bonus_excluded_user_ids: [],
   payment_enabled_types: [],
   payment_help_image_url: "",
   payment_help_text: "",
@@ -11115,6 +11130,7 @@ async function loadSettings() {
       settings.payment_recharge_bonus_mode,
     );
     form.payment_recharge_bonus_notice = settings.payment_recharge_bonus_notice || "";
+    form.payment_recharge_bonus_excluded_user_ids = settings.payment_recharge_bonus_excluded_user_ids ?? [];
     form.default_platform_quotas = normalizePlatformQuotasMap(settings.default_platform_quotas);
     form.account_scheduling_thresholds = normalizeAccountSchedulingThresholdsMap(
       settings.account_scheduling_thresholds,
@@ -11730,6 +11746,7 @@ async function saveSettings() {
       ),
       payment_recharge_bonus_mode: form.payment_recharge_bonus_mode,
       payment_recharge_bonus_notice: form.payment_recharge_bonus_notice,
+      payment_recharge_bonus_excluded_user_ids: form.payment_recharge_bonus_excluded_user_ids,
       payment_enabled_types: form.payment_enabled_types,
       payment_load_balance_strategy: form.payment_load_balance_strategy,
       payment_product_name_prefix: form.payment_product_name_prefix,

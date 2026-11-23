@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -29,7 +30,8 @@ const (
 	// SettingRechargeBonusNotice 充值页金额卡顶部展示的 Markdown 活动文案，空表示不展示。
 	SettingRechargeBonusNotice = "RECHARGE_BONUS_NOTICE"
 	// SettingRechargeBonusMode 阶梯模式：bonus / discount；空/非法按 bonus 解析（兼容早期配置）。
-	SettingRechargeBonusMode = "RECHARGE_BONUS_MODE"
+	SettingRechargeBonusMode            = "RECHARGE_BONUS_MODE"
+	SettingRechargeBonusExcludedUserIDs = "RECHARGE_BONUS_EXCLUDED_USER_IDS"
 )
 
 const (
@@ -38,11 +40,57 @@ const (
 )
 
 const (
-	maxRechargeBonusTiers       = 20
-	maxRechargeBonusPercent     = 1000
-	maxRechargeBonusNoticeRunes = 10000
-	rechargeBonusAmountEpsilon  = 1e-9
+	maxRechargeBonusTiers         = 20
+	maxRechargeBonusPercent       = 1000
+	maxRechargeBonusNoticeRunes   = 10000
+	maxRechargeBonusExcludedUsers = 1000
+	rechargeBonusAmountEpsilon    = 1e-9
 )
+
+func normalizeRechargeBonusExcludedUserIDs(ids []int64) ([]int64, error) {
+	if len(ids) > maxRechargeBonusExcludedUsers {
+		return nil, fmt.Errorf("recharge promotion exclusions exceed %d users", maxRechargeBonusExcludedUsers)
+	}
+	out := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, fmt.Errorf("recharge promotion exclusions must be positive user IDs")
+		}
+		if _, exists := seen[id]; !exists {
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+func parseRechargeBonusExcludedUserIDs(raw string) []int64 {
+	if raw == "" {
+		return []int64{}
+	}
+	var ids []int64
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		slog.Warn("[Payment] Invalid recharge promotion exclusions", "error", err)
+		return []int64{}
+	}
+	normalized, err := normalizeRechargeBonusExcludedUserIDs(ids)
+	if err != nil {
+		slog.Warn("[Payment] Invalid recharge promotion exclusions", "error", err)
+		return []int64{}
+	}
+	return normalized
+}
+
+func (cfg *PaymentConfig) RechargePromotionForUser(userID int64) *PaymentConfig {
+	if cfg == nil || !slices.Contains(cfg.RechargeBonusExcludedUserIDs, userID) {
+		return cfg
+	}
+	effective := *cfg
+	effective.RechargeBonusTiers = []RechargeBonusTier{}
+	effective.RechargeBonusNotice = ""
+	return &effective
+}
 
 // RechargeBonusTier 一个优惠档位：支付金额 ≥ MinAmount 时按 BonusPercent% 赠送（bonus）或打折（discount）。
 type RechargeBonusTier struct {

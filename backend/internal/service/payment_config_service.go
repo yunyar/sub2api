@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -75,6 +76,8 @@ type PaymentConfig struct {
 	HelpText             string `json:"help_text"`
 	StripePublishableKey string `json:"stripe_publishable_key,omitempty"`
 
+	RechargeBonusExcludedUserIDs []int64 `json:"-"`
+
 	// Cancel rate limit settings
 	CancelRateLimitEnabled bool   `json:"cancel_rate_limit_enabled"`
 	CancelRateLimitMax     int    `json:"cancel_rate_limit_max"`
@@ -110,6 +113,8 @@ type UpdatePaymentConfigRequest struct {
 	ProductNameSuffix   *string              `json:"product_name_suffix"`
 	HelpImageURL        *string              `json:"help_image_url"`
 	HelpText            *string              `json:"help_text"`
+
+	RechargeBonusExcludedUserIDs *[]int64 `json:"recharge_bonus_excluded_user_ids"`
 
 	// Cancel rate limit settings
 	CancelRateLimitEnabled *bool   `json:"cancel_rate_limit_enabled"`
@@ -231,6 +236,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 		SettingDailyRechargeLimit, SettingOrderTimeoutMinutes, SettingMaxPendingOrders,
 		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionUSDToCNYRate, SettingRechargeFeeRate, SettingLoadBalanceStrategy,
 		SettingRechargeBonusTiers, SettingRechargeBonusMode, SettingRechargeBonusNotice,
+		SettingRechargeBonusExcludedUserIDs,
 		SettingProductNamePrefix, SettingProductNameSuffix,
 		SettingHelpImageURL, SettingHelpText,
 		SettingCancelRateLimitOn, SettingCancelRateLimitMax,
@@ -268,6 +274,8 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		ProductNameSuffix:         vals[SettingProductNameSuffix],
 		HelpImageURL:              vals[SettingHelpImageURL],
 		HelpText:                  vals[SettingHelpText],
+
+		RechargeBonusExcludedUserIDs: parseRechargeBonusExcludedUserIDs(vals[SettingRechargeBonusExcludedUserIDs]),
 
 		CancelRateLimitEnabled: vals[SettingCancelRateLimitOn] == "true",
 		CancelRateLimitMax:     pcParseInt(vals[SettingCancelRateLimitMax], 10),
@@ -414,6 +422,17 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	}
 	if req.RechargeBonusNotice != nil {
 		m[SettingRechargeBonusNotice] = strings.TrimSpace(*req.RechargeBonusNotice)
+	}
+	if req.RechargeBonusExcludedUserIDs != nil {
+		ids, err := normalizeRechargeBonusExcludedUserIDs(*req.RechargeBonusExcludedUserIDs)
+		if err != nil {
+			return infraerrors.BadRequest("INVALID_RECHARGE_BONUS_EXCLUDED_USERS", err.Error())
+		}
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return err
+		}
+		m[SettingRechargeBonusExcludedUserIDs] = string(encoded)
 	}
 	if req.LoadBalanceStrategy != nil {
 		m[SettingLoadBalanceStrategy] = derefStr(req.LoadBalanceStrategy)

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 
+import { adminAPI } from "@/api/admin";
 import enCommon from "@/i18n/locales/en/common";
 import enSettings from "@/i18n/locales/en/admin/settings";
 import zhCommon from "@/i18n/locales/zh/common";
@@ -1191,6 +1192,50 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ payment_recharge_bonus_tiers: [] }),
     );
+  });
+
+  it("restores, edits, and clears recharge promotion exclusions", async () => {
+    const existingUser = { id: 42, email: "existing@example.com" };
+    const newUser = { id: 17, email: "new@example.com" };
+    const getUser = vi.spyOn(adminAPI.users, "getById").mockResolvedValue(
+      existingUser as Awaited<ReturnType<typeof adminAPI.users.getById>>,
+    );
+    const search = vi.spyOn(adminAPI.usage, "searchUsers").mockResolvedValue([newUser]);
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      payment_recharge_bonus_excluded_user_ids: [existingUser.id],
+    });
+    const wrapper = mountView();
+    try {
+      await flushPromises();
+      await openPaymentTab(wrapper);
+      const exclusions = wrapper.get('[aria-labelledby="recharge-promotion-exclusions"]');
+      expect(exclusions.text()).toContain(existingUser.email);
+      expect(getUser).toHaveBeenCalledWith(existingUser.id, true);
+
+      await exclusions.get("input").setValue(newUser.email);
+      await vi.waitFor(() => expect(search).toHaveBeenCalledWith(newUser.email));
+      await flushPromises();
+      await exclusions.findAll("button").find((button) => button.text().includes(newUser.email))!.trigger("click");
+      await wrapper.get("form").trigger("submit.prevent");
+      await flushPromises();
+      expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+        payment_recharge_bonus_excluded_user_ids: [existingUser.id, newUser.id],
+      }));
+
+      for (const button of exclusions.findAll("button[aria-label]")) {
+        await button.trigger("click");
+      }
+      await wrapper.get("form").trigger("submit.prevent");
+      await flushPromises();
+      expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+        payment_recharge_bonus_excluded_user_ids: [],
+      }));
+    } finally {
+      wrapper.unmount();
+      search.mockRestore();
+      getUser.mockRestore();
+    }
   });
 
   it("links payment guidance to README sections instead of removed payment docs", async () => {

@@ -681,6 +681,7 @@ export interface SystemSettings {
   payment_recharge_bonus_tiers?: RechargeBonusTier[];
   payment_recharge_bonus_mode?: string;
   payment_recharge_bonus_notice?: string;
+  payment_recharge_bonus_excluded_user_ids?: number[];
   payment_load_balance_strategy: string;
   payment_product_name_prefix: string;
   payment_product_name_suffix: string;
@@ -1007,6 +1008,7 @@ export interface UpdateSettingsRequest {
   payment_recharge_bonus_tiers?: RechargeBonusTier[];
   payment_recharge_bonus_mode?: string;
   payment_recharge_bonus_notice?: string;
+  payment_recharge_bonus_excluded_user_ids?: number[];
   payment_load_balance_strategy?: string;
   payment_product_name_prefix?: string;
   payment_product_name_suffix?: string;

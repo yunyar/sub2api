@@ -292,6 +292,8 @@ type SystemSettings struct {
 	PaymentHelpImageURL        string              `json:"payment_help_image_url"`
 	PaymentHelpText            string              `json:"payment_help_text"`
 
+	PaymentRechargeBonusExcludedUserIDs []int64 `json:"payment_recharge_bonus_excluded_user_ids"`
+
 	// Cancel rate limit
 	PaymentCancelRateLimitEnabled bool   `json:"payment_cancel_rate_limit_enabled"`
 	PaymentCancelRateLimitMax     int    `json:"payment_cancel_rate_limit_max"`

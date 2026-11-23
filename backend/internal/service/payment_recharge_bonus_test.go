@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -216,6 +217,67 @@ func TestUpdatePaymentConfigRechargeBonus(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, repo.updates)
 	})
+}
+
+func TestUpdatePaymentConfigRechargeBonusExclusions(t *testing.T) {
+	ctx := context.Background()
+	repo := &paymentConfigSettingRepoStub{values: map[string]string{}}
+	svc := &PaymentConfigService{settingRepo: repo}
+
+	ids := []int64{42, 17, 42}
+	require.NoError(t, svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{RechargeBonusExcludedUserIDs: &ids}))
+	require.Equal(t, `[42,17]`, repo.updates[SettingRechargeBonusExcludedUserIDs])
+
+	cfg, err := svc.GetPaymentConfig(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []int64{42, 17}, cfg.RechargeBonusExcludedUserIDs)
+	data, err := json.Marshal(cfg)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "excluded_user_ids")
+	require.NotContains(t, string(data), "[42,17]")
+
+	invalid := []int64{42, 0}
+	require.Error(t, svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{RechargeBonusExcludedUserIDs: &invalid}))
+	require.Equal(t, `[42,17]`, repo.values[SettingRechargeBonusExcludedUserIDs])
+
+	empty := []int64{}
+	require.NoError(t, svc.UpdatePaymentConfig(ctx, UpdatePaymentConfigRequest{RechargeBonusExcludedUserIDs: &empty}))
+	cfg, err = svc.GetPaymentConfig(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []int64{}, cfg.RechargeBonusExcludedUserIDs)
+}
+
+func TestRechargePromotionForUser(t *testing.T) {
+	cases := []struct {
+		mode     string
+		eligible rechargeBonusQuote
+	}{
+		{mode: RechargeBonusModeBonus, eligible: rechargeBonusQuote{PayBase: 100, Credited: 16.8, Bonus: 2.8, Percent: 20}},
+		{mode: RechargeBonusModeDiscount, eligible: rechargeBonusQuote{PayBase: 80, Credited: 14, Bonus: 2.8, Percent: 20}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
+			cfg := &PaymentConfig{
+				BalanceRechargeMultiplier:    0.14,
+				RechargeFeeRate:              3,
+				RechargeBonusTiers:           []RechargeBonusTier{{MinAmount: 100, BonusPercent: 20}},
+				RechargeBonusMode:            tc.mode,
+				RechargeBonusNotice:          "活动文案",
+				RechargeBonusExcludedUserIDs: []int64{42},
+			}
+			excluded := cfg.RechargePromotionForUser(42)
+			require.Empty(t, excluded.RechargeBonusNotice)
+			require.Equal(t, []RechargeBonusTier{}, excluded.RechargeBonusTiers)
+			require.Equal(t, rechargeBonusQuote{PayBase: 100, Credited: 14}, quoteRechargeBonus(excluded, 100, "CNY"))
+			_, payAmount, err := calculateCreateOrderPayAmountForOrderType(100, excluded.RechargeFeeRate, "CNY", payment.OrderTypeBalance, 0)
+			require.NoError(t, err)
+			require.Equal(t, 103.0, payAmount)
+
+			eligible := cfg.RechargePromotionForUser(17)
+			require.Equal(t, "活动文案", eligible.RechargeBonusNotice)
+			require.Equal(t, tc.eligible, quoteRechargeBonus(eligible, 100, "CNY"))
+		})
+	}
 }
 
 func TestAffiliateRebateBaseAmountExcludesRechargeBonus(t *testing.T) {

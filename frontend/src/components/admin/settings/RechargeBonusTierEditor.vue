@@ -154,6 +154,8 @@
         >{{ intervalLabel(interval) }}</span>
       </p>
 
+      <slot name="exclusions" />
+
       <!-- 活动文案 -->
       <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
         <label class="input-label">
