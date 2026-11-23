@@ -15,6 +15,7 @@ import (
 )
 
 func TestBloomFirstVisitFreezesAndPaysOneWeek(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := t.Context()
 	owner := mustCreateUser(t, integrationEntClient, &service.User{Balance: 2})
 	repo := NewBloomRepository(integrationDB)

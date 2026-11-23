@@ -172,7 +172,7 @@ func (p *bloomPlanner) generate(ctx context.Context, adminID int64, settings *bl
 	if err != nil {
 		return badResponse
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return badResponse
 	}

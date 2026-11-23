@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"math"
@@ -15,7 +14,6 @@ import (
 	apperrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
-	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -23,7 +21,7 @@ import (
 )
 
 type BloomHandler struct {
-	store    repository.BloomRepository
+	store    service.BloomRepository
 	balances *service.BillingCacheService
 	keys     *service.APIKeyService
 	planner  *bloomPlanner
@@ -32,8 +30,8 @@ type BloomHandler struct {
 	}
 }
 
-func NewBloomHandler(db *sql.DB, balances *service.BillingCacheService, keys *service.APIKeyService, settings service.SettingRepository, cfg *config.Config, alerts *service.OpsAlertEvaluatorService) *BloomHandler {
-	return &BloomHandler{store: repository.NewBloomRepository(db), balances: balances, keys: keys, planner: newBloomPlanner(settings, keys, cfg.Server.Port), alerts: alerts}
+func NewBloomHandler(store service.BloomRepository, balances *service.BillingCacheService, keys *service.APIKeyService, settings service.SettingRepository, cfg *config.Config, alerts *service.OpsAlertEvaluatorService) *BloomHandler {
+	return &BloomHandler{store: store, balances: balances, keys: keys, planner: newBloomPlanner(settings, keys, cfg.Server.Port), alerts: alerts}
 }
 
 type bloomTaskView struct {
@@ -59,29 +57,29 @@ type bloomGarden struct {
 	Tasks            []bloomTaskView `json:"tasks"`
 }
 
-func bloomStats(usage repository.BloomUsageStats) bloomrules.Stats {
+func bloomStats(usage service.BloomUsageStats) bloomrules.Stats {
 	return bloomrules.Stats{Requests: usage.TotalRecords, ProductiveRequests: usage.OutputRequests,
 		OutputTokens: usage.OutputTokens, Images: usage.ImageCount, ActiveDays: usage.ActiveDays}
 }
 
-func (h *BloomHandler) stats(ctx context.Context, userID int64, window bloomrules.Window) (repository.BloomUsageStats, error) {
+func (h *BloomHandler) stats(ctx context.Context, userID int64, window bloomrules.Window) (service.BloomUsageStats, error) {
 	if !window.Start.Before(window.End) {
-		return repository.BloomUsageStats{}, nil
+		return service.BloomUsageStats{}, nil
 	}
 	return h.store.UsageStats(ctx, userID, window.Start, window.End, window.Start.Location().String())
 }
 
-func currentBloomTasks(week repository.BloomWeek, day time.Time) map[bloomrules.Tier]repository.BloomTask {
-	result := make(map[bloomrules.Tier]repository.BloomTask, 4)
+func currentBloomTasks(week service.BloomWeek, day time.Time) map[bloomrules.Tier]service.BloomTask {
+	result := make(map[bloomrules.Tier]service.BloomTask, 4)
 	for _, task := range week.Tasks {
-		if task.Difficulty == repository.BloomWeekly || task.PeriodStart.Equal(day) {
+		if task.Difficulty == service.BloomWeekly || task.PeriodStart.Equal(day) {
 			result[bloomrules.Tier(task.Difficulty)] = task
 		}
 	}
 	return result
 }
 
-func (h *BloomHandler) ensureWeek(ctx context.Context, userID int64, at time.Time, periods bloomrules.Periods) (repository.BloomWeek, error) {
+func (h *BloomHandler) ensureWeek(ctx context.Context, userID int64, at time.Time, periods bloomrules.Periods) (service.BloomWeek, error) {
 	week, err := h.store.GetWeek(ctx, userID, periods.Week.Start)
 	if err != nil {
 		return week, err
@@ -124,15 +122,15 @@ func (h *BloomHandler) ensureWeek(ctx context.Context, userID int64, at time.Tim
 		modality = bloomrules.Classify(bloomStats(prior))
 	}
 	split := h.planner.split(ctx, modality)
-	issue := func(budget int64) (repository.BloomWeek, error) {
+	issue := func(budget int64) (service.BloomWeek, error) {
 		drafts, err := newBloomDrafts(schedule, split, budget)
 		if err != nil {
-			return repository.BloomWeek{}, err
+			return service.BloomWeek{}, err
 		}
 		return h.store.EnsureTasks(ctx, userID, periods.Week.Start, budget, drafts)
 	}
 	week, err = issue(budget)
-	if errors.Is(err, repository.ErrBloomBudgetChanged) {
+	if errors.Is(err, service.ErrBloomBudgetChanged) {
 		if len(week.Tasks) == tasksPerWeek {
 			return week, nil
 		}
@@ -141,21 +139,21 @@ func (h *BloomHandler) ensureWeek(ctx context.Context, userID int64, at time.Tim
 	return week, err
 }
 
-func newBloomDrafts(schedule [7]bloomrules.Assignment, split bloomSplit, budget int64) ([]repository.BloomTaskDraft, error) {
+func newBloomDrafts(schedule [7]bloomrules.Assignment, split bloomSplit, budget int64) ([]service.BloomTaskDraft, error) {
 	var challenges []bloomrules.Challenge
 	for _, assignment := range schedule {
 		challenges = append(challenges, assignment.Daily[:]...)
 	}
 	challenges = append(challenges, schedule[0].Weekly)
-	drafts := make([]repository.BloomTaskDraft, 0, len(challenges))
+	drafts := make([]service.BloomTaskDraft, 0, len(challenges))
 	for _, challenge := range challenges {
 		challenge.RewardMicros = split.reward(budget, challenge.Tier)
 		template, err := json.Marshal(challenge)
 		if err != nil {
 			return nil, err
 		}
-		drafts = append(drafts, repository.BloomTaskDraft{PeriodStart: challenge.Window.Start,
-			Difficulty: repository.BloomDifficulty(challenge.Tier), Template: template, RewardMicros: challenge.RewardMicros})
+		drafts = append(drafts, service.BloomTaskDraft{PeriodStart: challenge.Window.Start,
+			Difficulty: service.BloomDifficulty(challenge.Tier), Template: template, RewardMicros: challenge.RewardMicros})
 	}
 	return drafts, nil
 }
@@ -235,9 +233,9 @@ func (h *BloomHandler) serveGarden(c *gin.Context, claiming bool) {
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, repository.ErrBloomTaskNotFound):
+		case errors.Is(err, service.ErrBloomTaskNotFound):
 			response.NotFound(c, "Task is outside the current garden")
-		case errors.Is(err, repository.ErrBloomExpired), errors.Is(err, repository.ErrBloomBudgetExceeded):
+		case errors.Is(err, service.ErrBloomExpired), errors.Is(err, service.ErrBloomBudgetExceeded):
 			response.Error(c, http.StatusConflict, "Task reward is no longer available")
 		default:
 			response.ErrorFrom(c, err)
@@ -257,7 +255,8 @@ func (h *BloomHandler) claim(ctx context.Context, userID, taskID int64, garden *
 		if task.Claimed {
 			return nil
 		}
-		if task.Progress < task.Target && !(task.Tier == bloomrules.Easy && task.Metric == bloomrules.CheckIn) {
+		checkIn := task.Tier == bloomrules.Easy && task.Metric == bloomrules.CheckIn
+		if task.Progress < task.Target && !checkIn {
 			return apperrors.Conflict("BLOOM_TASK_INCOMPLETE", "Task is still in progress")
 		}
 		expires := garden.ResetsAt
@@ -296,5 +295,5 @@ func (h *BloomHandler) claim(ctx context.Context, userID, taskID int64, garden *
 		garden.CollectedFlowers, err = h.store.CountClaimedWeekly(ctx, userID)
 		return err
 	}
-	return repository.ErrBloomTaskNotFound
+	return service.ErrBloomTaskNotFound
 }

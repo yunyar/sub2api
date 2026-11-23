@@ -12,46 +12,45 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/bloomrules"
 	apperrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
 type gardenStoreFixture struct {
-	repository.BloomRepository
-	week           repository.BloomWeek
-	prior          repository.BloomUsageStats
+	service.BloomRepository
+	week           service.BloomWeek
+	prior          service.BloomUsageStats
 	priorEnd       time.Time
 	aggregateCalls int
 	claimCalls     int
 }
 
-func (s *gardenStoreFixture) GetWeek(context.Context, int64, time.Time) (repository.BloomWeek, error) {
+func (s *gardenStoreFixture) GetWeek(context.Context, int64, time.Time) (service.BloomWeek, error) {
 	return s.week, nil
 }
 
-func (s *gardenStoreFixture) EnsureTasks(_ context.Context, _ int64, _ time.Time, budget int64, drafts []repository.BloomTaskDraft) (repository.BloomWeek, error) {
+func (s *gardenStoreFixture) EnsureTasks(_ context.Context, _ int64, _ time.Time, budget int64, drafts []service.BloomTaskDraft) (service.BloomWeek, error) {
 	s.week.Exists, s.week.BudgetMicros = true, budget
 	for _, draft := range drafts {
-		s.week.Tasks = append(s.week.Tasks, repository.BloomTask{ID: int64(len(s.week.Tasks)) + 1, BloomTaskDraft: draft})
+		s.week.Tasks = append(s.week.Tasks, service.BloomTask{ID: int64(len(s.week.Tasks)) + 1, BloomTaskDraft: draft})
 	}
 	return s.week, nil
 }
 
-func (s *gardenStoreFixture) UsageStats(_ context.Context, _ int64, _, end time.Time, _ string) (repository.BloomUsageStats, error) {
+func (s *gardenStoreFixture) UsageStats(_ context.Context, _ int64, _, end time.Time, _ string) (service.BloomUsageStats, error) {
 	if end.Equal(s.priorEnd) {
 		s.aggregateCalls++
 		return s.prior, nil
 	}
-	return repository.BloomUsageStats{}, nil
+	return service.BloomUsageStats{}, nil
 }
 
 func (s *gardenStoreFixture) CountClaimedWeekly(context.Context, int64) (int64, error) {
 	return 3, nil
 }
 
-func (s *gardenStoreFixture) ClaimTask(_ context.Context, _, taskID int64, _ time.Time) (repository.BloomClaim, error) {
+func (s *gardenStoreFixture) ClaimTask(_ context.Context, _, taskID int64, _ time.Time) (service.BloomClaim, error) {
 	s.claimCalls++
 	for index := range s.week.Tasks {
 		task := &s.week.Tasks[index]
@@ -59,10 +58,10 @@ func (s *gardenStoreFixture) ClaimTask(_ context.Context, _, taskID int64, _ tim
 			now := time.Now()
 			task.ClaimedAt = &now
 			s.week.SpentMicros += task.RewardMicros
-			return repository.BloomClaim{}, nil
+			return service.BloomClaim{}, nil
 		}
 	}
-	return repository.BloomClaim{}, repository.ErrBloomTaskNotFound
+	return service.BloomClaim{}, service.ErrBloomTaskNotFound
 }
 
 func TestBloomGardenFreezesIssuedRewardsAndDeniesUnearnedClaims(t *testing.T) {
@@ -72,7 +71,7 @@ func TestBloomGardenFreezesIssuedRewardsAndDeniesUnearnedClaims(t *testing.T) {
 	at := time.Date(2026, 11, 23, 13, 0, 0, 0, zone)
 	store := &gardenStoreFixture{
 		priorEnd: bloomrules.Calendar(at, zone).Week.Start,
-		prior:    repository.BloomUsageStats{TotalRecords: 60, WalletCost: decimal.RequireFromString("80.0000099")},
+		prior:    service.BloomUsageStats{TotalRecords: 60, WalletCost: decimal.RequireFromString("80.0000099")},
 	}
 	ctx := context.Background()
 	h := BloomHandler{store: store}
@@ -82,7 +81,7 @@ func TestBloomGardenFreezesIssuedRewardsAndDeniesUnearnedClaims(t *testing.T) {
 	require.EqualValues(t, 8_000_000, view.BudgetMicros)
 	require.Equal(t, []int64{80_000, 240_000, 480_000, 2_400_000},
 		[]int64{view.Tasks[0].RewardMicros, view.Tasks[1].RewardMicros, view.Tasks[2].RewardMicros, view.Tasks[3].RewardMicros})
-	require.ErrorIs(t, h.claim(ctx, 42, 5, view), repository.ErrBloomTaskNotFound)
+	require.ErrorIs(t, h.claim(ctx, 42, 5, view), service.ErrBloomTaskNotFound)
 	for _, task := range view.Tasks[1:] {
 		id, err := strconv.ParseInt(task.ID, 10, 64)
 		require.NoError(t, err)
@@ -112,8 +111,8 @@ func TestBloomGardenFreezesIssuedRewardsAndDeniesUnearnedClaims(t *testing.T) {
 func TestBloomCheckinAndRetry(t *testing.T) {
 	t.Parallel()
 	monday := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
-	store := &gardenStoreFixture{week: repository.BloomWeek{Exists: true, BudgetMicros: 10_000_000,
-		Tasks: []repository.BloomTask{{ID: 7, BloomTaskDraft: repository.BloomTaskDraft{Difficulty: repository.BloomDailyEasy,
+	store := &gardenStoreFixture{week: service.BloomWeek{Exists: true, BudgetMicros: 10_000_000,
+		Tasks: []service.BloomTask{{ID: 7, BloomTaskDraft: service.BloomTaskDraft{Difficulty: service.BloomDailyEasy,
 			PeriodStart: monday, RewardMicros: 100_000}}}}}
 	h := BloomHandler{store: store}
 	ctx := context.Background()
@@ -132,8 +131,8 @@ type bloomAlertTestStore struct {
 	claimErr error
 }
 
-func (s *bloomAlertTestStore) ClaimTask(context.Context, int64, int64, time.Time) (repository.BloomClaim, error) {
-	return repository.BloomClaim{AlertEventID: 31}, s.claimErr
+func (s *bloomAlertTestStore) ClaimTask(context.Context, int64, int64, time.Time) (service.BloomClaim, error) {
+	return service.BloomClaim{AlertEventID: 31}, s.claimErr
 }
 
 type bloomAlertRecorder chan int64
@@ -141,7 +140,7 @@ type bloomAlertRecorder chan int64
 func (r bloomAlertRecorder) NotifyBloomBudgetAlert(_ context.Context, id int64) { r <- id }
 
 func TestBloomNotifiesOnReachingOrExceedingCap(t *testing.T) {
-	for _, claimErr := range []error{nil, repository.ErrBloomBudgetExceeded} {
+	for _, claimErr := range []error{nil, service.ErrBloomBudgetExceeded} {
 		store := &bloomAlertTestStore{claimErr: claimErr}
 		alerts := make(bloomAlertRecorder, 1)
 		handler := BloomHandler{store: store, alerts: alerts}
@@ -175,7 +174,7 @@ func TestBloomSettledImageChargeWithoutUsageLog(t *testing.T) {
 	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 	store := &gardenStoreFixture{
 		priorEnd: bloomrules.Calendar(at, time.UTC).Week.Start,
-		prior:    repository.BloomUsageStats{WalletCost: decimal.RequireFromString("0.25")},
+		prior:    service.BloomUsageStats{WalletCost: decimal.RequireFromString("0.25")},
 	}
 	h := BloomHandler{store: store}
 	garden, err := h.garden(context.Background(), 8, at, time.UTC)

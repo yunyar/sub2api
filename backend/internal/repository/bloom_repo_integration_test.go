@@ -6,17 +6,43 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
+func newBloomTestDatabase(t *testing.T) (*sql.DB, *dbent.Client, string) {
+	t.Helper()
+	connection, err := url.Parse(integrationDSN)
+	require.NoError(t, err)
+	name := fmt.Sprintf("bloom_test_%d", time.Now().UnixNano())
+	_, err = integrationDB.ExecContext(t.Context(), "CREATE DATABASE "+name+" TEMPLATE template0")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := integrationDB.ExecContext(context.Background(), "DROP DATABASE "+name)
+		require.NoError(t, err)
+	})
+	connection.Path = "/" + name
+	db, err := sql.Open("postgres", connection.String())
+	require.NoError(t, err)
+	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	require.NoError(t, ApplyMigrations(t.Context(), db))
+	return db, client, connection.String()
+}
+
 func TestBloomClaimConcurrencyAndSnapshots(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	repo := NewBloomRepository(integrationDB)
 	owner := mustCreateUser(t, integrationEntClient, &service.User{Balance: 1})
@@ -118,6 +144,7 @@ func TestBloomClaimConcurrencyAndSnapshots(t *testing.T) {
 }
 
 func TestBloomConcurrentIssuanceUsesPersistedBudget(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	repo := NewBloomRepository(integrationDB)
 	owner := mustCreateUser(t, integrationEntClient, &service.User{})
@@ -162,6 +189,7 @@ func TestBloomConcurrentIssuanceUsesPersistedBudget(t *testing.T) {
 }
 
 func TestBloomClaimWalletFailureRollsBack(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	repo := NewBloomRepository(integrationDB)
 	owner := mustCreateUser(t, integrationEntClient, &service.User{})
@@ -175,7 +203,7 @@ func TestBloomClaimWalletFailureRollsBack(t *testing.T) {
 	claim, err := repo.ClaimTask(ctx, owner.ID, week.Tasks[0].ID, time.Now().Add(time.Hour))
 	require.Error(t, err)
 	require.Zero(t, claim.AlertEventID)
-	require.Empty(t, bloomHardLimitAlerts(t, owner.ID, monday))
+	require.Empty(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday))
 	after, err := repo.GetWeek(ctx, owner.ID, monday)
 	require.NoError(t, err)
 	require.Equal(t, week, after)
@@ -185,11 +213,11 @@ func TestBloomClaimWalletFailureRollsBack(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, claim.Applied)
 	require.Positive(t, claim.AlertEventID)
-	require.Equal(t, claim.AlertEventID, bloomHardLimitAlerts(t, owner.ID, monday)["reached"].ID)
+	require.Equal(t, claim.AlertEventID, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday)["reached"].ID)
 	require.True(t, decimal.New(1, -6).Equal(claim.BalanceAfter))
 }
 
-func bloomHardLimitAlerts(t *testing.T, userID int64, monday time.Time) map[string]*service.OpsAlertEvent {
+func bloomHardLimitAlerts(t *testing.T, integrationDB *sql.DB, userID int64, monday time.Time) map[string]*service.OpsAlertEvent {
 	t.Helper()
 	ctx := context.Background()
 	ops := NewOpsRepository(integrationDB)
@@ -224,6 +252,7 @@ func bloomHardLimitAlerts(t *testing.T, userID int64, monday time.Time) map[stri
 }
 
 func TestBloomHardLimitNormalBudgetAndAdminAlerts(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	repo := NewBloomRepository(integrationDB)
 	owner := mustCreateUser(t, integrationEntClient, &service.User{Balance: 1})
@@ -241,13 +270,13 @@ func TestBloomHardLimitNormalBudgetAndAdminAlerts(t *testing.T) {
 	require.True(t, normal.Applied)
 	require.True(t, decimal.NewFromInt(11).Equal(normal.BalanceAfter))
 	require.Zero(t, normal.AlertEventID)
-	require.Empty(t, bloomHardLimitAlerts(t, owner.ID, monday))
+	require.Empty(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday))
 	reached, err := repo.ClaimTask(ctx, owner.ID, week.Tasks[1].ID, expires)
 	require.NoError(t, err)
 	require.True(t, reached.Applied)
 	require.True(t, decimal.NewFromInt(12).Equal(reached.BalanceAfter))
 	require.Positive(t, reached.AlertEventID)
-	alerts := bloomHardLimitAlerts(t, owner.ID, monday)
+	alerts := bloomHardLimitAlerts(t, integrationDB, owner.ID, monday)
 	require.Len(t, alerts, 1)
 	require.Equal(t, reached.AlertEventID, alerts["reached"].ID)
 	require.Equal(t, "10000000", alerts["reached"].Dimensions["budget_micros"])
@@ -273,7 +302,7 @@ func TestBloomHardLimitNormalBudgetAndAdminAlerts(t *testing.T) {
 	after, err := repo.GetWeek(ctx, owner.ID, monday)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
-	alerts = bloomHardLimitAlerts(t, owner.ID, monday)
+	alerts = bloomHardLimitAlerts(t, integrationDB, owner.ID, monday)
 	require.Len(t, alerts, 2)
 	require.Equal(t, rejected.AlertEventID, alerts["exceeded"].ID)
 	require.Equal(t, service.OpsAlertStatusManualResolved, alerts["reached"].Status)
@@ -283,7 +312,7 @@ func TestBloomHardLimitNormalBudgetAndAdminAlerts(t *testing.T) {
 	require.True(t, zero.Applied)
 	require.Zero(t, zero.AlertEventID)
 	require.True(t, reached.BalanceAfter.Equal(zero.BalanceAfter))
-	require.Len(t, bloomHardLimitAlerts(t, owner.ID, monday), 2)
+	require.Len(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday), 2)
 	payload, err := json.Marshal(reached)
 	require.NoError(t, err)
 	require.NotContains(t, string(payload), "AlertEventID")
@@ -299,6 +328,7 @@ func TestBloomHardLimitNormalBudgetAndAdminAlerts(t *testing.T) {
 }
 
 func TestBloomHardLimitConcurrentClaimsAndEventIDs(t *testing.T) {
+	integrationDB, integrationEntClient, integrationDSN := newBloomTestDatabase(t)
 	for _, connections := range []int{1, 4} {
 		t.Run(strconv.Itoa(connections)+"_connections", func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -360,7 +390,7 @@ func TestBloomHardLimitConcurrentClaimsAndEventIDs(t *testing.T) {
 			require.Equal(t, 1, applied)
 			require.Equal(t, 7, replays)
 			require.Equal(t, 8, rejected)
-			alerts := bloomHardLimitAlerts(t, owner.ID, monday)
+			alerts := bloomHardLimitAlerts(t, integrationDB, owner.ID, monday)
 			require.Len(t, alerts, 2)
 			require.Len(t, eventIDs, 2)
 			for _, alert := range alerts {
@@ -383,6 +413,7 @@ func TestBloomHardLimitConcurrentClaimsAndEventIDs(t *testing.T) {
 }
 
 func TestBloomHardLimitIntegerBoundaries(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	cases := []struct {
 		budget, reward int64
 		rejected       bool
@@ -424,7 +455,7 @@ func TestBloomHardLimitIntegerBoundaries(t *testing.T) {
 				require.True(t, claim.Applied)
 				require.True(t, decimal.New(testCase.reward, -6).Equal(claim.BalanceAfter))
 			}
-			alerts := bloomHardLimitAlerts(t, owner.ID, monday)
+			alerts := bloomHardLimitAlerts(t, integrationDB, owner.ID, monday)
 			if testCase.reason == "" {
 				require.Empty(t, alerts)
 				require.Zero(t, claim.AlertEventID)
@@ -446,6 +477,7 @@ func TestBloomHardLimitIntegerBoundaries(t *testing.T) {
 }
 
 func TestBloomHardLimitLargeAccumulationDoesNotOverflow(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	repo := NewBloomRepository(integrationDB)
 	owner := mustCreateUser(t, integrationEntClient, &service.User{})
@@ -461,7 +493,7 @@ func TestBloomHardLimitLargeAccumulationDoesNotOverflow(t *testing.T) {
 	claim, err := repo.ClaimTask(ctx, owner.ID, week.Tasks[0].ID, time.Now().Add(time.Hour))
 	require.ErrorIs(t, err, ErrBloomBudgetExceeded)
 	require.Positive(t, claim.AlertEventID)
-	alerts := bloomHardLimitAlerts(t, owner.ID, monday)
+	alerts := bloomHardLimitAlerts(t, integrationDB, owner.ID, monday)
 	require.Len(t, alerts, 1)
 	require.Equal(t, claim.AlertEventID, alerts["exceeded"].ID)
 	require.Equal(t, "18446744073709551613", alerts["exceeded"].Dimensions["attempted_micros"])
@@ -473,6 +505,7 @@ func TestBloomHardLimitLargeAccumulationDoesNotOverflow(t *testing.T) {
 }
 
 func TestBloomHardLimitLedgerFailureRollsBackAlertAndCredit(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	repo := NewBloomRepository(integrationDB)
 	owner := mustCreateUser(t, integrationEntClient, &service.User{Balance: 1})
@@ -492,7 +525,7 @@ func TestBloomHardLimitLedgerFailureRollsBackAlertAndCredit(t *testing.T) {
 	after, err := repo.GetWeek(ctx, owner.ID, monday)
 	require.NoError(t, err)
 	require.Equal(t, week, after)
-	require.Empty(t, bloomHardLimitAlerts(t, owner.ID, monday))
+	require.Empty(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday))
 	var balance decimal.Decimal
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT balance FROM users WHERE id = $1`, owner.ID).Scan(&balance))
 	require.True(t, decimal.NewFromInt(1).Equal(balance))
@@ -502,10 +535,11 @@ func TestBloomHardLimitLedgerFailureRollsBackAlertAndCredit(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, claim.Applied)
 	require.Positive(t, claim.AlertEventID)
-	require.Len(t, bloomHardLimitAlerts(t, owner.ID, monday), 1)
+	require.Len(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday), 1)
 }
 
 func TestBloomHardLimitAlertFailureDoesNotCredit(t *testing.T) {
+	integrationDB, integrationEntClient, integrationDSN := newBloomTestDatabase(t)
 	ctx := context.Background()
 	db, err := sql.Open("postgres", integrationDSN)
 	require.NoError(t, err)
@@ -531,10 +565,11 @@ func TestBloomHardLimitAlertFailureDoesNotCredit(t *testing.T) {
 	after, err := repo.GetWeek(ctx, owner.ID, monday)
 	require.NoError(t, err)
 	require.Equal(t, week, after)
-	require.Empty(t, bloomHardLimitAlerts(t, owner.ID, monday))
+	require.Empty(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday))
 }
 
 func TestBloomHardLimitCommitFailureReturnsNoEventID(t *testing.T) {
+	integrationDB, integrationEntClient, integrationDSN := newBloomTestDatabase(t)
 	ctx := context.Background()
 	db, err := sql.Open("postgres", integrationDSN)
 	require.NoError(t, err)
@@ -571,10 +606,11 @@ func TestBloomHardLimitCommitFailureReturnsNoEventID(t *testing.T) {
 	require.True(t, balance.IsZero())
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ops_alert_events`).Scan(&events))
 	require.Zero(t, events)
-	require.Empty(t, bloomHardLimitAlerts(t, owner.ID, monday))
+	require.Empty(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday))
 }
 
 func TestBloomHardLimitExpiryRollsBackPendingAlert(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	repo := NewBloomRepository(integrationDB)
@@ -608,7 +644,7 @@ func TestBloomHardLimitExpiryRollsBackPendingAlert(t *testing.T) {
 		`, blockerPID).Scan(&waiting)
 		return err == nil && waiting
 	}, time.Second, 10*time.Millisecond)
-	require.Empty(t, bloomHardLimitAlerts(t, owner.ID, monday))
+	require.Empty(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday))
 	_, err = blocker.ExecContext(ctx, `SELECT pg_sleep_until($1::timestamptz)`, expires)
 	require.NoError(t, err)
 	require.NoError(t, blocker.Commit())
@@ -618,13 +654,14 @@ func TestBloomHardLimitExpiryRollsBackPendingAlert(t *testing.T) {
 	after, err := repo.GetWeek(ctx, owner.ID, monday)
 	require.NoError(t, err)
 	require.Equal(t, week, after)
-	require.Empty(t, bloomHardLimitAlerts(t, owner.ID, monday))
+	require.Empty(t, bloomHardLimitAlerts(t, integrationDB, owner.ID, monday))
 	var balance decimal.Decimal
 	require.NoError(t, integrationDB.QueryRowContext(ctx, `SELECT balance FROM users WHERE id = $1`, owner.ID).Scan(&balance))
 	require.True(t, balance.IsZero())
 }
 
 func TestBloomHardLimitDatabaseConstraint(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	owner := mustCreateUser(t, integrationEntClient, &service.User{})
 	monday := time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)
@@ -643,6 +680,7 @@ func TestBloomHardLimitDatabaseConstraint(t *testing.T) {
 }
 
 func TestBloomQueuedClaimExpiresAndZeroRewardCanBeCollected(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	repo := NewBloomRepository(integrationDB)
@@ -690,6 +728,7 @@ func TestBloomQueuedClaimExpiresAndZeroRewardCanBeCollected(t *testing.T) {
 }
 
 func TestBloomUsageStatsCalendarAndOutput(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()
 	repo := NewBloomRepository(integrationDB)
 	owner := mustCreateUser(t, integrationEntClient, &service.User{})
@@ -746,6 +785,7 @@ func TestBloomUsageStatsCalendarAndOutput(t *testing.T) {
 }
 
 func TestBloomWalletEvidenceSingleBatchAndArchive(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := t.Context()
 	owner := mustCreateUser(t, integrationEntClient, &service.User{Balance: 1})
 	key := mustCreateApiKey(t, integrationEntClient, &service.APIKey{UserID: owner.ID})
@@ -817,6 +857,7 @@ func TestBloomWalletEvidenceSingleBatchAndArchive(t *testing.T) {
 }
 
 func TestBloomWalletEvidenceImageHolds(t *testing.T) {
+	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := t.Context()
 	owner := mustCreateUser(t, integrationEntClient, &service.User{Balance: 10})
 	key := mustCreateApiKey(t, integrationEntClient, &service.APIKey{UserID: owner.ID})
