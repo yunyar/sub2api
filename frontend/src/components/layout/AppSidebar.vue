@@ -14,7 +14,47 @@
         class="sidebar-logo flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl shadow-glow transition-opacity hover:opacity-80"
         @click="handleMenuItemClick(homePath)"
       >
-        <img v-if="settingsLoaded" :src="siteLogo || '/logo.svg'" alt="Logo" class="h-full w-full object-contain" />
+        <template v-if="settingsLoaded">
+          <img v-if="siteLogo && siteLogo !== '/logo.svg'" :src="siteLogo" alt="Logo" class="h-full w-full object-contain" />
+          <span v-else class="hp-logo-flower" role="img" aria-label="Logo">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <defs>
+                <linearGradient :id="`${flowerId}-outer`" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="-44">
+                  <stop offset="0" stop-color="#ffe9ef" />
+                  <stop offset=".55" stop-color="#ffb3c8" />
+                  <stop offset="1" stop-color="#ff8fab" />
+                </linearGradient>
+                <linearGradient :id="`${flowerId}-inner`" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="-28">
+                  <stop offset="0" stop-color="#fff6f8" />
+                  <stop offset=".55" stop-color="#ffd6e1" />
+                  <stop offset="1" stop-color="#ffc0d1" />
+                </linearGradient>
+                <radialGradient :id="`${flowerId}-center`" cx=".38" cy=".32">
+                  <stop offset="0" stop-color="#fff3c4" />
+                  <stop offset="1" stop-color="#ffbf47" />
+                </radialGradient>
+              </defs>
+              <g transform="translate(50 50)">
+                <g class="spin">
+                  <g class="layer" :fill="`url(#${flowerId}-outer)`" stroke="rgba(255,255,255,.8)" stroke-width=".8">
+                    <path
+                      v-for="angle in petalAngles" :key="angle" :transform="`rotate(${angle})`"
+                      d="M0 0C21 -13.2 23.1 -39.6 7.04 -44Q2.52 -43.56 0 -37.84Q-2.52 -43.56 -7.04 -44C-23.1 -39.6 -21 -13.2 0 0Z"
+                    />
+                  </g>
+                  <g class="layer" style="animation-delay: -1.4s" :fill="`url(#${flowerId}-inner)`" stroke="rgba(255,255,255,.8)" stroke-width=".8">
+                    <path
+                      v-for="angle in petalAngles" :key="angle" :transform="`rotate(${angle + 36})`"
+                      d="M0 0C13 -7 13.65 -23.8 0 -28C-13.65 -23.8 -13 -7 0 0Z"
+                    />
+                  </g>
+                  <circle r="8" :fill="`url(#${flowerId}-center)`" stroke="#fff" stroke-width="1.4" />
+                  <ellipse cx="-2.4" cy="-2.8" rx="2.8" ry="1.76" fill="#fff" opacity=".6" />
+                </g>
+              </g>
+            </svg>
+          </span>
+        </template>
       </router-link>
       <div class="sidebar-brand" :class="{ 'sidebar-brand-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">
         <router-link
@@ -203,7 +243,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
@@ -278,6 +318,8 @@ const groupExpandOverrides = ref<Map<string, boolean>>(new Map())
 // Site settings from appStore (cached, no flicker)
 const siteName = computed(() => appStore.siteName)
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
+const flowerId = useId()
+const petalAngles = [0, 72, 144, 216, 288]
 const siteVersion = computed(() => appStore.siteVersion)
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
 
