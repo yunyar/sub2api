@@ -15,7 +15,7 @@
       </div>
 
       <!-- Table -->
-      <OrderTable :orders="orders" :loading="loading">
+      <OrderTable :orders="orders" :loading="loading" sort-by-id @sort="handleOrderSort">
         <template #actions="{ row }">
           <div class="flex items-center gap-2">
             <button v-if="row.status === 'PENDING'" @click="handleCancel(row.id)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-yellow-600 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20">
@@ -104,10 +104,12 @@ const actionLoading = ref(false)
 const orders = ref<PaymentOrder[]>([])
 const refundEligibleProviders = ref<Set<string>>(new Set())
 const currentFilter = ref('')
+const orderSort = ref<'asc' | 'desc'>('desc')
 const cancelTargetId = ref<number | null>(null)
 const refundTarget = ref<PaymentOrder | null>(null)
 const refundReason = ref('')
 const pagination = reactive({ page: 1, page_size: 20, total: 0 })
+let orderRequest = 0
 
 const statusFilters = computed(() => [
   { value: '', label: t('common.all') },
@@ -118,24 +120,32 @@ const statusFilters = computed(() => [
 ])
 
 async function fetchOrders() {
+  const request = ++orderRequest
   loading.value = true
   try {
     const res = await paymentAPI.getMyOrders({
       page: pagination.page,
       page_size: pagination.page_size,
       status: currentFilter.value || undefined,
+      id_order: orderSort.value,
     })
+    if (request !== orderRequest) return
     orders.value = res.data.items || []
     pagination.total = res.data.total || 0
   } catch (err: unknown) {
-    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+    if (request === orderRequest) appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
   } finally {
-    loading.value = false
+    if (request === orderRequest) loading.value = false
   }
 }
 
 function handlePageChange(page: number) { pagination.page = page; fetchOrders() }
 function handlePageSizeChange(size: number) { pagination.page_size = size; pagination.page = 1; fetchOrders() }
+
+function handleOrderSort(order: 'asc' | 'desc') {
+  orderSort.value = order
+  handlePageChange(1)
+}
 
 function handleCancel(orderId: number) { cancelTargetId.value = orderId }
 

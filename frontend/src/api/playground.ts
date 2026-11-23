@@ -258,10 +258,14 @@ export async function updatePlaygroundAutoRouting(
 }
 
 export async function streamPlaygroundChat(options: StreamChatOptions): Promise<void> {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const response = await authorizedStreamFetch(buildApiUrl('/playground/chat/completions'), {
     method: 'POST',
     signal: options.signal,
-    headers: requestRoute(options),
+    headers: {
+      ...requestRoute(options),
+      ...(timezone ? { 'X-Playground-Timezone': timezone } : {})
+    },
     body: JSON.stringify({
       model: options.model,
       messages: options.messages,

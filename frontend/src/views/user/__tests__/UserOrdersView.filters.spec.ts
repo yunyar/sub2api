@@ -3,6 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import UserOrdersView from '../UserOrdersView.vue'
 import Select from '@/components/common/Select.vue'
 import Pagination from '@/components/common/Pagination.vue'
+import OrderTable from '@/components/payment/OrderTable.vue'
 
 const api = vi.hoisted(() => ({ getMyOrders: vi.fn(), getRefundEligibleProviders: vi.fn() }))
 vi.mock('@/api/payment', () => ({ paymentAPI: api }))
@@ -40,7 +41,7 @@ describe('order status filtering', () => {
     await select.get('button').trigger('click')
     await select.findAll('[role="option"]').find(option => option.text() === 'payment.status.pending')!.trigger('click')
     await flushPromises()
-    expect(api.getMyOrders).toHaveBeenLastCalledWith({ page: 1, page_size: 20, status: 'PENDING' })
+    expect(api.getMyOrders).toHaveBeenLastCalledWith({ page: 1, page_size: 20, status: 'PENDING', id_order: 'desc' })
     expect(wrapper.getComponent(Pagination).props('page')).toBe(1)
     expect(api.getMyOrders).toHaveBeenCalledTimes(3)
   })
@@ -49,6 +50,17 @@ describe('order status filtering', () => {
     const wrapper = await openOrders()
     await wrapper.get('[title="common.refresh"]').trigger('click')
     await flushPromises()
-    expect(api.getMyOrders).toHaveBeenLastCalledWith({ page: 4, page_size: 20, status: undefined })
+    expect(api.getMyOrders).toHaveBeenLastCalledWith({ page: 4, page_size: 20, status: undefined, id_order: 'desc' })
+  })
+
+  it('requests the first page again when reversing the order ID sort', async () => {
+    const wrapper = await openOrders()
+    const table = wrapper.getComponent(OrderTable)
+    table.vm.$emit('sort', 'asc')
+    await flushPromises()
+    expect(api.getMyOrders).toHaveBeenLastCalledWith({ page: 1, page_size: 20, status: undefined, id_order: 'asc' })
+    table.vm.$emit('sort', 'desc')
+    await flushPromises()
+    expect(api.getMyOrders).toHaveBeenLastCalledWith({ page: 1, page_size: 20, status: undefined, id_order: 'desc' })
   })
 })

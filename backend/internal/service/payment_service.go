@@ -120,6 +120,7 @@ type OrderListParams struct {
 	OrderType   string
 	PaymentType string
 	Keyword     string
+	IDOrder     string
 }
 
 type RefundPlan struct {

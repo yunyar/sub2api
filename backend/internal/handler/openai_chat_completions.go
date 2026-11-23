@@ -75,6 +75,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	c.Request = c.Request.WithContext(service.WithPlaygroundChatModel(c.Request.Context(), reqModel))
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !openAICompatibleTextTargetAllowed(c, apiKey, reqModel) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Model is not supported by this OpenAI-compatible endpoint for composite groups")
@@ -196,9 +197,23 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return true
 	}
 
+	var releaseSearchReservation func()
+	defer func() {
+		if releaseSearchReservation != nil {
+			releaseSearchReservation()
+		}
+	}()
+	auditedKey := apiKey
 	for {
 		if failoverClientGone(c) {
 			return
+		}
+		if auditedKey != apiKey && service.IsPlaygroundChat(c.Request.Context()) {
+			if decision := h.checkSecurityAuditStage(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body, "playground_group_retry"); decision != nil && !decision.AllowNextStage {
+				h.openAISecurityAuditError(c, decision)
+				return
+			}
+			auditedKey = apiKey
 		}
 		reqLog.Debug("openai_chat_completions.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
 		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForCapability(
@@ -279,16 +294,38 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
 		writerSizeBeforeForward := c.Writer.Size()
-		result, err := func() (*service.OpenAIForwardResult, error) {
+		primaryBillingCtx := c.Request.Context()
+		result, followup, err := func() (*service.OpenAIForwardResult, *service.OpenAIForwardResult, error) {
 			defer func() {
 				if accountReleaseFunc != nil {
 					accountReleaseFunc()
 				}
 			}()
 			if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
-				return nil, service.ErrAutoRoutingExecutionStateConflict
+				return nil, nil, service.ErrAutoRoutingExecutionStateConflict
 			}
-			return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, "")
+			options := playgroundSearchOptionsFor(
+				h.gatewayService.PlaygroundSearchEnabled(c.Request.Context()) && account.GetWebSearchEmulationMode() != service.WebSearchModeDisabled,
+				account,
+				func(stage, text string) error {
+					payload := playgroundSearchAuditBody(reqModel, text)
+					if decision := h.checkSecurityAuditStage(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, payload, stage); decision != nil && !decision.AllowNextStage {
+						return errors.New(securityAuditMessage(decision))
+					}
+					return nil
+				},
+				func(payload []byte) error {
+					if !autoRoutingGroupBillingEligible(c, h.billingCacheService, apiKey, subscription) {
+						return service.ErrInsufficientBalance
+					}
+					release, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, payload))
+					releaseSearchReservation = release
+					return err
+				},
+			)
+			return forwardPlaygroundChat(c, forwardBody, options, func(payload []byte) (*service.OpenAIForwardResult, error) {
+				return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, payload, promptCacheKey, "")
+			}, func(res *service.OpenAIForwardResult) { res.SearchCount++ })
 		}()
 		if err == nil && result != nil {
 			completeAutoRoutingDispatch(c, result.RequestID)
@@ -311,7 +348,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		// #5148 对齐：错误返回携带的部分 result（流中断前上游已计量的 usage）照常
 		// 入账；failover 错误恒定 result=nil，不会重复计费。
-		submitChatUsage := func(res *service.OpenAIForwardResult) {
+		submitChatUsage := func(ctx context.Context, res *service.OpenAIForwardResult) {
 			if res == nil {
 				return
 			}
@@ -324,7 +361,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel)
-			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+			h.submitOpenAIUsageRecordTask(ctx, res, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
@@ -352,6 +389,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					).Error("openai_chat_completions.record_usage_failed", zap.Error(err))
 				}
 			})
+		}
+		if followup != nil {
+			followup.RequestID = service.PlaygroundSearchFollowupBillingID(primaryBillingCtx, result.RequestID)
+			submitChatUsage(c.Request.Context(), followup)
 		}
 		if err != nil {
 			if result != nil && result.ImageCount > 0 {
@@ -441,7 +482,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 					zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 					zap.Error(err),
 				)
-				submitChatUsage(result)
+				submitChatUsage(primaryBillingCtx, result)
 				return
 			}
 		}
@@ -451,7 +492,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), true, nil)
 		}
 
-		submitChatUsage(result)
+		submitChatUsage(primaryBillingCtx, result)
 		reqLog.Debug("openai_chat_completions.request_completed",
 			zap.Int64("account_id", account.ID),
 			zap.Int("switch_count", switchCount),

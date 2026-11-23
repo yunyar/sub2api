@@ -943,7 +943,14 @@ func (s *PaymentService) GetUserOrders(ctx context.Context, userID int64, p Orde
 		return nil, 0, fmt.Errorf("count user orders: %w", err)
 	}
 	ps, pg := applyPagination(p.PageSize, p.Page)
-	orders, err := q.Order(dbent.Desc(paymentorder.FieldCreatedAt)).Limit(ps).Offset((pg - 1) * ps).All(ctx)
+	order := dbent.Desc(paymentorder.FieldCreatedAt)
+	switch p.IDOrder {
+	case "asc":
+		order = dbent.Asc(paymentorder.FieldID)
+	case "desc":
+		order = dbent.Desc(paymentorder.FieldID)
+	}
+	orders, err := q.Order(order).Limit(ps).Offset((pg - 1) * ps).All(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query user orders: %w", err)
 	}

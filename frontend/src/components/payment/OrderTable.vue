@@ -1,5 +1,13 @@
 <template>
-  <DataTable :columns="columns" :data="orders" :loading="loading">
+  <DataTable
+    :columns="columns"
+    :data="orders"
+    :loading="loading"
+    :server-side-sort="sortById"
+    :default-sort-key="sortById ? 'id' : undefined"
+    default-sort-order="desc"
+    @sort="(_key, order) => emit('sort', order)"
+  >
     <template #cell-id="{ value }">
       <span class="font-mono text-sm">#{{ value }}</span>
     </template>
@@ -56,7 +64,10 @@ const props = defineProps<{
   orders: PaymentOrder[]
   loading: boolean
   showUser?: boolean
+  sortById?: boolean
 }>()
+
+const emit = defineEmits<{ sort: [order: 'asc' | 'desc'] }>()
 
 function formatDate(dateStr: string) { return new Date(dateStr).toLocaleString() }
 
@@ -68,7 +79,7 @@ function paymentAmountSymbol(order: PaymentOrder): string {
 
 const columns = computed((): Column[] => {
   const cols: Column[] = [
-    { key: 'id', label: t('payment.orders.orderId') },
+    { key: 'id', label: t('payment.orders.orderId'), sortable: props.sortById },
     { key: 'out_trade_no', label: t('payment.orders.orderNo') },
   ]
   if (props.showUser) {

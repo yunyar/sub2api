@@ -363,6 +363,7 @@ func (h *PaymentHandler) GetMyOrders(c *gin.Context) {
 		Status:      c.Query("status"),
 		OrderType:   c.Query("order_type"),
 		PaymentType: c.Query("payment_type"),
+		IDOrder:     c.Query("id_order"),
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

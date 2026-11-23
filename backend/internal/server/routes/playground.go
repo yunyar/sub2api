@@ -285,6 +285,9 @@ func playgroundImageEditHandler(openAIImagesHandler gin.HandlerFunc) gin.Handler
 
 func playgroundChatCompletionsHandler(openAIHandler, defaultHandler gin.HandlerFunc) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		timezone := c.GetHeader("X-Playground-Timezone")
+		c.Request.Header.Del("X-Playground-Timezone")
+		c.Request = c.Request.WithContext(service.WithPlaygroundChat(c.Request.Context(), timezone))
 		if domain.UsesOpenAIGateway(getGroupPlatform(c)) {
 			openAIHandler(c)
 			return

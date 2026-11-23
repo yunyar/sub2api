@@ -71,6 +71,7 @@ describe('DataTable', () => {
     const nameHeader = wrapper.findAll('th')[0]
     expect(nameHeader.find('[data-test="custom-name-header"]').exists()).toBe(true)
     expect(nameHeader.attributes('aria-sort')).toBe('ascending')
+    expect(nameHeader.classes()).toContain('text-primary-600')
     expect(nameHeader.findAll('svg')).toHaveLength(2)
     expect(nameHeader.findAll('svg')[0].classes()).toContain('text-primary-600')
     expect(nameHeader.findAll('svg')[1].classes()).toContain('text-gray-300')
@@ -79,6 +80,7 @@ describe('DataTable', () => {
     await wrapper.vm.$nextTick()
 
     expect(nameHeader.attributes('aria-sort')).toBe('descending')
+    expect(nameHeader.classes()).toContain('text-primary-600')
     expect(nameHeader.findAll('svg')[0].classes()).toContain('text-gray-300')
     expect(nameHeader.findAll('svg')[1].classes()).toContain('text-primary-600')
   })

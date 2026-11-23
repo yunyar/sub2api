@@ -466,9 +466,13 @@
   function placeSprout() {
     const bottom = $('#app .sidebar > .mt-auto');
     if (!bottom) return;
-    if (sproutEl && bottom.contains(sproutEl)) return;
-    sproutEl = document.createElement('div');
-    sproutEl.className = 'hp-sprout';
+    const current = bottom.querySelector(':scope > .hp-sprout') || sproutEl || document.createElement('div');
+    for (const duplicate of document.querySelectorAll('#app .sidebar > .mt-auto > .hp-sprout')) {
+      if (duplicate !== current) duplicate.remove();
+    }
+    sproutEl = current;
+    if (current.parentElement === bottom) return;
+    current.className = 'hp-sprout';
     bottom.prepend(sproutEl);
     renderSprout(false);
   }

@@ -76,6 +76,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
+	c.Request = c.Request.WithContext(service.WithPlaygroundChatModel(c.Request.Context(), reqModel))
 	bindRequestedReasoningEffort(c, body, reqModel)
 	ensureCompositeTargetPlatform(c, apiKey, reqModel)
 	if !compositeTargetPlatformResolved(c, apiKey, reqModel) {
@@ -219,9 +220,23 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		return true
 	}
 
+	var releaseSearchReservation func()
+	defer func() {
+		if releaseSearchReservation != nil {
+			releaseSearchReservation()
+		}
+	}()
+	auditedKey := apiKey
 	for {
 		if failoverClientGone(c) {
 			return
+		}
+		if auditedKey != apiKey && service.IsPlaygroundChat(c.Request.Context()) {
+			if decision := runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, body, "playground_group_retry"); decision != nil && !decision.AllowNextStage {
+				h.openAISecurityAuditError(c, decision)
+				return
+			}
+			auditedKey = apiKey
 		}
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
@@ -324,47 +339,68 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
-		var result *service.ForwardResult
 		if !beginAutoRoutingDispatch(c, apiKey, h.apiKeyService, account) {
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}
 			return
 		}
-		setActualUpstreamEndpoint(c, "")
-		if account.Platform == service.PlatformGemini {
-			if h.geminiCompatService == nil {
-				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
+		primaryBillingCtx := c.Request.Context()
+		result, followup, err := func() (*service.ForwardResult, *service.ForwardResult, error) {
+			defer func() {
 				if accountReleaseFunc != nil {
 					accountReleaseFunc()
 				}
-				return
-			}
-			result, err = h.geminiCompatService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody)
-		} else if shouldUseAntigravityCompat(account) {
-			if h.antigravityGatewayService == nil {
-				h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
-				if accountReleaseFunc != nil {
-					accountReleaseFunc()
+			}()
+			options := playgroundSearchOptionsFor(
+				h.gatewayService.PlaygroundSearchEnabled(c.Request.Context()) && account.GetWebSearchEmulationMode() != service.WebSearchModeDisabled,
+				account,
+				func(stage, text string) error {
+					payload := playgroundSearchAuditBody(reqModel, text)
+					if decision := runSecurityAudit(c, reqLog, h.securityAuditCoordinator, h.contentModerationService, apiKey, subject, service.ContentModerationProtocolOpenAIChat, reqModel, payload, stage); decision != nil && !decision.AllowNextStage {
+						return errors.New(securityAuditMessage(decision))
+					}
+					return nil
+				},
+				func(payload []byte) error {
+					if !autoRoutingGroupBillingEligible(c, h.billingCacheService, apiKey, subscription) {
+						return service.ErrInsufficientBalance
+					}
+					release, err := reserveInflightBalance(c, h.billingCacheService, h.gatewayService, apiKey, subscription, tokenInflightEstimate(reqModel, payload))
+					releaseSearchReservation = release
+					return err
+				},
+			)
+			return forwardPlaygroundChat(c, forwardBody, options, func(payload []byte) (*service.ForwardResult, error) {
+				setActualUpstreamEndpoint(c, "")
+				if account.Platform == service.PlatformGemini {
+					if h.geminiCompatService == nil {
+						h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
+						return nil, errors.New("Gemini compatibility service is not configured")
+					}
+					return h.geminiCompatService.ForwardAsChatCompletions(c.Request.Context(), c, account, payload)
 				}
-				return
-			}
-			setActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
-			result, err = h.antigravityGatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, parsedReq)
-		} else {
-			result, err = h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, parsedReq)
-		}
-
-		if accountReleaseFunc != nil {
-			accountReleaseFunc()
-		}
+				if shouldUseAntigravityCompat(account) {
+					if h.antigravityGatewayService == nil {
+						h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
+						return nil, errors.New("Antigravity compatibility service is not configured")
+					}
+					setActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
+					return h.antigravityGatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, payload, parsedReq)
+				}
+				return h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, payload, parsedReq)
+			}, func(res *service.ForwardResult) { res.SearchCount++ })
+		}()
 		if err == nil && result != nil {
 			completeAutoRoutingDispatch(c, result.RequestID)
 		}
 
 		// 提交 usage 记录。成功路径与"流中断但 Forward 已观测到 usage 的部分结果"
 		// 错误路径共用；failover 错误恒定 result=nil，不会重复计费。
-		submitForwardUsage := func(result *service.ForwardResult) {
+		submitForwardUsage := func(billingCtx context.Context, result *service.ForwardResult) {
+			if result == nil {
+				return
+			}
 			userAgent := c.GetHeader("User-Agent")
 			clientIP := ip.GetTrustedClientIP(c)
 			requestPayloadHash := service.HashUsageRequestPayload(body)
@@ -375,7 +411,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			stampForwardRequestedReasoningEffort(result, service.RequestedReasoningEffortFromContext(c.Request.Context()))
 			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel)
-			h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+			submit := h.submitUsageRecordTask
+			if result.SearchCount > 0 {
+				submit = h.submitMandatoryUsageRecordTask
+			}
+			submit(billingCtx, func(ctx context.Context) {
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 					Result:             result,
 					QuotaPlatform:      quotaPlatform,
@@ -399,6 +439,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 					)
 				}
 			})
+		}
+		if followup != nil {
+			followup.RequestID = service.PlaygroundSearchFollowupBillingID(primaryBillingCtx, result.RequestID)
+			submitForwardUsage(c.Request.Context(), followup)
 		}
 
 		if err != nil {
@@ -436,13 +480,13 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			)
 			h.gatewayService.ReleaseStickySessionAfterCommittedNoContent(context.WithoutCancel(c.Request.Context()), apiKey.GroupID, selectionSessionHash, account.ID, err)
 			if result != nil {
-				submitForwardUsage(result)
+				submitForwardUsage(primaryBillingCtx, result)
 			}
 			return
 		}
 
 		// 6. Record usage
-		submitForwardUsage(result)
+		submitForwardUsage(primaryBillingCtx, result)
 		return
 	}
 }

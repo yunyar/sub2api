@@ -98,6 +98,8 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 
 	if account.Platform == PlatformGrok {
+		model := gjson.GetBytes(body, "model").String()
+		body = withPlaygroundLocalTime(ctx, body, model, account.GetMappedModel(model), defaultMappedModel)
 		if account.IsGrokOAuth() {
 			if eligible, reason := grokChatResponsesBridgeEligibility(body); eligible {
 				return s.forwardGrokChatCompletionsViaResponses(ctx, c, account, body, promptCacheKey, defaultMappedModel)
@@ -130,7 +132,13 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	if account.IsOpenCodeGo() && IsOpenCodeUnsupportedModel(routingModel) {
 		return nil, writeOpenCodeUnsupportedModelError(c, false, routingModel)
 	}
-	switch s.resolveUpstreamProtocolFor(ctx, account, inbound, routingModel) {
+	upstreamProtocol := s.resolveUpstreamProtocolFor(ctx, account, inbound, routingModel)
+	if !isResponsesShape && upstreamProtocol != APIProtocolAnthropic &&
+		(account.Platform == PlatformOpenAI || account.IsCNProvider()) {
+		model := gjson.GetBytes(body, "model").String()
+		body = withPlaygroundLocalTime(ctx, body, model, routingModel, resolveOpenAIForwardModel(account, model, defaultMappedModel))
+	}
+	switch upstreamProtocol {
 	case APIProtocolAnthropic:
 		if convertResponsesShape {
 			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "")

@@ -477,7 +477,7 @@
             #[`header-${usageKey}`]="{ column }"
           >
             <div class="flex items-center gap-1.5">
-              <span>{{ column.label }}</span>
+              <span :class="{ 'text-primary-600 dark:text-primary-400': usageSort?.key === usageKey }">{{ column.label }}</span>
               <div class="usage-sort-trigger relative">
                 <button
                   type="button"

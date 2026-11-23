@@ -50,7 +50,7 @@ export const paymentAPI = {
   },
 
   /** Get current user's orders */
-  getMyOrders(params?: { page?: number; page_size?: number; status?: string }) {
+  getMyOrders(params?: { page?: number; page_size?: number; status?: string; id_order?: 'asc' | 'desc' }) {
     return apiClient.get<BasePaginationResponse<PaymentOrder>>('/payment/orders/my', { params })
   },
 
