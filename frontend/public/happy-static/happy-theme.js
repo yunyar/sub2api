@@ -18,6 +18,7 @@
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 隐私模式 */ } },
   };
+  window.happyLocale = () => ls.get('sub2api_locale') === 'en' ? 'en' : 'zh';
   const nav = navigator;
   const osPrefersLite = Boolean((nav.connection && nav.connection.saveData) || matchMedia('(prefers-reduced-transparency: reduce)').matches);
   const chosen = () => { const v = ls.get(MOTION_KEY); return v === 'full' || v === 'lite' ? v : null; };
@@ -47,8 +48,10 @@
     hintEl = document.createElement('div');
     hintEl.className = 'hp-hint';
     hintEl.setAttribute('role', 'status');
-    hintEl.innerHTML = '<span class="hp-hint-leaf" aria-hidden="true"></span><span class="hp-hint-text">页面有点吃力？轻量模式会更顺滑，动效随时可以在侧边栏底部切回来。</span>' +
-      '<button type="button" data-act="lite">切换轻量</button><button type="button" data-act="keep">保持动效</button>';
+    const english = window.happyLocale() === 'en';
+    hintEl.innerHTML = '<span class="hp-hint-leaf" aria-hidden="true"></span><span class="hp-hint-text">' +
+      (english ? 'Page feeling slow? Lite mode runs more smoothly. You can switch back at the bottom of the sidebar.' : '页面有点吃力？轻量模式会更顺滑，动效随时可以在侧边栏底部切回来。') + '</span>' +
+      '<button type="button" data-act="lite">' + (english ? 'Switch to lite' : '切换轻量') + '</button><button type="button" data-act="keep">' + (english ? 'Keep animations' : '保持动效') + '</button>';
     hintEl.addEventListener('click', e => {
       const act = e.target.closest('button') && e.target.closest('button').dataset.act;
       if (act === 'lite') setMotion('lite');
@@ -253,7 +256,6 @@
     }
     setTimeout(() => placePill(false), 30);
     setTimeout(scan, 120);
-    nurture();
   }
   for (const k of ['pushState', 'replaceState']) {
     const o = history[k];
@@ -262,7 +264,7 @@
   addEventListener('popstate', () => setTimeout(onRoute, 0));
 
   /* ================= 仪表盘：问候横幅 ================= */
-  const LINES = [
+  const LINES = { zh: [
     '愿每一次调用，都带着善意抵达。',
     '代码会生长，像花一样。',
     '今天，也温柔地创造一点什么吧。',
@@ -270,9 +272,18 @@
     '你写下的每一行，都在照亮某个人。',
     '万物共生，你也是其中可爱的一员。',
     '把复杂交给我们，把灵感留给你。',
-  ];
+  ], en: [
+    'May every request arrive with kindness.',
+    'Code grows, just like flowers.',
+    'Create something with care today.',
+    'Take your time. Flowers bloom slowly, too.',
+    'Every line you write can brighten someone’s day.',
+    'Everything grows together, and you belong here.',
+    'Leave the complexity to us. Keep your inspiration.',
+  ] };
   function greeting() {
     const h = new Date().getHours();
+    if (window.happyLocale() === 'en') return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
     return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 13 ? '中午好' : h < 18 ? '下午好' : '晚上好';
   }
   function heroFlower() {
@@ -294,15 +305,18 @@
     if (!isDash || !main) { old && old.remove(); return; }
     if (old && main.contains(old)) return;
     const name = (($('#app header') || {}).innerText || '').match(/(?:欢迎回来|Welcome back)[，,\s]*([^\s\n，,!！]{1,20})/);
+    const locale = window.happyLocale();
+    const english = locale === 'en';
+    const lines = LINES[locale];
     const el = document.createElement('section');
     el.className = 'hp-hello';
     el.innerHTML = `
       <div class="hp-hello-text">
-        <p class="hp-hello-eyebrow">${new Date().toLocaleDateString('zh-CN', {month: 'long', day: 'numeric', weekday: 'long'})}</p>
-        <h2>${greeting()}${name ? '，' + name[1] : ''} <span class="hp-wave">🌸</span></h2>
-        <p class="hp-hello-line">${LINES[new Date().getDate() % LINES.length]}</p>
+        <p class="hp-hello-eyebrow">${new Date().toLocaleDateString(locale, {month: 'long', day: 'numeric', weekday: 'long'})}</p>
+        <h2>${greeting()}${name ? (english ? ', ' : '，') + name[1] : ''} <span class="hp-wave">🌸</span></h2>
+        <p class="hp-hello-line">${lines[new Date().getDate() % lines.length]}</p>
         <div class="hp-hello-links">
-          <a href="/keys">管理密钥</a><a href="/usage">查看用量</a><a href="/model-plaza">逛逛模型</a>
+          <a href="/keys">${english ? 'Manage keys' : '管理密钥'}</a><a href="/usage">${english ? 'View usage' : '查看用量'}</a><a href="/model-plaza">${english ? 'Explore models' : '逛逛模型'}</a>
         </div>
       </div>
       <div class="hp-hello-flower">${heroFlower()}</div>`;
@@ -409,7 +423,7 @@
     const b = e.target.closest && e.target.closest('button, a, [role="button"]');
     if (!b || b.disabled) return;
     const label = (b.innerText + ' ' + (b.title || '') + ' ' + (b.getAttribute('aria-label') || '')).toLowerCase();
-    if (/复制|copy/.test(label)) { burst(e.clientX, e.clientY, 16, 1.3); nurture(); }
+    if (/复制|copy/.test(label)) burst(e.clientX, e.clientY, 16, 1.3);
     else if (b.matches('#app .btn-primary, #app .bg-gradient-to-r.from-primary-500, #app .bg-primary-500, #app .bg-primary-600')) burst(e.clientX, e.clientY, 7, .8);
   }, true);
 
@@ -424,65 +438,6 @@
     });
   }
 
-  /* ================= 小心思：今日小苗 =================
-   * 侧边栏底部一株小苗，每次页面跳转、复制都算「陪你走一步」，按天从种子长到开花。不打扰，只在长大时轻轻冒几片花瓣。 */
-  const SPROUT_KEY = 'hp-sprout';
-  const SPROUT_AT = [0, 3, 8, 15, 25];
-  const SPROUT_TEXT = ['一粒种子', '冒出新芽', '舒展两叶', '含苞待放', '今天开花啦'];
-  const sproutStage = n => SPROUT_AT.filter(x => n >= x).length - 1;
-  function sproutState() {
-    const d = new Date().toDateString();
-    let st = null;
-    try { st = JSON.parse(localStorage.getItem(SPROUT_KEY) || 'null'); } catch (e) { st = null; }
-    return st && st.d === d && typeof st.n === 'number' ? st : {d, n: 0};
-  }
-  function sproutSVG(stage) {
-    const stem = stage >= 1 ? `<path d="M16 27 C16 ${24 - stage * 2} 16.4 ${21 - stage * 2} 16 ${19 - stage * 2.2}" stroke="#7ad7c0" stroke-width="1.8" fill="none" stroke-linecap="round"/>` : '';
-    const leafL = stage >= 1 ? '<path class="hp-leaf l" d="M16 22 C12.5 22 10.5 19.6 10.6 17.4 C13.4 17.4 15.6 19.2 16 22Z" fill="#9fe3cf"/>' : '';
-    const leafR = stage >= 2 ? '<path class="hp-leaf r" d="M16 19.5 C19.6 19.6 21.6 17.2 21.4 15 C18.6 15 16.4 16.8 16 19.5Z" fill="#7ad7c0"/>' : '';
-    const top = 19 - stage * 2.2;
-    const bud = stage === 3 ? `<path d="M16 ${top - 4.2} C18.2 ${top - 2.6} 18 ${top} 16 ${top + .4} C14 ${top} 13.8 ${top - 2.6} 16 ${top - 4.2}Z" fill="#ff8fab"/>` : '';
-    let bloom = '';
-    if (stage >= 4) {
-      for (let k = 0; k < 5; k++) bloom += `<ellipse cx="16" cy="${top - 3.2}" rx="2.2" ry="3.2" fill="${k % 2 ? '#ffb3c8' : '#ff8fab'}" transform="rotate(${k * 72} 16 ${top})"/>`;
-      bloom = `<g class="hp-bloom">${bloom}<circle cx="16" cy="${top}" r="1.7" fill="#ffd76a"/></g>`;
-    }
-    const seed = stage === 0 ? '<ellipse cx="16" cy="25.6" rx="2.4" ry="1.7" fill="#ffd76a"/>' : '';
-    return `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 27.5 Q16 25.6 25 27.5" stroke="#e7c9b8" stroke-width="1.6" fill="none" stroke-linecap="round"/>${seed}${stem}${leafL}${leafR}${bud}${bloom}</svg>`;
-  }
-  let sproutEl = null;
-  function renderSprout(grew) {
-    if (!sproutEl) return;
-    const st = sproutState(), stage = sproutStage(st.n);
-    sproutEl.dataset.stage = stage;
-    sproutEl.title = `今天一起走过 ${st.n} 步 · ${SPROUT_TEXT[stage]}`;
-    sproutEl.innerHTML = `<span class="hp-sprout-pot">${sproutSVG(stage)}</span><span class="hp-sprout-text">${SPROUT_TEXT[stage]}</span>`;
-    if (grew) {
-      sproutEl.classList.remove('hp-sprout-grow'); void sproutEl.offsetWidth; sproutEl.classList.add('hp-sprout-grow');
-      const r = sproutEl.querySelector('svg').getBoundingClientRect();
-      burst(r.left + r.width / 2, r.top + r.height * .4, 5, .55);
-    }
-  }
-  function placeSprout() {
-    const bottom = $('#app .sidebar > .mt-auto');
-    if (!bottom) return;
-    const current = bottom.querySelector(':scope > .hp-sprout') || sproutEl || document.createElement('div');
-    for (const duplicate of document.querySelectorAll('#app .sidebar > .mt-auto > .hp-sprout')) {
-      if (duplicate !== current) duplicate.remove();
-    }
-    sproutEl = current;
-    if (current.parentElement === bottom) return;
-    current.className = 'hp-sprout';
-    bottom.prepend(sproutEl);
-    renderSprout(false);
-  }
-  function nurture() {
-    const st = sproutState(), before = sproutStage(st.n);
-    st.n += 1;
-    try { localStorage.setItem(SPROUT_KEY, JSON.stringify(st)); } catch (e) { /* 隐私模式 */ }
-    if (sproutEl && sproutEl.isConnected) renderSprout(sproutStage(st.n) > before);
-  }
-
   /* ================= 小心思：页尾落款 ================= */
   const fadeIn = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
     for (const en of entries) if (en.isIntersecting) { en.target.classList.add('hp-in'); fadeIn.unobserve(en.target); }
@@ -495,7 +450,8 @@
     const el = old || document.createElement('p');
     if (!old) {
       el.className = 'hp-signoff';
-      el.innerHTML = '<span class="hp-signoff-mark" aria-hidden="true"></span>善意流动 · 万物共生';
+      el.innerHTML = '<span class="hp-signoff-mark" aria-hidden="true"></span>' +
+        (window.happyLocale() === 'en' ? 'Kindness flows · Everything grows together' : '善意流动 · 万物共生');
     }
     main.appendChild(el);
     if (fadeIn && !el.classList.contains('hp-in')) fadeIn.observe(el); else el.classList.add('hp-in');
@@ -532,7 +488,6 @@
     dashBanner();
     scanNumbers();
     emptyFlowers();
-    placeSprout();
     signOff();
     watchToasts();
   }
@@ -563,7 +518,7 @@
         }
         if (structural) continue;
         const t = m.target;
-        if (t.closest && t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower, .playground-markdown, .hp-sprout')) continue;
+        if (t.closest && t.closest('.hp-hello, .hp-nav-pill, .hp-empty-flower, .playground-markdown, .bloom-garden')) continue;
         structural = true;
       }
       if (structural) schedule();

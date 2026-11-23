@@ -10,10 +10,14 @@ import misc from './misc'
 import community from './community'
 import playground from './playground'
 import workflow from './workflow'
+import bloom from './bloom'
+import bloomPlanner from './bloomPlanner'
 
 export default {
   adminAccessKeys,
   mcp,
+  bloom,
+  bloomPlanner,
   ...landing,
   ...common,
   ...dashboard,

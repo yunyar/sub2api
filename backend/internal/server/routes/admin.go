@@ -45,6 +45,10 @@ func RegisterAdminRoutes(
 		profiles.PUT("/:id", h.AutoRouting.UpdateProfile)
 		profiles.DELETE("/:id", h.AutoRouting.DisableProfile)
 	}
+	if h.Bloom != nil {
+		admin.GET("/settings/bloom-planner", h.Bloom.Planner)
+		admin.PUT("/settings/bloom-planner", gin.HandlerFunc(stepUpAuth), h.Bloom.UpdatePlanner)
+	}
 	{
 		// 部署与运营合规确认
 		registerAdminComplianceRoutes(admin, h)

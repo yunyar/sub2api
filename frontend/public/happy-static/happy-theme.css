@@ -774,24 +774,6 @@ body:has(#app .studio) .hp-rain{display:none}
 :root[data-hp-daypart="dusk"] .hp-aurora i:nth-child(3){background:radial-gradient(circle,rgba(186,160,255,.95) 0,rgba(186,160,255,.38) 35%,transparent 68%)}
 :root[data-hp-daypart="night"] .hp-aurora i:nth-child(2){background:radial-gradient(circle,rgba(130,214,200,.9) 0,rgba(130,214,200,.34) 35%,transparent 68%)}
 
-/* 今日小苗（侧边栏底部） */
-.hp-sprout{display:flex;align-items:center;gap:10px;margin:0 4px 10px;padding:6px 10px;border-radius:14px;color:var(--hp-ink-3);font-size:12px;
-  background:linear-gradient(120deg,rgba(255,143,171,.08),rgba(122,215,192,.08));cursor:default;user-select:none}
-:root.dark .hp-sprout{background:linear-gradient(120deg,rgba(255,143,171,.07),rgba(122,215,192,.06))}
-.hp-sprout-pot{display:block;width:28px;height:28px;flex:none}
-.hp-sprout-pot svg{width:100%;height:100%;overflow:visible}
-.hp-sprout-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#app .sidebar:has(.sidebar-label-collapsed) .hp-sprout{justify-content:center;padding:6px 0}
-#app .sidebar:has(.sidebar-label-collapsed) .hp-sprout-text{display:none}
-.hp-sprout .hp-leaf{transform-box:fill-box;transform-origin:100% 100%;transition:transform .6s cubic-bezier(.34,1.6,.5,1)}
-.hp-sprout .hp-leaf.r{transform-origin:0 100%}
-.hp-sprout:hover .hp-leaf.l{transform:rotate(-10deg)}
-.hp-sprout:hover .hp-leaf.r{transform:rotate(10deg)}
-.hp-sprout .hp-bloom{transform-box:fill-box;transform-origin:50% 50%;transition:transform 1.2s cubic-bezier(.34,1.4,.5,1)}
-.hp-sprout:hover .hp-bloom{transform:rotate(36deg)}
-.hp-sprout-grow .hp-sprout-pot{animation:hp-sprout-grow .9s cubic-bezier(.34,1.6,.5,1)}
-@keyframes hp-sprout-grow{0%{transform:scale(.7) translateY(3px)}60%{transform:scale(1.12)}100%{transform:none}}
-
 /* 页尾落款：滚到页面底部才淡淡出现 */
 .hp-signoff{display:flex;align-items:center;justify-content:center;gap:8px;margin:40px 0 4px;font-size:12px;letter-spacing:.24em;color:var(--hp-ink-3);
   opacity:0;transform:translateY(6px);transition:opacity 1.2s ease,transform 1.2s ease;user-select:none}
@@ -828,7 +810,7 @@ body > div.fixed.right-4.top-4 .bg-blue-500{background:linear-gradient(90deg,#b9
 .hp-lite body > div.fixed.right-4.top-4 > div,:root.hp-lite body > div.fixed.right-4.top-4 > div{-webkit-backdrop-filter:none !important;backdrop-filter:none !important}
 
 @media (prefers-reduced-motion:reduce){
-  .hp-sprout-grow .hp-sprout-pot,.hp-hint,.hp-hint-out{animation:none !important}
+  .hp-hint,.hp-hint-out{animation:none !important}
   .hp-signoff{transition:none}
 }
 

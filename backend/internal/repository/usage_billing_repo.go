@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/shopspring/decimal"
+
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -101,17 +103,20 @@ func settleAutoRoutingExecution(ctx context.Context, tx *sql.Tx, cmd *service.Us
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {
-	return r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint)
+	return r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, cmd.BalanceCost)
 }
 
-func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64, requestFingerprint string) (bool, error) {
+func (r *usageBillingRepository) claimUsageBillingRequest(ctx context.Context, tx *sql.Tx, requestID string, apiKeyID int64, requestFingerprint string, walletCharge float64) (bool, error) {
+	if !(walletCharge > 0) {
+		walletCharge = 0
+	}
 	var id int64
 	err := tx.QueryRowContext(ctx, `
-		INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint)
-		VALUES ($1, $2, $3)
+		INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint, wallet_charged_amount)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id
-	`, requestID, apiKeyID, requestFingerprint).Scan(&id)
+	`, requestID, apiKeyID, requestFingerprint, walletCharge).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		var existingFingerprint string
 		if err := tx.QueryRowContext(ctx, `
@@ -168,7 +173,7 @@ func (r *usageBillingRepository) reservePlaygroundImageBalance(ctx context.Conte
 			_ = tx.Rollback()
 		}
 	}()
-	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint)
+	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +206,17 @@ func (r *usageBillingRepository) reservePlaygroundImageBalance(ctx context.Conte
 }
 
 func (r *usageBillingRepository) CaptureBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
-	return r.applyBatchImageBalanceHold(ctx, cmd, captureUsageBillingBatchImageBalance)
+	return r.applyBatchImageBalanceHold(ctx, cmd, func(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+		result, charged, err := captureUsageBillingBatchImageBalance(ctx, tx, cmd)
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.ExecContext(ctx, `
+			UPDATE usage_billing_dedup SET wallet_charged_amount = $3
+			WHERE request_id = $1 AND api_key_id = $2
+		`, cmd.RequestID, cmd.APIKeyID, charged)
+		return result, err
+	})
 }
 
 func (r *usageBillingRepository) ReleaseBatchImageBalance(ctx context.Context, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
@@ -225,7 +240,7 @@ func (r *usageBillingRepository) releasePlaygroundImageBalance(ctx context.Conte
 			_ = tx.Rollback()
 		}
 	}()
-	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint)
+	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -265,14 +280,14 @@ func (r *usageBillingRepository) SettlePlaygroundImageBalance(ctx context.Contex
 			_ = tx.Rollback()
 		}
 	}()
-	captured, err := r.claimUsageBillingRequest(ctx, tx, hold.RequestID, hold.APIKeyID, hold.RequestFingerprint)
+	captured, err := r.claimUsageBillingRequest(ctx, tx, hold.RequestID, hold.APIKeyID, hold.RequestFingerprint, 0)
 	if err != nil {
 		return nil, err
 	}
 	if !captured {
 		return &service.UsageBillingApplyResult{Applied: false}, nil
 	}
-	holdResult, err := captureUsageBillingBatchImageBalance(ctx, tx, hold)
+	holdResult, charged, err := captureUsageBillingBatchImageBalance(ctx, tx, hold)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +311,7 @@ func (r *usageBillingRepository) SettlePlaygroundImageBalance(ctx context.Contex
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE playground_image_balance_holds SET status = 'captured', actual_amount = $1, settled_at = NOW()
 		WHERE batch_id = $2 AND status = 'pending'
-	`, hold.ActualAmount, hold.BatchID); err != nil {
+	`, charged, hold.BatchID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -332,7 +347,7 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 		}
 	}()
 
-	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint)
+	applied, err := r.claimUsageBillingRequest(ctx, tx, cmd.RequestID, cmd.APIKeyID, cmd.RequestFingerprint, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -486,36 +501,43 @@ func reserveUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *
 	return nil, service.ErrBatchImageInsufficientBalance
 }
 
-func captureUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {
+func captureUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, decimal.Decimal, error) {
 	if cmd.HoldAmount <= 0 && cmd.ActualAmount <= 0 {
-		return &service.BatchImageBalanceHoldResult{}, nil
+		return &service.BatchImageBalanceHoldResult{}, decimal.Zero, nil
 	}
 	if cmd.ActualAmount-cmd.HoldAmount > 0.00000001 {
-		return nil, service.ErrBatchImageSettlementCostExceedsHold
+		return nil, decimal.Zero, service.ErrBatchImageSettlementCostExceedsHold
 	}
 	var balance, frozen float64
+	var charged decimal.Decimal
 	err := tx.QueryRowContext(ctx, `
-		UPDATE users
-		SET balance = balance
+		WITH prior AS (
+		    SELECT balance + COALESCE(frozen_balance, 0) AS wallet_total
+		    FROM users WHERE id = $3 AND deleted_at IS NULL AND COALESCE(frozen_balance, 0) >= $1
+		    FOR UPDATE
+		)
+		UPDATE users AS account
+		SET balance = account.balance
 				+ CASE WHEN $1 > $2 THEN $1 - $2 ELSE 0 END
 				- CASE WHEN $2 > $1 THEN $2 - $1 ELSE 0 END,
-			frozen_balance = COALESCE(frozen_balance, 0) - $1,
+			frozen_balance = COALESCE(account.frozen_balance, 0) - $1,
 			updated_at = NOW()
-		WHERE id = $3 AND deleted_at IS NULL AND COALESCE(frozen_balance, 0) >= $1
-		RETURNING balance, frozen_balance
-	`, cmd.HoldAmount, cmd.ActualAmount, cmd.UserID).Scan(&balance, &frozen)
+		FROM prior WHERE account.id = $3
+		RETURNING account.balance, account.frozen_balance,
+		    GREATEST(prior.wallet_total - account.balance - account.frozen_balance, 0)
+	`, cmd.HoldAmount, cmd.ActualAmount, cmd.UserID).Scan(&balance, &frozen, &charged)
 	if err == nil {
-		return &service.BatchImageBalanceHoldResult{NewBalance: &balance, FrozenBalance: &frozen}, nil
+		return &service.BatchImageBalanceHoldResult{NewBalance: &balance, FrozenBalance: &frozen}, charged, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
+		return nil, decimal.Zero, err
 	}
 	if exists, existsErr := userExistsForBilling(ctx, tx, cmd.UserID); existsErr != nil {
-		return nil, existsErr
+		return nil, decimal.Zero, existsErr
 	} else if !exists {
-		return nil, service.ErrUserNotFound
+		return nil, decimal.Zero, service.ErrUserNotFound
 	}
-	return nil, errors.New("batch image frozen balance is insufficient")
+	return nil, decimal.Zero, errors.New("batch image frozen balance is insufficient")
 }
 
 func releaseUsageBillingBatchImageBalance(ctx context.Context, tx *sql.Tx, cmd *service.BatchImageBalanceHoldCommand) (*service.BatchImageBalanceHoldResult, error) {

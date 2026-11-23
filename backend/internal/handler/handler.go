@@ -72,6 +72,7 @@ type Handlers struct {
 	AsyncImage            *AsyncImageHandler
 	BatchImage            *BatchImageHandler
 	CommunityQRCode       *CommunityQRCodeHandler
+	Bloom                 *BloomHandler
 }
 
 // BuildInfo contains build-time information

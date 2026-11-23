@@ -99,6 +99,11 @@ func RegisterUserRoutes(
 			RegisterPlaygroundAutoRoutingRoutes(authenticated, h.PlaygroundAutoRouting)
 		}
 
+		if h.Bloom != nil {
+			bloom := authenticated.Group("/bloom/tasks", panelRateLimiter.Heavy())
+			bloom.GET("", h.Bloom.List)
+			bloom.POST("/:id/claim", h.Bloom.Claim)
+		}
 		// 用户可用分组（非管理员接口）
 		groups := authenticated.Group("/groups")
 		{

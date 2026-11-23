@@ -3787,6 +3787,9 @@
 
         <!-- Tab: Users -->
         <div v-show="activeTab === 'users'" class="space-y-6">
+          <KeepAlive>
+            <BloomPlannerSettings v-if="activeTab === 'users'" :step-up="settingsStepUp" />
+          </KeepAlive>
           <!-- Default Settings -->
           <div class="card">
             <div
@@ -8987,7 +8990,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, defineAsyncComponent, onMounted, watch } from "vue";
 import { listPlatformIds } from "@/constants/platformCatalog";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
@@ -9116,6 +9119,9 @@ type SettingsTab =
   | "email"
   | "backup";
 const activeTab = ref<SettingsTab>("general");
+const BloomPlannerSettings = defineAsyncComponent(
+  () => import("@/components/admin/settings/BloomPlannerSettings.vue"),
+);
 const settingsTabs = [
   { key: "general" as SettingsTab, icon: "home" as const },
   { key: "agreement" as SettingsTab, icon: "document" as const },

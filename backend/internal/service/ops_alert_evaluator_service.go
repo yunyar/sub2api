@@ -675,6 +675,22 @@ func buildOpsAlertDescription(rule *OpsAlertRule, value float64, windowMinutes i
 	)
 }
 
+func (s *OpsAlertEvaluatorService) NotifyBloomBudgetAlert(ctx context.Context, eventID int64) {
+	event, err := s.opsRepo.GetAlertEventByID(ctx, eventID)
+	if err != nil || event == nil {
+		return
+	}
+	rule := &OpsAlertRule{Name: event.Title, Severity: event.Severity, NotifyEmail: true,
+		MetricType: "bloom_weekly_reward", Operator: ">="}
+	if event.ThresholdValue != nil {
+		rule.Threshold = *event.ThresholdValue
+	}
+	runtimeCfg, err := s.opsService.GetOpsAlertRuntimeSettings(ctx)
+	if err == nil {
+		s.maybeSendAlertEmail(ctx, runtimeCfg, rule, event)
+	}
+}
+
 func (s *OpsAlertEvaluatorService) maybeSendAlertEmail(ctx context.Context, runtimeCfg *OpsAlertRuntimeSettings, rule *OpsAlertRule, event *OpsAlertEvent) bool {
 	if s == nil || s.emailService == nil || s.opsService == nil || event == nil || rule == nil {
 		return false

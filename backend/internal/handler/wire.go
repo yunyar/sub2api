@@ -208,6 +208,7 @@ func ProvideHandlers(
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
 	communityQRCodeHandler *CommunityQRCodeHandler,
+	bloomHandler *BloomHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
@@ -238,6 +239,7 @@ func ProvideHandlers(
 		AsyncImage:            asyncImageHandler,
 		BatchImage:            batchImageHandler,
 		CommunityQRCode:       communityQRCodeHandler,
+		Bloom:                 bloomHandler,
 	}
 }
 
@@ -268,6 +270,7 @@ var ProviderSet = wire.NewSet(
 	NewAsyncImageHandler,
 	ProvideBatchImageHandler,
 	NewCommunityQRCodeHandler,
+	NewBloomHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

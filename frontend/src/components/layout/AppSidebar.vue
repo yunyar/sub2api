@@ -189,6 +189,11 @@
 
     <!-- Bottom Section -->
     <div class="mt-auto border-t border-gray-100 p-3 dark:border-dark-800">
+      <BloomGarden
+        v-if="authStore.isAuthenticated && authStore.user"
+        :key="authStore.user.id"
+        :collapsed="sidebarCollapsed"
+      />
       <!-- Theme Toggle -->
       <button
         @click="toggleTheme"
@@ -248,6 +253,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import BloomGarden from './BloomGarden.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { sanitizeUrl } from '@/utils/url'

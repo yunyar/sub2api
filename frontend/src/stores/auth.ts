@@ -432,13 +432,14 @@ export const useAuthStore = defineStore('auth', () => {
    * @returns Promise resolving to the updated user
    * @throws Error if not authenticated or request fails
    */
-  async function refreshUser(): Promise<User> {
+  async function refreshUser(signal?: AbortSignal): Promise<User> {
     if (!token.value) {
       throw new Error('Not authenticated')
     }
 
     try {
-      const response = await authAPI.getCurrentUser()
+      const response = await (signal ? authAPI.getCurrentUser(signal) : authAPI.getCurrentUser())
+      signal?.throwIfAborted()
       if (response.data.run_mode) {
         runMode.value = response.data.run_mode
       }
@@ -451,7 +452,7 @@ export const useAuthStore = defineStore('auth', () => {
       return userData
     } catch (error) {
       // If refresh fails with 401, clear auth state
-      if ((error as { status?: number }).status === 401) {
+      if (!signal?.aborted && (error as { status?: number }).status === 401) {
         clearAuth({ preservePendingAuthSession: pendingAuthSession.value !== null })
       }
       throw error

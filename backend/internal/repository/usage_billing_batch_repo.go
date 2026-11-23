@@ -145,20 +145,26 @@ func claimUsageBillingBatch(ctx context.Context, tx *sql.Tx, cmds []*service.Usa
 	requestIDs := make([]string, len(cmds))
 	apiKeyIDs := make([]int64, len(cmds))
 	fingerprints := make([]string, len(cmds))
+	walletCharges := make([]string, len(cmds))
 	for pos, i := range order {
 		requestIDs[pos] = cmds[i].RequestID
 		apiKeyIDs[pos] = cmds[i].APIKeyID
 		fingerprints[pos] = cmds[i].RequestFingerprint
+		walletCharges[pos] = "0"
+		if cmds[i].BalanceCost > 0 {
+			walletCharges[pos] = usageBillingAmount(cmds[i].BalanceCost).String()
+		}
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint)
-		SELECT t.request_id, t.api_key_id, t.request_fingerprint
-		FROM unnest($1::text[], $2::bigint[], $3::text[]) WITH ORDINALITY AS t(request_id, api_key_id, request_fingerprint, ord)
+		INSERT INTO usage_billing_dedup (request_id, api_key_id, request_fingerprint, wallet_charged_amount)
+		SELECT t.request_id, t.api_key_id, t.request_fingerprint, t.wallet_charged_amount
+		FROM unnest($1::text[], $2::bigint[], $3::text[], $4::numeric[])
+		     WITH ORDINALITY AS t(request_id, api_key_id, request_fingerprint, wallet_charged_amount, ord)
 		ORDER BY t.ord
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, request_id, api_key_id
-	`, pq.Array(requestIDs), pq.Array(apiKeyIDs), pq.Array(fingerprints))
+	`, pq.Array(requestIDs), pq.Array(apiKeyIDs), pq.Array(fingerprints), pq.Array(walletCharges))
 	if err != nil {
 		return nil, err
 	}
