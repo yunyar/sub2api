@@ -376,14 +376,14 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				if account.Platform == service.PlatformGemini {
 					if h.geminiCompatService == nil {
 						h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Gemini compatibility service is not configured")
-						return nil, errors.New("Gemini compatibility service is not configured")
+						return nil, errors.New("gemini compatibility service is not configured")
 					}
 					return h.geminiCompatService.ForwardAsChatCompletions(c.Request.Context(), c, account, payload)
 				}
 				if shouldUseAntigravityCompat(account) {
 					if h.antigravityGatewayService == nil {
 						h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", "Antigravity compatibility service is not configured")
-						return nil, errors.New("Antigravity compatibility service is not configured")
+						return nil, errors.New("antigravity compatibility service is not configured")
 					}
 					setActualUpstreamEndpoint(c, EndpointAntigravityGenerateContent)
 					return h.antigravityGatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, payload, parsedReq)

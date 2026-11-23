@@ -13,7 +13,8 @@ import (
 func TestPlaygroundChatLocalTime(t *testing.T) {
 	body := []byte(`{"model":"alias","messages":[{"role":"user","content":"What time is it?"}]}`)
 	ctx := WithPlaygroundChat(context.Background(), "Asia/Shanghai")
-	settings := ctx.Value(playgroundChatKey{}).(playgroundChatContext)
+	settings, ok := ctx.Value(playgroundChatKey{}).(playgroundChatContext)
+	require.True(t, ok)
 	settings.now = time.Date(2026, time.November, 23, 15, 9, 0, 0, time.UTC)
 	ctx = context.WithValue(ctx, playgroundChatKey{}, settings)
 
