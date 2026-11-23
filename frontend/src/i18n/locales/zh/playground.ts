@@ -93,7 +93,7 @@ export default {
     attachmentImageOnly: '生图模式仅支持图片附件。请移除文本附件或切换到聊天模式。',
     attachmentOnlyPrompt: '请帮我处理这些附件。',
     editAttachedImage: '请编辑这张附件图片。',
-    attachmentNote: '每次最多添加 20 个附件，合计 20 MB。支持 UTF-8 文本、代码和 PNG、JPEG、WebP 图片。文本还受模型上下文和历史存储限制。图片引用不会保存到云端历史。',
+    attachmentNote: '也可以直接将截图、图片或文件粘贴到消息框或流程步骤输入框。每次最多添加 20 个附件，合计 20 MB。支持 UTF-8 文本、代码和 PNG、JPEG、WebP 图片。文本还受模型上下文和历史存储限制。图片引用不会保存到云端历史。',
     dropFiles: '松开鼠标即可添加多个参考文件',
     activeRequests: '进行中请求：{count}',
     historyMessageTooLarge: '此消息超过 1 MiB 存储限制。请缩短提示词或减少文本附件。',

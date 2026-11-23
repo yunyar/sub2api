@@ -336,6 +336,48 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.streamChat.mock.calls[0][0].messages.at(-1).content).toContain('--- config.json ---')
   })
 
+  it('adds pasted images and files to the draft attachments without changing the prompt', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const composer = wrapper.get('textarea.composer-input')
+    await composer.setValue('Use these references.')
+    const pngHeader = [137, 80, 78, 71, 13, 10, 26, 10]
+    const files = [createFile('screenshot.png', pngHeader, 'image/png'), createFile('notes.txt', 'context')]
+    const duplicateItem = vi.fn(() => files[0])
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', { value: { files, items: [{ kind: 'file', getAsFile: duplicateItem }] } })
+    composer.element.dispatchEvent(paste)
+    await flushPromises()
+
+    expect(paste.defaultPrevented).toBe(true)
+    expect(duplicateItem).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.attachment-item')).toHaveLength(2)
+    expect(wrapper.get('.attachment-thumb').attributes('alt')).toBe('screenshot.png')
+    expect(wrapper.get('.attachment-list').text()).toContain('notes.txt')
+    expect((composer.element as HTMLTextAreaElement).value).toBe('Use these references.')
+  })
+
+  it('reads file items when the clipboard file list is empty and leaves plain text paste native', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    const composer = wrapper.get('textarea.composer-input')
+    const textPaste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(textPaste, 'clipboardData', { value: { files: [], items: [{ kind: 'string' }] } })
+    composer.element.dispatchEvent(textPaste)
+    expect(textPaste.defaultPrevented).toBe(false)
+
+    const filePaste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(filePaste, 'clipboardData', {
+      value: { files: [], items: [{ kind: 'file', getAsFile: () => createFile('notes.txt', 'context') }] }
+    })
+    composer.element.dispatchEvent(filePaste)
+    await flushPromises()
+
+    expect(filePaste.defaultPrevented).toBe(true)
+    expect(wrapper.findAll('.attachment-item')).toHaveLength(1)
+    expect(wrapper.get('.attachment-list').text()).toContain('notes.txt')
+  })
+
   it('keeps attachments when the initial conversation save fails', async () => {
     state.save.mockRejectedValueOnce(new Error('save failed'))
     const wrapper = mountView()

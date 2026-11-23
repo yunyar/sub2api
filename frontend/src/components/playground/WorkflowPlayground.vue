@@ -17,6 +17,7 @@
       <p v-if="steps.length >= 50" class="mt-2 text-sm text-amber-600">{{ t('workflow.limit') }}</p>
       <p v-if="!hasBalance" class="mt-2 text-sm text-amber-600">{{ t('workflow.insufficientBalance') }}</p>
       <p v-if="saveError || cacheError || error" class="mt-2 text-sm text-red-500">{{ saveError || cacheError || error }}</p>
+      <p v-if="attachmentError" role="alert" class="mt-2 text-sm text-red-500">{{ attachmentError }}</p>
       <div class="workflow-scroll">
         <article v-for="(step, index) in steps" :key="step.id" class="workflow-step" :class="{ current: index === currentStep }">
           <div class="flex items-center justify-between gap-2"><strong>{{ t('workflow.step', { number: index + 1 }) }}</strong><div class="flex gap-1"><button v-if="index !== currentStep" class="btn btn-secondary btn-xs" @click="currentStep = index">{{ t('workflow.goTo') }}</button><button class="btn btn-secondary btn-xs" :disabled="steps.length === 1" @click="removeStep(index)">{{ t('workflow.remove') }}</button></div></div>
@@ -28,7 +29,7 @@
               <span class="min-w-0 flex-1 truncate">{{ attachment.name }}</span>
               <button type="button" class="workflow-attachment-remove" :aria-label="t('playground.removeAttachment', { name: attachment.name })" @click="emit('removeAttachment', attachment.id)">×</button>
             </div>
-            <button type="button" class="btn btn-secondary btn-xs" :disabled="attachmentsLoading" @click="emit('requestAttachments')">{{ t('playground.attachFiles') }}</button>
+            <button type="button" class="btn btn-secondary btn-xs" :title="t('playground.attachmentNote')" :disabled="attachmentsLoading" @click="emit('requestAttachments')">{{ t('playground.attachFiles') }}</button>
           </div>
           <p v-if="promptTooLong(step.prompt)" class="mt-1 text-sm text-red-500">{{ t('workflow.promptTooLong') }}</p>
           <div v-if="index === currentStep" class="mt-2 flex flex-wrap items-center gap-2"><input v-if="isImageStep(step)" v-model.number="imageCount" class="input w-20" type="number" min="1" max="10" :disabled="isRunning(step.id)" :aria-label="t('workflow.imageCount')" /><button class="btn btn-primary" :disabled="!canRun(step) || isRunning(step.id)" @click="runCurrent()">{{ result(step.id) ? t('workflow.regenerate') : t('workflow.run') }}</button><button v-if="result(step.id) && index < steps.length - 1" class="btn btn-secondary" @click="next">{{ t('workflow.next') }}</button><button v-if="isRunning(step.id)" class="btn btn-secondary" @click="stopStep(step.id)">{{ t('workflow.stop') }}</button></div>
@@ -69,6 +70,7 @@ const props = defineProps<{
   imageMode?: PlaygroundMode
   attachments?: WorkflowAttachment[]
   attachmentsLoading?: boolean
+  attachmentError?: string
 }>()
 const emit = defineEmits<{
   presets: [value: { groupId: number; routing?: ConversationRouting; chatModel: string; imageModel: string }]

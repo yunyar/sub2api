@@ -5,6 +5,7 @@
       :class="{ 'mobile-studio': mobile, 'settings-expanded': mobileControlsOpen }"
       :style="mobile && mobileViewportHeight ? { height: `${mobileViewportHeight}px` } : undefined"
       @keydown.esc="closeMobilePanels"
+      @paste="onPasteAttachments"
       @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles"
     >
       <button v-if="historyOpen" class="history-scrim" type="button" :aria-label="t('common.close')" @click="historyOpen = false" />
@@ -106,7 +107,7 @@
           </div>
         </header>
 
-        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :routing="workflowPresets.routing" :route="workflowRequestRoute" :route-valid="workflowRouteValid" :models="models" :models-loading="loadingModels" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" :attachments="attachments" :attachments-loading="loadingAttachments" @request-attachments="attachmentInput?.click()" @remove-attachment="removeAttachment" @consume-attachments="removeAttachments" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
+        <WorkflowPlayground v-show="activeTab === 'workflow'" :groups="groups" :group-id="workflowPresets.groupId" :routing="workflowPresets.routing" :route="workflowRequestRoute" :route-valid="workflowRouteValid" :models="models" :models-loading="loadingModels" :chat-model="workflowPresets.chatModel" :image-model="workflowPresets.imageModel" :image-mode="imageMode" :attachments="attachments" :attachments-loading="loadingAttachments" :attachment-error="attachmentError" @request-attachments="attachmentInput?.click()" @remove-attachment="removeAttachment" @consume-attachments="removeAttachments" @presets="applyWorkflowPresets" @mode="imageMode = $event" />
         <div v-show="activeTab === 'standard'" class="standard-playground">
         <div ref="viewport" class="conversation-scroll" @scroll.passive="onViewportScroll">
           <div v-if="!current.messages.length && !currentImages.length" class="welcome">
@@ -165,7 +166,7 @@
 
         <div class="composer-area">
           <div class="mx-auto max-w-3xl">
-            <p v-if="error" role="alert" class="mb-3 text-sm text-red-500">{{ error }}</p>
+            <p v-if="error || attachmentError" role="alert" class="mb-3 text-sm text-red-500">{{ attachmentError || error }}</p>
             <p v-else-if="!hasBalance" role="alert" class="mb-3 text-sm text-amber-600 dark:text-amber-400">{{ t('playground.insufficientBalance') }}</p>
             <p v-if="saveError" role="alert" class="mb-3 text-sm text-amber-600">{{ saveError }} <button class="underline" :disabled="busy" @click="retrySave">{{ t('playground.retrySave') }}</button></p>
             <p v-if="cacheError" role="alert" class="mb-3 text-sm text-amber-600">{{ cacheError }}</p>
@@ -425,6 +426,7 @@ const draft = ref('')
 const attachments = ref<PlaygroundAttachment[]>([])
 const attachmentInput = ref<HTMLInputElement | null>(null)
 const loadingAttachments = ref(false)
+const attachmentError = ref('')
 const error = ref('')
 const saveError = ref('')
 const cacheError = ref('')
@@ -823,6 +825,23 @@ function handleAttachmentSelection(event: Event) {
   input.value = ''
   addAttachments(files)
 }
+function onPasteAttachments(event: ClipboardEvent) {
+  const clipboard = event.clipboardData
+  if (!clipboard) return
+
+  const files = Array.from(clipboard.files)
+  if (!files.length) {
+    for (const item of Array.from(clipboard.items ?? [])) {
+      if (item.kind !== 'file') continue
+      const file = item.getAsFile()
+      if (file) files.push(file)
+    }
+  }
+  if (!files.length) return
+
+  event.preventDefault()
+  addAttachments(files)
+}
 function addAttachments(files: File[]) {
   if (!files.length) return
   const context = requestContext()
@@ -847,7 +866,7 @@ function addAttachments(files: File[]) {
         rejection ||= caught instanceof Error ? caught.message : t('playground.requestFailed')
       }
     }
-    if (isCurrentRequest(context)) error.value = rejection
+    if (isCurrentRequest(context)) attachmentError.value = rejection
   }).finally(() => {
     attachmentBatchCount = Math.max(0, attachmentBatchCount - 1)
     if (isCurrentRequest(context)) loadingAttachments.value = attachmentBatchCount > 0
@@ -874,6 +893,7 @@ function removeAttachments(ids: string[]) {
   if (!ids.length) return
   const consumed = new Set(ids)
   attachments.value = attachments.value.filter(attachment => !consumed.has(attachment.id))
+  attachmentError.value = ''
 }
 function expandedUserContent(prompt: string, snapshot: PlaygroundAttachment[], kind: PlaygroundKind) {
   const text = prompt || t(kind === 'image' ? 'playground.editAttachedImage' : 'playground.attachmentOnlyPrompt')
@@ -916,6 +936,7 @@ function newConversation() {
   acceptedRevisions.clear()
   acceptedRevisions.set(current.value.id, current.value.revision)
   imageReferenceId.value = ''
+  attachmentError.value = ''
   draft.value = ''; attachments.value = []; loadingAttachments.value = false; error.value = ''; saveError.value = ''; historyOpen.value = false
 }
 function releaseImages(entries: ImageEntry[]) {
@@ -1005,6 +1026,7 @@ function openConversation(item: PlaygroundConversation) {
   acceptedRevisions.set(current.value.id, current.value.revision)
   reseedMessageId(current.value.messages)
   imageReferenceId.value = ''
+  attachmentError.value = ''
   draft.value = ''; attachments.value = []; loadingAttachments.value = false; error.value = ''; saveError.value = ''; historyOpen.value = false
   if (accountId.value !== null) saveLastConversation(accountId.value, item.id)
   void restoreImages(item.id)
@@ -1457,6 +1479,7 @@ watch(accountId, (account, previousAccount) => {
   acceptedRevisions.clear()
   draft.value = ''
   attachments.value = []
+  attachmentError.value = ''
   imageReferenceId.value = ''
   storageLimitMB.value = 50
   loadingAttachments.value = false

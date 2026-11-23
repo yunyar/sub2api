@@ -93,7 +93,7 @@ export default {
     attachmentImageOnly: 'Image mode accepts image attachments only. Remove text attachments or switch to chat.',
     attachmentOnlyPrompt: 'Please help me with the attached files.',
     editAttachedImage: 'Please edit the attached image.',
-    attachmentNote: 'Attach up to 20 files and 20 MB total per request. Supports UTF-8 text and code, PNG, JPEG, and WebP. Text is also subject to model context and history limits. Image references are not saved to cloud history.',
+    attachmentNote: 'You can also paste screenshots, images, or files into the message or step prompt. Attach up to 20 files and 20 MB total per request. Supports UTF-8 text and code, PNG, JPEG, and WebP. Text is also subject to model context and history limits. Image references are not saved to cloud history.',
     dropFiles: 'Drop to add multiple reference files',
     activeRequests: 'Active requests: {count}',
     historyMessageTooLarge: 'This message exceeds the 1 MiB storage limit. Shorten the prompt or remove some attachment text.',
