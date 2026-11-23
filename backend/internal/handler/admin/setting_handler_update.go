@@ -2204,7 +2204,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		updatedPaymentCfg, _ = h.paymentConfigService.GetPaymentConfig(c.Request.Context())
 	}
 	if updatedPaymentCfg == nil {
-		updatedPaymentCfg = &service.PaymentConfig{}
+		updatedPaymentCfg = &service.PaymentConfig{RechargeBonusExcludedUserIDs: []int64{}}
 	}
 	passkeyConfigured, passkeyRPID, passkeyRPOrigins := h.settingService.PasskeyConfiguration()
 
