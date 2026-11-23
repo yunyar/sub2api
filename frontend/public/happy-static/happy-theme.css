@@ -645,7 +645,8 @@ body:has(#app .studio) .hp-rain{display:none}
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.8),0 6px 16px -10px rgba(240,104,140,.35)}
 #app .studio .suggestion{background:rgba(255,255,255,.55) !important;border:1px solid rgba(255,255,255,.85) !important;border-radius:16px !important;color:var(--hp-ink-2) !important;transition:transform .35s cubic-bezier(.34,1.5,.5,1),background .3s}
 #app .studio .suggestion:hover{background:rgba(255,255,255,.85) !important;transform:translateY(-2px)}
-#app .studio .mode-select,#app .studio .mode-indicator{background:rgba(255,228,234,.9) !important;color:#b4385e !important;border-radius:999px !important}
+#app .studio .mode-select,#app .studio .mode-indicator{color:#b4385e !important;border-radius:999px !important}
+#app .studio .mode-indicator{background:rgba(255,228,234,.9) !important}
 #app .studio .mode-button{border-radius:999px !important}
 #app .studio .settings-panel,#app .studio .image-card{background:rgba(255,255,255,.6) !important;border-color:rgba(255,255,255,.85) !important;border-radius:18px !important}
 #app .studio .image-preview{background:rgba(255,255,255,.35) !important}
@@ -665,7 +666,8 @@ body:has(#app .studio) .hp-rain{display:none}
 :root.dark #app .studio .playground-tab.active{background:rgba(255,255,255,.12) !important;color:#fff !important}
 :root.dark #app .studio .composer,:root.dark #app .studio .settings-panel,:root.dark #app .studio .image-card,:root.dark #app .studio .suggestion{background:rgba(255,255,255,.05) !important;border-color:rgba(255,255,255,.1) !important}
 :root.dark #app .studio .user-bubble{background:linear-gradient(135deg,rgba(255,170,140,.18),rgba(255,143,171,.16) 55%,rgba(185,167,255,.16)) !important;color:#f5f5f7 !important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
-:root.dark #app .studio .mode-select,:root.dark #app .studio .mode-indicator{background:rgba(255,143,171,.16) !important;color:#ffc2d1 !important}
+:root.dark #app .studio .mode-select,:root.dark #app .studio .mode-indicator{color:#ffc2d1 !important}
+:root.dark #app .studio .mode-indicator{background:rgba(255,143,171,.16) !important}
 :root.dark #app .studio .studio-view-link,:root.dark #app .studio .request-status{color:#ff9fbd !important}
 
 /* ---------- 手机独立版 /playground/mobile ---------- */
@@ -862,6 +864,29 @@ body > div.fixed.right-4.top-4 .bg-blue-500{background:linear-gradient(90deg,#b9
  *   伸出卡片的部分会变成透明看不清，所以用接近不透明、同色调的玻璃底
  * 选项的悬停 / 选中 / 聚焦统一成主题粉色调
  * ========================================================== */
+:root :is(#app, .modal-content) :is(.select-trigger, .date-picker-trigger, select:not([multiple]):not([size])) {
+  background: var(--hp-glass) !important;
+  -webkit-backdrop-filter: var(--hp-select-blur, var(--hp-blur)) !important;
+  backdrop-filter: var(--hp-select-blur, var(--hp-blur)) !important;
+}
+
+:root.hp-lite {
+  --hp-select-blur: none;
+}
+
+:root.dark :is(#app, .modal-content) select {
+  color-scheme: dark;
+}
+
+#app .studio select:is(.toolbar-select, .mode-select) {
+  border: 1px solid var(--hp-hair);
+}
+
+#app .studio select.toolbar-select {
+  border-radius: 12px;
+  padding: .35rem .55rem;
+}
+
 .select-dropdown-portal{
   background:linear-gradient(140deg,rgba(255,255,255,.86),rgba(255,255,255,.74)) !important;
   -webkit-backdrop-filter:var(--hp-blur);backdrop-filter:var(--hp-blur);
