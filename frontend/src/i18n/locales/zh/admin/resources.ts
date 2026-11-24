@@ -240,6 +240,17 @@ export default {
     redeem: {
       title: '兑换码管理',
       description: '生成和管理兑换码',
+      rewardHistory: '任务奖励领取记录',
+      searchRewardHistory: '按用户邮箱、用户名或 ID 搜索',
+      searchRewardHistoryAction: '搜索',
+      rewardHistoryLoading: '正在加载领取记录…',
+      noRewardHistory: '暂无任务奖励领取记录',
+      rewardHistoryFailed: '加载任务奖励领取记录失败',
+      rewardUser: '用户',
+      rewardTask: '任务类型',
+      rewardAmount: '到账金额',
+      rewardClaimedAt: '领取时间',
+      rewardNoCredit: '无奖励',
       generateCodes: '生成兑换码',
       columns: {
         code: '兑换码',
@@ -257,6 +268,7 @@ export default {
         concurrency: '并发数',
         subscription: '订阅',
         invitation: '邀请码',
+        bloom_reward: '任务花园奖励',
         // 管理员在用户管理页面调整余额/并发时产生的记录
         admin_balance: '余额（管理员）',
         admin_concurrency: '并发数（管理员）'

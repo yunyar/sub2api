@@ -200,6 +200,33 @@ describe('RedeemView refresh after redemption', () => {
     wrapper.unmount()
   })
 
+  it('shows garden reward claims and preserves micro-dollar precision', async () => {
+    getHistory.mockResolvedValue({
+      items: [{
+        id: -8,
+        code: '',
+        type: 'bloom_reward',
+        value: 0.000001,
+        status: 'used',
+        used_at: '2026-11-24T14:30:00Z',
+        created_at: '2026-11-24T14:30:00Z',
+        activity_source: 'bloom',
+        activity_description: 'easy'
+      }],
+      total: 1
+    })
+    const wrapper = mount(RedeemView, {
+      global: { stubs: { AppLayout: { template: '<div><slot /></div>' }, Icon: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('redeem.bloomReward')
+    expect(wrapper.text()).toContain('bloom.tier.easy')
+    expect(wrapper.text()).toContain('+$0.000001')
+    expect(wrapper.text()).not.toContain('...')
+    wrapper.unmount()
+  })
+
   it('finishes normally without a warning when profile refresh succeeds', async () => {
     const wrapper = await submitCode()
 

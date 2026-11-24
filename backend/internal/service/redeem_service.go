@@ -74,6 +74,10 @@ type RedeemCodeRepository interface {
 	SumPositiveBalanceByUser(ctx context.Context, userID int64) (float64, error)
 }
 
+type BloomRewardHistoryRepository interface {
+	ListBloomRewardHistory(ctx context.Context, params pagination.PaginationParams, search string) ([]RedeemCode, *pagination.PaginationResult, error)
+}
+
 // GenerateCodesRequest 生成兑换码请求
 type GenerateCodesRequest struct {
 	Count int     `json:"count"`
@@ -754,4 +758,12 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 // GetUserHistoryPaginated returns all redemption types for the authenticated user.
 func (s *RedeemService) GetUserHistoryPaginated(ctx context.Context, userID int64, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
 	return s.redeemRepo.ListByUserPaginated(ctx, userID, params, "")
+}
+
+func (s *RedeemService) GetBloomRewardHistory(ctx context.Context, params pagination.PaginationParams, search string) ([]RedeemCode, *pagination.PaginationResult, error) {
+	repo, ok := s.redeemRepo.(BloomRewardHistoryRepository)
+	if !ok {
+		return nil, nil, errors.New("bloom reward history repository is not configured")
+	}
+	return repo.ListBloomRewardHistory(ctx, params, search)
 }

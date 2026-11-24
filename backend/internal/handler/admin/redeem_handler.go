@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -107,6 +108,32 @@ func (h *RedeemHandler) List(c *gin.Context) {
 		out = append(out, *dto.RedeemCodeFromServiceAdmin(&codes[i]))
 	}
 	response.Paginated(c, out, total, page, pageSize)
+}
+
+// GetRewardHistory returns all claimed garden tasks, including zero-credit claims.
+// GET /api/v1/admin/redeem-codes/reward-history
+func (h *RedeemHandler) GetRewardHistory(c *gin.Context) {
+	page, pageSize := response.ParsePagination(c)
+	search := strings.TrimSpace(c.Query("search"))
+	if len(search) > 100 {
+		search = search[:100]
+	}
+
+	codes, result, err := h.redeemService.GetBloomRewardHistory(
+		c.Request.Context(),
+		pagination.PaginationParams{Page: page, PageSize: pageSize},
+		search,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	out := make([]dto.AdminRedeemCode, 0, len(codes))
+	for i := range codes {
+		out = append(out, *dto.RedeemCodeFromServiceAdmin(&codes[i]))
+	}
+	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
 // GetByID handles getting a redeem code by ID

@@ -3,9 +3,18 @@ import { flushPromises, mount } from '@vue/test-utils'
 
 import RedeemView from '../RedeemView.vue'
 
-const { listRedeemCodes, batchUpdateRedeemCodes, getAllGroups, showSuccess, showError, showInfo } =
+const {
+  listRedeemCodes,
+  listRewardHistory,
+  batchUpdateRedeemCodes,
+  getAllGroups,
+  showSuccess,
+  showError,
+  showInfo
+} =
   vi.hoisted(() => ({
     listRedeemCodes: vi.fn(),
+    listRewardHistory: vi.fn(),
     batchUpdateRedeemCodes: vi.fn(),
     getAllGroups: vi.fn(),
     showSuccess: vi.fn(),
@@ -17,6 +26,7 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     redeem: {
       list: listRedeemCodes,
+      listRewardHistory,
       generate: vi.fn(),
       delete: vi.fn(),
       batchDelete: vi.fn(),
@@ -105,6 +115,7 @@ describe('admin RedeemView batch update', () => {
     document.body.innerHTML = ''
 
     listRedeemCodes.mockReset()
+    listRewardHistory.mockReset()
     batchUpdateRedeemCodes.mockReset()
     getAllGroups.mockReset()
     showSuccess.mockReset()
@@ -143,6 +154,72 @@ describe('admin RedeemView batch update', () => {
     })
     batchUpdateRedeemCodes.mockResolvedValue({ updated: 1, message: 'ok' })
     getAllGroups.mockResolvedValue([])
+    listRewardHistory.mockResolvedValue({
+      items: [{
+        id: -8,
+        type: 'bloom_reward',
+        value: 0.000001,
+        status: 'used',
+        used_by: 12,
+        used_at: '2026-11-24T14:30:00Z',
+        created_at: '2026-11-24T14:30:00Z',
+        activity_description: 'easy',
+        user: { id: 12, email: 'alice@example.com', username: 'Alice' }
+      }, {
+        id: -9,
+        type: 'bloom_reward',
+        value: 0,
+        status: 'used',
+        used_by: 13,
+        used_at: '2026-11-23T14:30:00Z',
+        created_at: '2026-11-23T14:30:00Z',
+        activity_description: 'weekly',
+        user: { id: 13, email: 'bob@example.com', username: 'Bob' }
+      }],
+      total: 2,
+      page: 1,
+      page_size: 20,
+      pages: 1
+    })
+  })
+
+  it('lets administrators search and inspect garden reward claims by user', async () => {
+    const wrapper = mount(RedeemView, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          TablePageLayout: {
+            template: '<div><slot name="filters" /><slot name="table" /><slot name="pagination" /></div>'
+          },
+          DataTable: DataTableStub,
+          Pagination: true,
+          ConfirmDialog: true,
+          Select: SelectStub,
+          GroupBadge: true,
+          GroupOptionItem: true,
+          Icon: true,
+          Teleport: true
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.get('[data-test="reward-history-open"]').trigger('click')
+    await flushPromises()
+    expect(listRewardHistory).toHaveBeenCalledWith(1, 20, '')
+    expect(wrapper.text()).toContain('alice@example.com')
+    expect(wrapper.text()).toContain('bloom.tier.easy')
+    expect(wrapper.text()).toContain('+$0.000001')
+    expect(wrapper.text()).toContain('bob@example.com')
+    expect(wrapper.text()).toContain('admin.redeem.rewardNoCredit')
+
+    await wrapper.get('input[placeholder="admin.redeem.searchRewardHistory"]').setValue('alice')
+    const searchButton = wrapper.findAll('button').find(button => button.text() === 'admin.redeem.searchRewardHistoryAction')
+    await searchButton?.trigger('click')
+    await flushPromises()
+    expect(listRewardHistory).toHaveBeenLastCalledWith(1, 20, 'alice')
+    wrapper.unmount()
   })
 
   it('submits only checked fields for selected redeem codes', async () => {

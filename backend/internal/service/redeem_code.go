@@ -21,6 +21,9 @@ type RedeemCode struct {
 	GroupID      *int64
 	ValidityDays int
 
+	ActivitySource      string
+	ActivityDescription string
+
 	User  *User
 	Group *Group
 }

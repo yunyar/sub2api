@@ -9,8 +9,22 @@ import type {
   GenerateRedeemCodesRequest,
   BatchUpdateRedeemCodeFields,
   RedeemCodeType,
-  PaginatedResponse
+  PaginatedResponse,
+  User
 } from '@/types'
+
+export interface BloomRewardHistoryItem {
+  id: number
+  type: 'bloom_reward'
+  value: number
+  status: 'used'
+  used_by: number | null
+  used_at: string
+  created_at: string
+  activity_source?: string
+  activity_description?: string
+  user?: Pick<User, 'id' | 'email' | 'username'>
+}
 
 /**
  * List all redeem codes with pagination
@@ -41,6 +55,28 @@ export async function list(
     },
     signal: options?.signal
   })
+  return data
+}
+
+export async function listRewardHistory(
+  page: number = 1,
+  pageSize: number = 20,
+  search?: string,
+  options?: {
+    signal?: AbortSignal
+  }
+): Promise<PaginatedResponse<BloomRewardHistoryItem>> {
+  const { data } = await apiClient.get<PaginatedResponse<BloomRewardHistoryItem>>(
+    '/admin/redeem-codes/reward-history',
+    {
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined
+      },
+      signal: options?.signal
+    }
+  )
   return data
 }
 
@@ -193,6 +229,7 @@ export async function exportCodes(filters?: {
 
 export const redeemAPI = {
   list,
+  listRewardHistory,
   getById,
   generate,
   delete: deleteCode,

@@ -242,6 +242,17 @@ export default {
     redeem: {
       title: 'Redeem Code Management',
       description: 'Generate and manage redeem codes',
+      rewardHistory: 'Task Reward Claims',
+      searchRewardHistory: 'Search by user email, name, or ID',
+      searchRewardHistoryAction: 'Search',
+      rewardHistoryLoading: 'Loading reward claims…',
+      noRewardHistory: 'No task reward claims found',
+      rewardHistoryFailed: 'Failed to load task reward claims',
+      rewardUser: 'User',
+      rewardTask: 'Task',
+      rewardAmount: 'Credited',
+      rewardClaimedAt: 'Claimed At',
+      rewardNoCredit: 'No credit',
       generateCodes: 'Generate Codes',
       searchCodes: 'Search codes or email...',
       allTypes: 'All Types',
@@ -316,6 +327,7 @@ export default {
         concurrency: 'Concurrency',
         subscription: 'Subscription',
         invitation: 'Invitation',
+        bloom_reward: 'Task Garden Reward',
         // Admin adjustment types (created when admin modifies user balance/concurrency)
         admin_balance: 'Balance (Admin)',
         admin_concurrency: 'Concurrency (Admin)'

@@ -304,10 +304,16 @@
                   {{ formatHistoryValue(item) }}
                 </p>
                 <p
-                  v-if="!isAdminAdjustment(item.type)"
+                  v-if="!isAdminAdjustment(item.type) && !isBloomReward(item.type)"
                   class="font-mono text-xs text-gray-400 dark:text-dark-500"
                 >
                   {{ item.code.slice(0, 8) }}...
+                </p>
+                <p
+                  v-else-if="isBloomReward(item.type)"
+                  class="text-xs text-gray-400 dark:text-dark-500"
+                >
+                  {{ getHistoryItemDescription(item) }}
                 </p>
                 <p v-else class="text-xs text-gray-400 dark:text-dark-500">
                   {{ t('redeem.adminAdjustment') }}
@@ -408,11 +414,15 @@ const contactInfo = ref('')
 
 // Helper functions for history display
 const isBalanceType = (type: string) => {
-  return type === 'balance' || type === 'admin_balance'
+  return type === 'balance' || type === 'admin_balance' || type === 'bloom_reward'
 }
 
 const isSubscriptionType = (type: string) => {
   return type === 'subscription'
+}
+
+const isBloomReward = (type: string) => {
+  return type === 'bloom_reward'
 }
 
 const isAdminAdjustment = (type: string) => {
@@ -430,14 +440,28 @@ const getHistoryItemTitle = (item: RedeemHistoryItem) => {
     return item.value >= 0 ? t('redeem.concurrencyAddedAdmin') : t('redeem.concurrencyReducedAdmin')
   } else if (item.type === 'subscription') {
     return t('redeem.subscriptionAssigned')
+  } else if (isBloomReward(item.type)) {
+    return t('redeem.bloomReward')
   }
   return t('common.unknown')
+}
+
+const getHistoryItemDescription = (item: RedeemHistoryItem) => {
+  const difficulty = item.activity_description
+  if (!difficulty) return t('redeem.bloomReward')
+  return difficulty === 'weekly' ? t('bloom.weekly') : t(`bloom.tier.${difficulty}`)
+}
+
+const formatCurrencyValue = (value: number) => {
+  if (value === 0) return '0.00'
+  const formatted = value.toFixed(Math.abs(value) > 0 && Math.abs(value) < 0.01 ? 6 : 2)
+  return formatted.replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '')
 }
 
 const formatHistoryValue = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
     const sign = item.value >= 0 ? '+' : ''
-    return `${sign}$${item.value.toFixed(2)}`
+    return `${sign}$${formatCurrencyValue(item.value)}`
   } else if (isSubscriptionType(item.type)) {
     // 订阅类型显示有效天数和分组名称
     const days = item.validity_days || Math.round(item.value)

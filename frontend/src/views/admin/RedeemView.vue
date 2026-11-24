@@ -39,6 +39,9 @@
             <button @click="handleExportCodes" class="btn btn-secondary">
               {{ t('admin.redeem.exportCsv') }}
             </button>
+            <button data-test="reward-history-open" @click="openRewardHistory" class="btn btn-secondary">
+              {{ t('admin.redeem.rewardHistory') }}
+            </button>
             <button
               data-test="batch-update-open"
               @click="openBatchUpdateDialog"
@@ -247,6 +250,96 @@
         </div>
       </template>
     </TablePageLayout>
+
+    <Teleport to="body">
+      <div v-if="showRewardHistory" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="fixed inset-0 bg-black/50" @click="showRewardHistory = false"></div>
+        <div
+          class="relative z-10 flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-xl dark:bg-dark-800"
+        >
+          <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.redeem.rewardHistory') }}
+            </h2>
+            <button
+              type="button"
+              class="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-dark-700"
+              :aria-label="t('common.close')"
+              @click="showRewardHistory = false"
+            >
+              <Icon name="x" size="md" />
+            </button>
+          </div>
+          <div class="flex items-center gap-2 border-b border-gray-100 p-4 dark:border-dark-700">
+            <input
+              v-model="rewardHistorySearch"
+              class="input max-w-sm"
+              :placeholder="t('admin.redeem.searchRewardHistory')"
+              @keyup.enter="loadRewardHistory(1)"
+            />
+            <button class="btn btn-secondary" :disabled="loadingRewardHistory" @click="loadRewardHistory(1)">
+              {{ t('admin.redeem.searchRewardHistoryAction') }}
+            </button>
+            <button
+              class="btn btn-secondary"
+              :disabled="loadingRewardHistory"
+              :title="t('common.refresh')"
+              @click="loadRewardHistory(rewardHistoryPage)"
+            >
+              <Icon name="refresh" size="md" :class="loadingRewardHistory ? 'animate-spin' : ''" />
+            </button>
+          </div>
+          <div class="min-h-48 overflow-auto p-4">
+            <div v-if="loadingRewardHistory" class="py-10 text-center text-sm text-gray-500 dark:text-dark-400">
+              {{ t('admin.redeem.rewardHistoryLoading') }}
+            </div>
+            <div
+              v-else-if="rewardHistoryItems.length === 0"
+              class="py-10 text-center text-sm text-gray-500 dark:text-dark-400"
+            >
+              {{ t('admin.redeem.noRewardHistory') }}
+            </div>
+            <table v-else class="min-w-full divide-y divide-gray-200 dark:divide-dark-700">
+              <thead>
+                <tr class="text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-dark-400">
+                  <th class="px-4 py-3">{{ t('admin.redeem.rewardUser') }}</th>
+                  <th class="px-4 py-3">{{ t('admin.redeem.rewardTask') }}</th>
+                  <th class="px-4 py-3 text-right">{{ t('admin.redeem.rewardAmount') }}</th>
+                  <th class="px-4 py-3 text-right">{{ t('admin.redeem.rewardClaimedAt') }}</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
+                <tr v-for="item in rewardHistoryItems" :key="item.id">
+                  <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
+                    <div>{{ item.user?.email || t('admin.redeem.userPrefix', { id: item.used_by }) }}</div>
+                    <div v-if="item.user?.username" class="text-xs text-gray-500 dark:text-dark-400">
+                      {{ item.user.username }} · #{{ item.used_by }}
+                    </div>
+                  </td>
+                  <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
+                    {{ getRewardTaskLabel(item.activity_description, item.value) }}
+                  </td>
+                  <td class="px-4 py-3 text-right text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                    {{ item.value > 0 ? `+${formatRewardAmount(item.value)}` : t('admin.redeem.rewardNoCredit') }}
+                  </td>
+                  <td class="px-4 py-3 text-right text-sm text-gray-500 dark:text-dark-400">
+                    {{ formatDateTime(item.used_at) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            v-if="rewardHistoryTotal > 0"
+            :page="rewardHistoryPage"
+            :total="rewardHistoryTotal"
+            :page-size="rewardHistoryPageSize"
+            @update:page="loadRewardHistory"
+            @update:pageSize="handleRewardHistoryPageSizeChange"
+          />
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
@@ -631,6 +724,7 @@ import type {
   SubscriptionType,
   BatchUpdateRedeemCodeFields
 } from '@/types'
+import type { BloomRewardHistoryItem } from '@/api/admin/redeem'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -658,6 +752,13 @@ interface GroupOption {
 
 const showGenerateDialog = ref(false)
 const showResultDialog = ref(false)
+const showRewardHistory = ref(false)
+const loadingRewardHistory = ref(false)
+const rewardHistoryItems = ref<BloomRewardHistoryItem[]>([])
+const rewardHistorySearch = ref('')
+const rewardHistoryPage = ref(1)
+const rewardHistoryPageSize = ref(20)
+const rewardHistoryTotal = ref(0)
 const generatedCodes = ref<RedeemCode[]>([])
 const subscriptionGroups = ref<Group[]>([])
 
@@ -864,6 +965,50 @@ const buildRedeemQueryFilters = () => ({
   sort_by: sortState.sort_by,
   sort_order: sortState.sort_order
 })
+
+const loadRewardHistory = async (page = 1) => {
+  loadingRewardHistory.value = true
+  try {
+    const result = await adminAPI.redeem.listRewardHistory(
+      page,
+      rewardHistoryPageSize.value,
+      rewardHistorySearch.value.trim()
+    )
+    rewardHistoryItems.value = result.items
+    rewardHistoryTotal.value = result.total
+    rewardHistoryPage.value = page
+  } catch (error: any) {
+    appStore.showError(error.response?.data?.detail || t('admin.redeem.rewardHistoryFailed'))
+  } finally {
+    loadingRewardHistory.value = false
+  }
+}
+
+const openRewardHistory = () => {
+  showRewardHistory.value = true
+  rewardHistoryPage.value = 1
+  loadRewardHistory(1)
+}
+
+const handleRewardHistoryPageSizeChange = (pageSize: number) => {
+  rewardHistoryPageSize.value = pageSize
+  loadRewardHistory(1)
+}
+
+const getRewardTaskLabel = (difficulty?: string, value?: number) => {
+  const label = !difficulty
+    ? t('admin.redeem.rewardTask')
+    : difficulty === 'weekly'
+      ? t('bloom.weekly')
+      : t(`bloom.tier.${difficulty}`)
+  return value === 0 ? `${label} · ${t('admin.redeem.rewardNoCredit')}` : label
+}
+
+const formatRewardAmount = (value: number) => {
+  if (value === 0) return '$0.00'
+  const amount = value.toFixed(6).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '')
+  return `$${amount}`
+}
 
 const loadCodes = async () => {
   if (abortController) {

@@ -19,6 +19,8 @@ export interface RedeemHistoryItem {
   // Subscription-specific fields
   group_id?: number
   validity_days?: number
+  activity_source?: string
+  activity_description?: string
   group?: {
     id: number
     name: string

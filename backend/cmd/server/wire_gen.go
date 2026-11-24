@@ -67,7 +67,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	autoRoutingService := service.NewAutoRoutingService(apiKeyService, groupRepository, autoRoutingRepository, autoModelCatalog)
 	autoRoutingHandler := handler.NewAutoRoutingHandler(autoRoutingService)
 	playgroundAutoRoutingHandler := handler.NewPlaygroundAutoRoutingHandler(autoRoutingService)
-	redeemCodeRepository := repository.NewRedeemCodeRepository(client)
+	redeemCodeRepository := repository.NewRedeemCodeRepositoryWithDB(client, db)
 	refreshTokenCache := repository.NewRefreshTokenCache(redisClient)
 	scopedAdminKeyRepository := repository.NewScopedAdminKeyRepository(db)
 	settingRepository := repository.NewSettingRepository(client)

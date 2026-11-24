@@ -532,6 +532,9 @@ type RedeemCode struct {
 	// so users can see why they were charged or credited
 	Notes *string `json:"notes,omitempty"`
 
+	ActivitySource      string `json:"activity_source,omitempty"`
+	ActivityDescription string `json:"activity_description,omitempty"`
+
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
 }
