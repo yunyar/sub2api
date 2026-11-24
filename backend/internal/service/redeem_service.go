@@ -74,8 +74,12 @@ type RedeemCodeRepository interface {
 	SumPositiveBalanceByUser(ctx context.Context, userID int64) (float64, error)
 }
 
-type BloomRewardHistoryRepository interface {
+type bloomRewardHistoryRepository interface {
 	ListBloomRewardHistory(ctx context.Context, params pagination.PaginationParams, search string) ([]RedeemCode, *pagination.PaginationResult, error)
+}
+
+type userRedeemActivityRepository interface {
+	ListUserActivityPaginated(ctx context.Context, userID int64, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error)
 }
 
 // GenerateCodesRequest 生成兑换码请求
@@ -692,6 +696,10 @@ func (s *RedeemService) GetStats(ctx context.Context) (map[string]any, error) {
 
 // GetUserHistory 获取用户的兑换历史
 func (s *RedeemService) GetUserHistory(ctx context.Context, userID int64, limit int) ([]RedeemCode, error) {
+	if _, ok := s.redeemRepo.(userRedeemActivityRepository); ok && limit > 0 {
+		codes, _, err := s.GetUserHistoryPaginated(ctx, userID, pagination.PaginationParams{Page: 1, PageSize: limit})
+		return codes, err
+	}
 	codes, err := s.redeemRepo.ListByUser(ctx, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get user redeem history: %w", err)
@@ -757,11 +765,14 @@ func (s *RedeemService) reduceOrCancelSubscription(ctx context.Context, userID, 
 
 // GetUserHistoryPaginated returns all redemption types for the authenticated user.
 func (s *RedeemService) GetUserHistoryPaginated(ctx context.Context, userID int64, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
+	if repo, ok := s.redeemRepo.(userRedeemActivityRepository); ok {
+		return repo.ListUserActivityPaginated(ctx, userID, params)
+	}
 	return s.redeemRepo.ListByUserPaginated(ctx, userID, params, "")
 }
 
 func (s *RedeemService) GetBloomRewardHistory(ctx context.Context, params pagination.PaginationParams, search string) ([]RedeemCode, *pagination.PaginationResult, error) {
-	repo, ok := s.redeemRepo.(BloomRewardHistoryRepository)
+	repo, ok := s.redeemRepo.(bloomRewardHistoryRepository)
 	if !ok {
 		return nil, nil, errors.New("bloom reward history repository is not configured")
 	}

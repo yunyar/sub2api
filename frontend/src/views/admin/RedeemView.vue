@@ -312,12 +312,12 @@
                 <tr v-for="item in rewardHistoryItems" :key="item.id">
                   <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
                     <div>{{ item.user?.email || t('admin.redeem.userPrefix', { id: item.used_by }) }}</div>
-                    <div v-if="item.user?.username" class="text-xs text-gray-500 dark:text-dark-400">
-                      {{ item.user.username }} · #{{ item.used_by }}
+                    <div v-if="item.user?.email" class="text-xs text-gray-500 dark:text-dark-400">
+                      <span v-if="item.user.username">{{ item.user.username }} · </span>#{{ item.used_by }}
                     </div>
                   </td>
                   <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
-                    {{ getRewardTaskLabel(item.activity_description, item.value) }}
+                    {{ getRewardTaskLabel(item.activity_description) }}
                   </td>
                   <td class="px-4 py-3 text-right text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     {{ item.value > 0 ? `+${formatRewardAmount(item.value)}` : t('admin.redeem.rewardNoCredit') }}
@@ -995,17 +995,12 @@ const handleRewardHistoryPageSizeChange = (pageSize: number) => {
   loadRewardHistory(1)
 }
 
-const getRewardTaskLabel = (difficulty?: string, value?: number) => {
-  const label = !difficulty
-    ? t('admin.redeem.rewardTask')
-    : difficulty === 'weekly'
-      ? t('bloom.weekly')
-      : t(`bloom.tier.${difficulty}`)
-  return value === 0 ? `${label} · ${t('admin.redeem.rewardNoCredit')}` : label
+const getRewardTaskLabel = (difficulty?: string) => {
+  if (!difficulty) return t('admin.redeem.rewardTask')
+  return difficulty === 'weekly' ? t('bloom.weekly') : t(`bloom.tier.${difficulty}`)
 }
 
 const formatRewardAmount = (value: number) => {
-  if (value === 0) return '$0.00'
   const amount = value.toFixed(6).replace(/(\.\d*?[1-9])0+$/, '$1').replace(/\.0+$/, '')
   return `$${amount}`
 }

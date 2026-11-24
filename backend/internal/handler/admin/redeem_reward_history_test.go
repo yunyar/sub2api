@@ -26,11 +26,11 @@ func (bloomRewardHistoryRepoStub) ListBloomRewardHistory(_ context.Context, para
 		Value:               0.000001,
 		Status:              service.StatusUsed,
 		UsedBy:              &userID,
-		UsedAt:               &claimedAt,
-		CreatedAt:            claimedAt,
-		ActivitySource:       "bloom",
+		UsedAt:              &claimedAt,
+		CreatedAt:           claimedAt,
+		ActivitySource:      "bloom",
 		ActivityDescription: "easy",
-		User:                 &service.User{ID: userID, Email: "alice@example.com"},
+		User:                &service.User{ID: userID, Email: "alice@example.com"},
 	}}, &pagination.PaginationResult{Total: 1, Page: params.Page, PageSize: params.PageSize}, nil
 }
 

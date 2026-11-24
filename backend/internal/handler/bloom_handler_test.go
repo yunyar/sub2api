@@ -181,7 +181,8 @@ func TestBloomNotifiesOnReachingOrExceedingCap(t *testing.T) {
 func TestBloomFirstVisitWithNoUsageOffersStarterCredit(t *testing.T) {
 	t.Parallel()
 	at := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
-	h := BloomHandler{store: &gardenStoreFixture{}}
+	store := &gardenStoreFixture{}
+	h := BloomHandler{store: store}
 	garden, err := h.garden(context.Background(), 8, at, time.UTC)
 	require.NoError(t, err)
 	require.Equal(t, bloomrules.CheckIn, garden.Tasks[0].Metric)
@@ -190,6 +191,18 @@ func TestBloomFirstVisitWithNoUsageOffersStarterCredit(t *testing.T) {
 	for _, task := range garden.Tasks[1:] {
 		require.NotEqual(t, bloomrules.CheckIn, task.Metric)
 	}
+	require.Len(t, store.week.Tasks, 22)
+	var dailyTotal, weeklyTotal int64
+	for _, task := range store.week.Tasks {
+		if task.Difficulty == service.BloomWeekly {
+			weeklyTotal += task.RewardMicros
+		} else {
+			dailyTotal += task.RewardMicros
+		}
+	}
+	require.EqualValues(t, 7_000_000, dailyTotal)
+	require.EqualValues(t, 3_000_000, weeklyTotal)
+	require.Equal(t, garden.BudgetMicros, dailyTotal+weeklyTotal)
 }
 
 func TestBloomSettledImageChargeWithoutUsageLog(t *testing.T) {

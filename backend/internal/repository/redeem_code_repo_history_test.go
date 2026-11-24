@@ -59,12 +59,11 @@ func TestListUserActivityPaginatedIncludesClaimedGardenTasks(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT activity.id")).
 		WithArgs(int64(12), 20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "source", "code", "type", "value", "status", "used_at", "created_at",
-			"notes", "group_id", "validity_days", "group_name", "description",
-		}).AddRow(-8, "bloom", "", "bloom_reward", 0.000001, "used", claimedAt, claimedAt, nil, nil, 0, nil, "easy"))
+			"id", "used_at", "reward_micros", "difficulty",
+		}).AddRow(-8, claimedAt, 1, "easy"))
 
 	repo := &redeemCodeRepository{db: db}
-	codes, result, err := repo.listUserActivityPaginated(
+	codes, result, err := repo.ListUserActivityPaginated(
 		t.Context(),
 		12,
 		pagination.PaginationParams{Page: 1, PageSize: 20},

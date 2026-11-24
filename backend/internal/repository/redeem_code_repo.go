@@ -350,11 +350,6 @@ func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, lim
 	if limit <= 0 {
 		limit = 10
 	}
-	if r.db != nil {
-		codes, _, err := r.listUserActivityPaginated(ctx, userID, pagination.PaginationParams{Page: 1, PageSize: limit})
-		return codes, err
-	}
-
 	codes, err := r.client.RedeemCode.Query().
 		Where(redeemcode.UsedByEQ(userID)).
 		WithGroup().
@@ -371,10 +366,6 @@ func (r *redeemCodeRepository) ListByUser(ctx context.Context, userID int64, lim
 // ListByUserPaginated returns paginated balance/concurrency history for a user.
 // Supports optional type filter (e.g. "balance", "admin_balance", "concurrency", "admin_concurrency", "subscription").
 func (r *redeemCodeRepository) ListByUserPaginated(ctx context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]service.RedeemCode, *pagination.PaginationResult, error) {
-	if r.db != nil && codeType == "" {
-		return r.listUserActivityPaginated(ctx, userID, params)
-	}
-
 	q := r.client.RedeemCode.Query().
 		Where(redeemcode.UsedByEQ(userID))
 
@@ -401,7 +392,10 @@ func (r *redeemCodeRepository) ListByUserPaginated(ctx context.Context, userID i
 	return redeemCodeEntitiesToService(codes), paginationResultFromTotal(int64(total), params), nil
 }
 
-func (r *redeemCodeRepository) listUserActivityPaginated(ctx context.Context, userID int64, params pagination.PaginationParams) ([]service.RedeemCode, *pagination.PaginationResult, error) {
+func (r *redeemCodeRepository) ListUserActivityPaginated(ctx context.Context, userID int64, params pagination.PaginationParams) ([]service.RedeemCode, *pagination.PaginationResult, error) {
+	if r.db == nil {
+		return r.ListByUserPaginated(ctx, userID, params, "")
+	}
 	var total int64
 	err := r.db.QueryRowContext(ctx, `
 		SELECT
@@ -417,23 +411,13 @@ func (r *redeemCodeRepository) listUserActivityPaginated(ctx context.Context, us
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT activity.id, activity.source, activity.code, activity.type, activity.value,
-		       activity.status, activity.used_at, activity.created_at, activity.notes,
-		       activity.group_id, activity.validity_days, activity.group_name, activity.description
+		SELECT activity.id, activity.used_at, activity.reward_micros, activity.difficulty
 		FROM (
-			SELECT code.id, 'redeem'::text AS source, code.code, code.type,
-			       code.value::double precision AS value, code.status,
-			       COALESCE(code.used_at, code.created_at) AS used_at, code.created_at,
-			       code.notes, code.group_id, code.validity_days, grp.name AS group_name,
-			       NULL::text AS description
+			SELECT code.id, code.used_at, 0::bigint AS reward_micros, ''::text AS difficulty
 			FROM redeem_codes AS code
-			LEFT JOIN groups AS grp ON grp.id = code.group_id
 			WHERE code.used_by = $1
 			UNION ALL
-			SELECT -task.id, 'bloom'::text, ''::text, 'bloom_reward'::text,
-			       entry.delta_micros::double precision / 1000000.0, 'used'::text,
-			       entry.created_at, entry.created_at, NULL::text, NULL::bigint, 0,
-			       NULL::text, task.difficulty
+			SELECT -task.id, entry.created_at, entry.delta_micros, task.difficulty
 			FROM bloom_balance_entries AS entry
 			JOIN bloom_tasks AS task ON task.id = entry.task_id
 			WHERE task.user_id = $1 AND entry.delta_micros > 0
@@ -447,40 +431,48 @@ func (r *redeemCodeRepository) listUserActivityPaginated(ctx context.Context, us
 	defer func() { _ = rows.Close() }()
 
 	codes := make([]service.RedeemCode, 0, params.Limit())
+	redeemIDs := make([]int64, 0)
 	for rows.Next() {
-		var code service.RedeemCode
-		var source string
-		var usedAt, createdAt time.Time
-		var notes, groupName, description sql.NullString
-		var groupID sql.NullInt64
-		if err := rows.Scan(
-			&code.ID, &source, &code.Code, &code.Type, &code.Value, &code.Status,
-			&usedAt, &createdAt, &notes, &groupID, &code.ValidityDays, &groupName, &description,
-		); err != nil {
+		var id, rewardMicros int64
+		var usedAt sql.NullTime
+		var difficulty string
+		if err := rows.Scan(&id, &usedAt, &rewardMicros, &difficulty); err != nil {
 			return nil, nil, err
 		}
-		code.UsedAt = &usedAt
-		code.CreatedAt = createdAt
-		code.ActivitySource = source
-		if notes.Valid {
-			code.Notes = notes.String
+		if id > 0 {
+			redeemIDs = append(redeemIDs, id)
+			codes = append(codes, service.RedeemCode{ID: id})
+			continue
 		}
-		if description.Valid {
-			code.ActivityDescription = description.String
-		}
-		if groupID.Valid {
-			code.GroupID = &groupID.Int64
-			code.Group = &service.Group{ID: groupID.Int64}
-			if groupName.Valid {
-				code.Group.Name = groupName.String
-			}
-		}
-		userIDCopy := userID
-		code.UsedBy = &userIDCopy
-		codes = append(codes, code)
+		codes = append(codes, service.RedeemCode{
+			ID: id, Type: "bloom_reward", Value: float64(rewardMicros) / 1_000_000,
+			Status: service.StatusUsed, UsedBy: &userID, UsedAt: &usedAt.Time, CreatedAt: usedAt.Time,
+			ActivitySource: "bloom", ActivityDescription: difficulty,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
+	}
+	if len(redeemIDs) > 0 {
+		redeemed, err := r.client.RedeemCode.Query().
+			Where(redeemcode.UsedByEQ(userID), redeemcode.IDIn(redeemIDs...)).
+			WithGroup().All(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		byID := make(map[int64]*dbent.RedeemCode, len(redeemed))
+		for _, code := range redeemed {
+			byID[code.ID] = code
+		}
+		activity := codes[:0]
+		for _, code := range codes {
+			if code.ID < 0 {
+				activity = append(activity, code)
+			} else if redeemedCode := byID[code.ID]; redeemedCode != nil {
+				activity = append(activity, *redeemCodeEntityToService(redeemedCode))
+			}
+		}
+		codes = activity
 	}
 	return codes, paginationResultFromTotal(total, params), nil
 }
@@ -510,9 +502,9 @@ func (r *redeemCodeRepository) ListBloomRewardHistory(ctx context.Context, param
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT -task.id, task.user_id, account.email, account.username,
+		SELECT -task.id, task.user_id, account.email, COALESCE(account.username, ''),
 		       entry.delta_micros::double precision / 1000000.0,
-		       entry.created_at, task.difficulty
+		       COALESCE(task.claimed_at, entry.created_at), task.difficulty
 		FROM bloom_balance_entries AS entry
 		JOIN bloom_tasks AS task ON task.id = entry.task_id
 		JOIN users AS account ON account.id = task.user_id
@@ -523,7 +515,7 @@ func (r *redeemCodeRepository) ListBloomRewardHistory(ctx context.Context, param
 			OR account.username ILIKE '%' || $1 || '%'
 			OR task.user_id::text ILIKE '%' || $1 || '%'
 		  )
-		ORDER BY entry.created_at DESC, task.id DESC
+		ORDER BY COALESCE(task.claimed_at, entry.created_at) DESC, task.id DESC
 		LIMIT $2 OFFSET $3
 	`, search, params.Limit(), params.Offset())
 	if err != nil {
