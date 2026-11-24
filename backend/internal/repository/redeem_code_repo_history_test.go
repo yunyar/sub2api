@@ -13,7 +13,7 @@ import (
 func TestListBloomRewardHistory(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	createdAt := time.Date(2026, 11, 24, 14, 30, 0, 0, time.UTC)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT COUNT(*)")).
@@ -50,7 +50,7 @@ func TestListBloomRewardHistory(t *testing.T) {
 func TestListUserActivityPaginatedIncludesClaimedGardenTasks(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	claimedAt := time.Date(2026, 11, 24, 14, 30, 0, 0, time.UTC)
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT")).
