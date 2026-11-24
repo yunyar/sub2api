@@ -67,7 +67,7 @@ type bloomRowsQuerier interface {
 
 func getBloomWeek(ctx context.Context, db bloomRowsQuerier, userID int64, weekDate string, zone *time.Location) (BloomWeek, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT budget.budget_micros, budget.spent_micros,
+		SELECT budget.budget_micros, budget.spent_micros, COALESCE(budget.legacy_repair_pending, FALSE),
 		       task.id, task.period_start, task.difficulty, task.template, task.reward_micros, task.claimed_at
 		FROM users AS account
 		LEFT JOIN bloom_week_budgets AS budget ON budget.user_id = account.id AND budget.week_start = $2::date
@@ -88,7 +88,7 @@ func getBloomWeek(ctx context.Context, db bloomRowsQuerier, userID int64, weekDa
 		var period, claimed sql.NullTime
 		var difficulty sql.NullString
 		var template []byte
-		if err := rows.Scan(&budget, &spent, &id, &period, &difficulty, &template, &reward, &claimed); err != nil {
+		if err := rows.Scan(&budget, &spent, &result.LegacyRepairPending, &id, &period, &difficulty, &template, &reward, &claimed); err != nil {
 			return BloomWeek{}, err
 		}
 		result.Exists, result.BudgetMicros, result.SpentMicros = budget.Valid, budget.Int64, spent.Int64

@@ -41,10 +41,11 @@ type BloomTask struct {
 }
 
 type BloomWeek struct {
-	Exists       bool
-	BudgetMicros int64
-	SpentMicros  int64
-	Tasks        []BloomTask
+	Exists              bool
+	BudgetMicros        int64
+	SpentMicros         int64
+	LegacyRepairPending bool
+	Tasks               []BloomTask
 }
 
 type BloomClaim struct {
@@ -74,6 +75,8 @@ type BloomRepository interface {
 	// EnsureTasks with no drafts initializes or reads the authoritative budget.
 	// Drafts that use a different budget return the persisted week and ErrBloomBudgetChanged.
 	EnsureTasks(ctx context.Context, userID int64, weekStart time.Time, budgetMicros int64, drafts []BloomTaskDraft) (BloomWeek, error)
+	LegacyWalletSpend(ctx context.Context, userID int64, start, end time.Time) (decimal.Decimal, error)
+	ReconcileLegacyWeek(ctx context.Context, userID int64, weekStart time.Time, budgetMicros int64) (BloomWeek, bool, error)
 	ClaimTask(ctx context.Context, userID, taskID int64, expiresAt time.Time) (BloomClaim, error)
 	UsageStats(ctx context.Context, userID int64, start, end time.Time, zone string) (BloomUsageStats, error)
 	CountClaimedWeekly(ctx context.Context, userID int64) (int64, error)

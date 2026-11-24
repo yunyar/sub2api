@@ -21,17 +21,19 @@ import (
 )
 
 type BloomHandler struct {
-	store    service.BloomRepository
-	balances *service.BillingCacheService
-	keys     *service.APIKeyService
-	planner  *bloomPlanner
-	alerts   interface {
+	store             service.BloomRepository
+	balances          *service.BillingCacheService
+	keys              *service.APIKeyService
+	planner           *bloomPlanner
+	legacyWalletSpend bool
+	alerts            interface {
 		NotifyBloomBudgetAlert(context.Context, int64)
 	}
 }
 
 func NewBloomHandler(store service.BloomRepository, balances *service.BillingCacheService, keys *service.APIKeyService, settings service.SettingRepository, cfg *config.Config, alerts *service.OpsAlertEvaluatorService) *BloomHandler {
-	return &BloomHandler{store: store, balances: balances, keys: keys, planner: newBloomPlanner(settings, keys, cfg.Server.Port), alerts: alerts}
+	return &BloomHandler{store: store, balances: balances, keys: keys, planner: newBloomPlanner(settings, keys, cfg.Server.Port),
+		legacyWalletSpend: cfg.RunMode == config.RunModeStandard, alerts: alerts}
 }
 
 type bloomTaskView struct {
@@ -85,21 +87,46 @@ func (h *BloomHandler) ensureWeek(ctx context.Context, userID int64, at time.Tim
 		return week, err
 	}
 	const tasksPerWeek = 3*7 + 1
-	if len(week.Tasks) == tasksPerWeek {
+	if len(week.Tasks) == tasksPerWeek && !week.LegacyRepairPending {
 		return week, nil
 	}
 	prior, err := h.stats(ctx, userID, periods.PriorWeek)
 	if err != nil {
 		return week, err
 	}
+	var legacySpend decimal.Decimal
+	if h.legacyWalletSpend && (!week.Exists || week.LegacyRepairPending) {
+		legacySpend, err = h.store.LegacyWalletSpend(ctx, userID, periods.PriorWeek.Start, periods.PriorWeek.End)
+		if err != nil {
+			return week, err
+		}
+	}
+	walletCost := prior.WalletCost.Add(legacySpend)
+	spend := decimal.Min(walletCost.Shift(6), decimal.NewFromInt(math.MaxInt64))
+	priorStats := bloomStats(prior)
+	if walletCost.IsPositive() && priorStats.Requests == 0 {
+		priorStats.Requests = 1
+	}
+	if week.LegacyRepairPending {
+		var repairBudget int64
+		if legacySpend.IsPositive() {
+			repairBudget = bloomrules.WeeklyBudgetMicros(priorStats.Requests, spend.IntPart())
+		}
+		var credited bool
+		week, credited, err = h.store.ReconcileLegacyWeek(ctx, userID, periods.Week.Start, repairBudget)
+		if err != nil {
+			return week, err
+		}
+		if credited {
+			h.invalidateBloomBalance(ctx, userID)
+		}
+		if len(week.Tasks) == tasksPerWeek {
+			return week, nil
+		}
+	}
 	completed, err := h.stats(ctx, userID, periods.CompletedDays)
 	if err != nil {
 		return week, err
-	}
-	spend := decimal.Min(prior.WalletCost.Shift(6), decimal.NewFromInt(math.MaxInt64))
-	priorStats := bloomStats(prior)
-	if prior.WalletCost.IsPositive() && priorStats.Requests == 0 {
-		priorStats.Requests = 1
 	}
 	schedule := bloomrules.IssueWeek(bloomrules.IssueInput{AccountID: userID, At: at, Location: periods.Day.Start.Location(),
 		PriorWeek: priorStats, CompletedDays: bloomStats(completed), PriorWeekWalletSpendMicros: spend.IntPart()})
@@ -211,6 +238,17 @@ func (h *BloomHandler) garden(ctx context.Context, userID int64, at time.Time, l
 func (h *BloomHandler) List(c *gin.Context)  { h.serveGarden(c, false) }
 func (h *BloomHandler) Claim(c *gin.Context) { h.serveGarden(c, true) }
 
+func (h *BloomHandler) invalidateBloomBalance(ctx context.Context, userID int64) {
+	cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if h.balances != nil {
+		_ = h.balances.InvalidateUserBalance(cacheCtx, userID)
+	}
+	if h.keys != nil {
+		h.keys.InvalidateAuthCacheByUserID(cacheCtx, userID)
+	}
+}
+
 func (h *BloomHandler) serveGarden(c *gin.Context, claiming bool) {
 	subject, ok := middleware.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -274,11 +312,8 @@ func (h *BloomHandler) claim(ctx context.Context, userID, taskID int64, garden *
 		if err != nil {
 			return err
 		}
-		cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
 		if claim.Applied && claim.RewardMicros > 0 {
-			_ = h.balances.InvalidateUserBalance(cacheCtx, userID)
-			h.keys.InvalidateAuthCacheByUserID(cacheCtx, userID)
+			h.invalidateBloomBalance(ctx, userID)
 		}
 		week, err := h.store.GetWeek(ctx, userID, garden.WeekResetsAt.AddDate(0, 0, -7))
 		if err != nil {

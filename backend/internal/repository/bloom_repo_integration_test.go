@@ -727,6 +727,98 @@ func TestBloomQueuedClaimExpiresAndZeroRewardCanBeCollected(t *testing.T) {
 	require.EqualValues(t, 1, count)
 }
 
+func TestBloomLegacySpendAndRepair(t *testing.T) {
+	database, client, _ := newBloomTestDatabase(t)
+	ctx := t.Context()
+	repo := NewBloomRepository(database)
+	owner := mustCreateUser(t, client, &service.User{Balance: 10})
+	key := mustCreateApiKey(t, client, &service.APIKey{UserID: owner.ID})
+	upstream := mustCreateAccount(t, client, &service.Account{Name: "legacy-wallet"})
+	monday := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	cutover := monday.Add(-12 * time.Hour)
+	_, err := database.ExecContext(ctx, `UPDATE schema_migrations SET applied_at = $1
+		WHERE filename = '254_usage_billing_wallet_charged_amount.sql'`, cutover)
+	require.NoError(t, err)
+	for _, entry := range []struct {
+		request string
+		billing int
+		mode    string
+		at      time.Time
+		receipt any
+	}{
+		{"legacy", 0, "token", cutover.Add(-time.Hour), nil},
+		{"actual", 0, "token", cutover.Add(-time.Hour), 12},
+		{"no-settlement", 0, "token", cutover.Add(-time.Hour), nil},
+		{"image", 0, "image", cutover.Add(-time.Hour), nil},
+		{"subscription", 1, "token", cutover.Add(-time.Hour), nil},
+		{"post-cutover", 0, "token", cutover.Add(time.Hour), nil},
+	} {
+		_, err = database.ExecContext(ctx, `INSERT INTO usage_logs
+			(user_id, api_key_id, account_id, request_id, model, created_at, billing_type, billing_mode, actual_cost)
+			VALUES ($1, $2, $3, $4, 'test', $5, $6, $7, 80)`,
+			owner.ID, key.ID, upstream.ID, entry.request, entry.at, entry.billing, entry.mode)
+		require.NoError(t, err)
+		if entry.request != "no-settlement" {
+			_, err = database.ExecContext(ctx, `INSERT INTO usage_billing_dedup
+				(request_id, api_key_id, request_fingerprint, created_at, wallet_charged_amount)
+				VALUES ($1, $2, 'test', $3, $4)`, entry.request, key.ID, entry.at, entry.receipt)
+			require.NoError(t, err)
+		}
+	}
+	legacy, err := repo.LegacyWalletSpend(ctx, owner.ID, monday.AddDate(0, 0, -7), monday)
+	require.NoError(t, err)
+	require.True(t, decimal.NewFromInt(80).Equal(legacy))
+	_, err = database.ExecContext(ctx, `UPDATE api_keys SET rate_limit_5h = 1 WHERE id = $1`, key.ID)
+	require.NoError(t, err)
+	excluded, err := repo.LegacyWalletSpend(ctx, owner.ID, monday.AddDate(0, 0, -7), monday)
+	require.NoError(t, err)
+	require.True(t, excluded.IsZero())
+
+	drafts := []BloomTaskDraft{
+		{PeriodStart: monday, Difficulty: BloomDailyEasy, Template: json.RawMessage(`{"goal":5}`)},
+		{PeriodStart: monday, Difficulty: BloomWeekly, Template: json.RawMessage(`{"goal":20}`)},
+	}
+	initial, err := repo.EnsureTasks(ctx, owner.ID, monday, 0, drafts)
+	require.NoError(t, err)
+	claim, err := repo.ClaimTask(ctx, owner.ID, initial.Tasks[0].ID, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.True(t, claim.Applied)
+	require.Zero(t, claim.RewardMicros)
+	_, err = database.ExecContext(ctx, `UPDATE bloom_week_budgets SET legacy_repair_pending = TRUE WHERE user_id = $1`, owner.ID)
+	require.NoError(t, err)
+	type repairResult struct {
+		credited bool
+		err      error
+	}
+	results := make(chan repairResult, 2)
+	for range 2 {
+		go func() {
+			_, credited, err := repo.ReconcileLegacyWeek(ctx, owner.ID, monday, 8_000_000)
+			results <- repairResult{credited, err}
+		}()
+	}
+	first, second := <-results, <-results
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.NotEqual(t, first.credited, second.credited)
+	week, err := repo.GetWeek(ctx, owner.ID, monday)
+	require.NoError(t, err)
+	require.False(t, week.LegacyRepairPending)
+	require.EqualValues(t, 8_000_000, week.BudgetMicros)
+	require.EqualValues(t, 80_000, week.SpentMicros)
+	require.Equal(t, initial.Tasks[0].ID, week.Tasks[0].ID)
+	require.EqualValues(t, 80_000, week.Tasks[0].RewardMicros)
+	require.EqualValues(t, 2_400_000, week.Tasks[1].RewardMicros)
+	require.JSONEq(t, `{"goal":5,"reward_micros":80000}`, string(week.Tasks[0].Template))
+	replay, err := repo.ClaimTask(ctx, owner.ID, initial.Tasks[0].ID, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.False(t, replay.Applied)
+	require.True(t, decimal.RequireFromString("10.08").Equal(replay.BalanceAfter))
+	var balance decimal.Decimal
+	require.NoError(t, database.QueryRowContext(ctx, `SELECT balance FROM users WHERE id = $1`, owner.ID).Scan(&balance))
+	require.True(t, decimal.RequireFromString("10.08").Equal(balance))
+}
+
 func TestBloomUsageStatsCalendarAndOutput(t *testing.T) {
 	integrationDB, integrationEntClient, _ := newBloomTestDatabase(t)
 	ctx := context.Background()

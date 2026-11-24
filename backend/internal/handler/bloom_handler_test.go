@@ -22,6 +22,7 @@ type gardenStoreFixture struct {
 	week           service.BloomWeek
 	prior          service.BloomUsageStats
 	priorEnd       time.Time
+	legacySpend    decimal.Decimal
 	aggregateCalls int
 	claimCalls     int
 }
@@ -44,6 +45,28 @@ func (s *gardenStoreFixture) UsageStats(_ context.Context, _ int64, _, end time.
 		return s.prior, nil
 	}
 	return service.BloomUsageStats{}, nil
+}
+
+func (s *gardenStoreFixture) LegacyWalletSpend(context.Context, int64, time.Time, time.Time) (decimal.Decimal, error) {
+	return s.legacySpend, nil
+}
+
+func TestBloomFirstVisitIncludesEligibleLegacySpend(t *testing.T) {
+	monday := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC)
+	store := &gardenStoreFixture{
+		priorEnd:    monday,
+		prior:       service.BloomUsageStats{TotalRecords: 20, WalletCost: decimal.NewFromInt(20)},
+		legacySpend: decimal.NewFromInt(60),
+	}
+	handler := BloomHandler{store: store, legacyWalletSpend: true}
+	view, err := handler.garden(t.Context(), 42, monday.Add(time.Hour), time.UTC)
+	require.NoError(t, err)
+	require.EqualValues(t, 8_000_000, view.BudgetMicros)
+	require.EqualValues(t, 80_000, view.Tasks[0].RewardMicros)
+	store.legacySpend = decimal.NewFromInt(100)
+	again, err := handler.garden(t.Context(), 42, monday.Add(2*time.Hour), time.UTC)
+	require.NoError(t, err)
+	require.Equal(t, view, again)
 }
 
 func (s *gardenStoreFixture) CountClaimedWeekly(context.Context, int64) (int64, error) {
