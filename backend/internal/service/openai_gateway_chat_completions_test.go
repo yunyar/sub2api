@@ -833,6 +833,49 @@ func TestForwardAsChatCompletions_APIKeyAutoDerivesStableIsolatedPromptCacheKey(
 	require.NotEqual(t, upstream.requests[1].Header.Get("session_id"), upstream.requests[2].Header.Get("session_id"))
 }
 
+func TestForwardAsChatCompletions_PlaygroundPreservesCachePrefixAndImage(t *testing.T) {
+	const model = "gpt-5.4"
+	const image = "data:image/png;base64,iVBORw0KGgo="
+	gin.SetMode(gin.TestMode)
+	account := &Account{
+		ID: 2, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1,
+		Credentials: map[string]any{"access_token": "oauth-token", "chatgpt_account_id": "chatgpt-acc"},
+	}
+	forward := func(history string) (string, []byte) {
+		recorder := httptest.NewRecorder()
+		requestContext, _ := gin.CreateTestContext(recorder)
+		body := []byte(`{"model":"` + model + `","messages":[{"role":"system","content":"Static instructions"},{"role":"user","content":[{"type":"text","text":"Describe this"},{"type":"image_url","image_url":{"url":"` + image + `"}}]}` + history + `]}`)
+		ctx := WithPlaygroundChat(context.Background(), "Asia/Shanghai")
+		ctx = WithPlaygroundChatModel(WithPlaygroundChatConversation(ctx, "chat-1"), model)
+		requestContext.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
+		requestContext.Set("api_key", &APIKey{ID: 99})
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(`data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1840,"output_tokens":8,"input_tokens_details":{"cached_tokens":1536}}}}` + "\n\n")),
+		}}
+		svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+		session := svc.GenerateSessionHash(requestContext, body)
+		result, err := svc.ForwardAsChatCompletions(ctx, requestContext, account, body, svc.ExtractSessionID(requestContext, body), "")
+		require.NoError(t, err)
+		require.Equal(t, 1536, result.Usage.CacheReadInputTokens)
+		return session, upstream.lastBody
+	}
+
+	firstSession, first := forward("")
+	nextSession, next := forward(`,{"role":"assistant","content":"An image"},{"role":"user","content":"Tell me more"}`)
+	require.NotEmpty(t, firstSession)
+	require.Equal(t, firstSession, nextSession)
+	require.NotEmpty(t, gjson.GetBytes(first, "prompt_cache_key").String())
+	require.Equal(t, gjson.GetBytes(first, "prompt_cache_key").String(), gjson.GetBytes(next, "prompt_cache_key").String())
+	for _, body := range [][]byte{first, next} {
+		require.Equal(t, "Static instructions", gjson.GetBytes(body, "instructions").String())
+		require.Equal(t, image, gjson.GetBytes(body, "input.0.content.1.image_url").String())
+		require.Contains(t, gjson.GetBytes(body, "input.@reverse.0.content.@reverse.0.text").String(), "Asia/Shanghai")
+	}
+	require.Equal(t, gjson.GetBytes(first, "input.0.content.0").Raw, gjson.GetBytes(next, "input.0.content.0").Raw)
+}
+
 func TestForwardAsChatCompletions_ResponsesShapeDoesNotAutoDerivePromptCacheKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

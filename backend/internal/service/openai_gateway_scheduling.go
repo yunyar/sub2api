@@ -101,6 +101,11 @@ func explicitOpenAIRequestSessionID(c *gin.Context, body []byte) string {
 	if c == nil {
 		return ""
 	}
+	if c.Request != nil {
+		if key := PlaygroundChatSessionKey(c.Request.Context(), getAPIKeyIDFromContext(c)); key != "" {
+			return key
+		}
+	}
 
 	sessionID := explicitOpenAIHeaderSessionID(c)
 	if sessionID == "" && isGrokRequestContext(c) {

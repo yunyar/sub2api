@@ -4,6 +4,8 @@ export interface CachedPlaygroundImage {
   conversationId: string
   messageId: number
   stepId?: string
+  source?: 'upload'
+  uploadIndex?: number
   prompt: string
   expiresAt?: number
   blob: Blob

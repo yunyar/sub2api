@@ -349,6 +349,10 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 	if src.OutputTokens > 0 {
 		dst.OutputTokens = src.OutputTokens
 	}
+	if src.OutputTokensDetails != nil {
+		dst.thinkingTokens = src.OutputTokensDetails.ThinkingTokens
+		dst.thinkingTokensPresent = true
+	}
 }
 
 func normalizeAnthropicPromptTotal(usage *ClaudeUsage, promptTokens int, promptCacheMissTokens *int) {
@@ -422,6 +426,9 @@ func normalizeAnthropicEventUsageForResponses(event *apicompat.AnthropicStreamEv
 		dst.CacheCreationInputTokens = usage.CacheCreationInputTokens
 		dst.CacheCreationInputTokensPresent = true
 		dst.CacheCreation = nil
+		if usage.thinkingTokensPresent {
+			dst.OutputTokensDetails = &apicompat.AnthropicOutputTokensDetails{ThinkingTokens: usage.thinkingTokens}
+		}
 	}
 	normalize(event.Usage)
 	if event.Message != nil {
@@ -652,6 +659,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	state.Model = originalModel
 	state.PreserveThinkingSignatures = isClaude55SignedThinkingModel(mappedModel)
 	clientToolRestorer := apicompat.NewResponsesClientToolStreamRestorer(clientToolMapping)
+	toolNameRestorer := newToolNameStreamRestorer(toolNameRewriteFromContext(c))
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
@@ -776,20 +784,30 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			}
 			return true
 		}
-		var event apicompat.AnthropicStreamEvent
-		if err := json.Unmarshal([]byte(frame.Data), &event); err != nil {
-			stream.readErr = fmt.Errorf("parse upstream anthropic event: %w", err)
-			return true
+		var restored [2][]byte
+		payload := streamEventBytes(frame.Data)
+		count := 1
+		if toolNameRestorer == nil {
+			restored[0] = payload
+		} else {
+			count = toolNameRestorer.restoreInto(payload, &restored)
 		}
-		if event.Type == "" {
-			event.Type = frame.EventType
+		for _, eventPayload := range restored[:count] {
+			var event apicompat.AnthropicStreamEvent
+			if err := json.Unmarshal(eventPayload, &event); err != nil {
+				stream.readErr = fmt.Errorf("parse upstream anthropic event: %w", err)
+				return true
+			}
+			if event.Type == "" {
+				event.Type = frame.EventType
+			}
+			observer.ObserveAnthropic(eventPayload)
+			stream.observe(&event, string(eventPayload))
+			if stream.upstreamErrType != "" {
+				return true
+			}
+			processEvent(&event)
 		}
-		observer.ObserveAnthropic([]byte(frame.Data))
-		stream.observe(&event, frame.Data)
-		if stream.upstreamErrType != "" {
-			return true
-		}
-		processEvent(&event)
 		return stream.sawTerminal
 	}
 	for {
@@ -806,6 +824,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		stream.readErr = io.ErrUnexpectedEOF
 	}
 
+	flushToolNameCarry(c, c.Writer.Size() != writerSizeBeforeStream, toolNameRestorer, processEvent)
 	return finalizeStream()
 }
 

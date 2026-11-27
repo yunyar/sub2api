@@ -190,3 +190,28 @@ func TestForwardChatCompletionsViaNativeAnthropic_CarriesMetadataUserID(t *testi
 		})
 	}
 }
+
+func TestPlaygroundChatAnthropicForwardsImageAndCacheBreakpoint(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":[{"type":"text","text":"Describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}],"stream":true}`)
+	for _, native := range []bool{false, true} {
+		upstream := chatMetaStreamUpstream()
+		request := chatMetaContext(body)
+		ctx := WithPlaygroundChat(request.Request.Context(), "Asia/Shanghai")
+		request.Request = request.Request.WithContext(ctx)
+		if native {
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			_, err := svc.forwardChatCompletionsViaNativeAnthropic(ctx, request, nativeAnthropicTestAccount(), body, "")
+			require.NoError(t, err)
+		} else {
+			svc := &GatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			account := &Account{ID: 1, Platform: PlatformAnthropic, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test"}}
+			_, err := svc.ForwardAsChatCompletions(ctx, request, account, body, nil)
+			require.NoError(t, err)
+		}
+		image := gjson.GetBytes(upstream.lastBody, "messages.0.content.1")
+		require.Equal(t, "image", image.Get("type").String())
+		require.Equal(t, "iVBORw0KGgo=", image.Get("source.data").String())
+		require.Equal(t, "ephemeral", image.Get("cache_control.type").String())
+		require.NotContains(t, string(upstream.lastBody), "Asia/Shanghai")
+	}
+}

@@ -116,6 +116,7 @@ export class PlaygroundImageGenerationError extends Error {
 interface StreamChatOptions {
   route?: PlaygroundRequestRoute
   groupId?: number
+  conversationId?: string
   model: string
   messages: Array<PlaygroundMessage | PlaygroundMultimodalMessage>
   temperature?: number
@@ -264,6 +265,7 @@ export async function streamPlaygroundChat(options: StreamChatOptions): Promise<
     signal: options.signal,
     headers: {
       ...requestRoute(options),
+      ...(options.conversationId ? { 'X-Playground-Conversation-ID': options.conversationId } : {}),
       ...(timezone ? { 'X-Playground-Timezone': timezone } : {})
     },
     body: JSON.stringify({

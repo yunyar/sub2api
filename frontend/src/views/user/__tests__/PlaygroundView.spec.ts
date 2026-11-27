@@ -296,7 +296,7 @@ describe('PlaygroundView model and intent routing', () => {
     expect(state.streamChat).not.toHaveBeenCalled()
   })
 
-  it('sends chat image attachments as multimodal image_url parts', async () => {
+  it('previews sent images and reuses identical multimodal content on the next turn', async () => {
     state.streamChat.mockImplementation(async (input: any) => input.onDelta('I see a landscape.'))
     const wrapper = mountView()
     await flushPromises()
@@ -312,6 +312,46 @@ describe('PlaygroundView model and intent routing', () => {
       { type: 'image_url', image_url: { url: expect.stringMatching(/^data:image\/webp;base64,/) } }
     ])
     expect(state.save.mock.calls[0][0].messages[0].content).not.toContain('data:image/webp;base64')
+    expect(wrapper.get('.user-bubble img').attributes('src')).toBe(userMessage.content[1].image_url.url)
+    expect(wrapper.get('.user-bubble').text()).toBe('Describe this image.')
+    await wrapper.get('.user-bubble button').trigger('click')
+    expect(wrapper.get('img.max-h-\\[65vh\\]').attributes('src')).toBe(userMessage.content[1].image_url.url)
+    expect(state.cachePut).toHaveBeenCalledWith(expect.objectContaining({ source: 'upload', prompt: 'scene.webp', accountId: '1' }))
+
+    await wrapper.get('textarea.composer-input').setValue('What is in the foreground?')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    const next = state.streamChat.mock.calls[1][0]
+    expect(next.conversationId).toBe(state.streamChat.mock.calls[0][0].conversationId)
+    expect(next.messages.find((message: any) => message.role === 'user')).toEqual(userMessage)
+  })
+
+  it('restores unexpired sent images in the order they were uploaded', async () => {
+    state.streamChat.mockImplementation(async (input: any) => input.onDelta('done'))
+    const expiresAt = Date.now() + 60_000
+    const conversationId = 'restored-chat'
+    localStorage.setItem('playground-last-conversation:1', conversationId)
+    state.list.mockResolvedValue([{
+      id: conversationId, title: 'Restored', groupId: 7, model: 'chat-model', systemPrompt: '', temperature: 0.7, revision: 1, expiresAt,
+      messages: [{ id: 12, role: 'user', content: 'Describe these\n\n[Image: first.png]\n\n[Image: second.png]' }]
+    }])
+    state.cacheList.mockResolvedValue([
+      { id: 'a', conversationId, messageId: 12, source: 'upload', uploadIndex: 1, prompt: 'second.png', expiresAt, blob: createFile('second.png', [2], 'image/png') },
+      { id: 'z', conversationId, messageId: 12, source: 'upload', uploadIndex: 0, prompt: 'first.png', expiresAt, blob: createFile('first.png', [1], 'image/png') }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.findAll('.user-bubble img').map(image => image.attributes('alt'))).toEqual(['first.png', 'second.png'])
+    await wrapper.get('textarea.composer-input').setValue('Compare the two.')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(state.streamChat.mock.calls[0][0].messages.find((message: any) => message.role === 'user').content.slice(1)).toEqual([
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AQ==' } },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,Ag==' } }
+    ])
   })
 
   it('accepts multiple files dropped on the conversation panel', async () => {

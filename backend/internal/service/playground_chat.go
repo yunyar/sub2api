@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -18,10 +19,13 @@ import (
 
 type playgroundChatKey struct{}
 
+var playgroundChatConversationID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
 type playgroundChatContext struct {
-	location *time.Location
-	now      time.Time
-	model    string
+	location       *time.Location
+	now            time.Time
+	model          string
+	conversationID string
 }
 
 func WithPlaygroundChat(ctx context.Context, timezone string) context.Context {
@@ -35,6 +39,24 @@ func WithPlaygroundChat(ctx context.Context, timezone string) context.Context {
 func IsPlaygroundChat(ctx context.Context) bool {
 	_, ok := ctx.Value(playgroundChatKey{}).(playgroundChatContext)
 	return ok
+}
+
+func WithPlaygroundChatConversation(ctx context.Context, id string) context.Context {
+	settings, ok := ctx.Value(playgroundChatKey{}).(playgroundChatContext)
+	if !ok || !playgroundChatConversationID.MatchString(id) {
+		return ctx
+	}
+	settings.conversationID = id
+	return context.WithValue(ctx, playgroundChatKey{}, settings)
+}
+
+func PlaygroundChatSessionKey(ctx context.Context, apiKeyID int64) string {
+	settings, ok := ctx.Value(playgroundChatKey{}).(playgroundChatContext)
+	if !ok || settings.conversationID == "" || apiKeyID <= 0 {
+		return ""
+	}
+	seed := fmt.Sprintf("playground:%d:%s:%s", apiKeyID, settings.conversationID, settings.model)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(seed)))
 }
 
 func WithPlaygroundChatModel(ctx context.Context, model string) context.Context {
@@ -63,20 +85,30 @@ func withPlaygroundLocalTime(ctx context.Context, body []byte, models ...string)
 			return body
 		}
 	}
-	messages := gjson.GetBytes(body, "messages")
-	if !messages.IsArray() {
+	messages := gjson.GetBytes(body, "messages").Array()
+	if len(messages) == 0 || messages[len(messages)-1].Get("role").String() != "user" {
 		return body
 	}
 	local := settings.now.In(settings.location)
-	message, _ := json.Marshal(map[string]string{
-		"role":    "system",
-		"content": "Current local time in the user's browser timezone at the start of this request: " + local.Format("Monday, 2006-01-02 15:04:05 -07:00") + " (" + settings.location.String() + ").",
-	})
-	history := strings.TrimSpace(messages.Raw[1 : len(messages.Raw)-1])
-	if history != "" {
-		history = "," + history
+	timeText := "Current local time in the user's browser timezone at the start of this request: " + local.Format("Monday, 2006-01-02 15:04:05 -07:00") + " (" + settings.location.String() + ")."
+	timePart, _ := json.Marshal(map[string]string{"type": "text", "text": timeText})
+	path := fmt.Sprintf("messages.%d.content", len(messages)-1)
+	content := messages[len(messages)-1].Get("content")
+	if content.IsArray() {
+		updated, err := sjson.SetRawBytes(body, path+".-1", timePart)
+		if err == nil {
+			return updated
+		}
+		return body
 	}
-	updated, err := sjson.SetRawBytes(body, "messages", []byte("["+string(message)+history+"]"))
+	if content.Type != gjson.String {
+		return body
+	}
+	parts, _ := json.Marshal([]map[string]string{
+		{"type": "text", "text": content.String()},
+		{"type": "text", "text": timeText},
+	})
+	updated, err := sjson.SetRawBytes(body, path, parts)
 	if err != nil {
 		return body
 	}

@@ -175,8 +175,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	defer inflightRelease()
 
 	// Parse request for session hash
+	// body 已在本函数开头用 gjson.ValidBytes 校验过，之后只经过 sjson 改写
+	// （applyOpenAIReasoningEffortPolicyForRequest），合法性保持，因此跳过重复校验。
 	bodyRef := service.NewRequestBodyRef(body)
-	parsedReq, _ := service.ParseGatewayRequest(bodyRef, "chat_completions")
+	parsedReq, _ := service.ParseGatewayRequestValidated(bodyRef, "chat_completions")
 	if parsedReq == nil {
 		parsedReq = &service.ParsedRequest{Model: reqModel, Stream: reqStream, Body: bodyRef}
 	}
@@ -185,7 +187,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		UserAgent: c.GetHeader("User-Agent"),
 		APIKeyID:  apiKey.ID,
 	}
-	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
+	sessionHash := service.PlaygroundChatSessionKey(c.Request.Context(), apiKey.ID)
+	if sessionHash == "" {
+		sessionHash = h.gatewayService.GenerateSessionHash(parsedReq)
+	}
 	groupPlatform := effectiveAPIKeyPlatform(c, apiKey)
 	selectionSessionHash := sessionHash
 	if groupPlatform == service.PlatformGemini && selectionSessionHash != "" {

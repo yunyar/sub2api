@@ -20,9 +20,9 @@ func TestLockAndMergeAccountExtraPreservesLatestCodexTicket(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT.*FOR NO KEY UPDATE`).
 		WithArgs(int64(41), service.PlatformOpenAI, service.AccountTypeOAuth, `{"access_token":"test"}`, nil).
 		WillReturnRows(sqlmock.NewRows(openCodeGoMergeMockColumnsWithExtra()).
-			AddRow(true, false, true, nil, nil, nil, nil, nil, nil, false, nil, nil, nil, nil, []byte(`{"codex_turn_ticket:model":{"state":"latest-database-ticket"},"old_admin_setting":true}`)))
+			AddRow(true, false, true, nil, nil, nil, nil, nil, nil, false, nil, nil, nil, nil, nil, []byte(`{"codex_turn_ticket:model":{"state":"latest-database-ticket"},"old_admin_setting":true}`)))
 	account := &service.Account{ID: 41, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"access_token": "test"}, Extra: map[string]any{"codex_turn_ticket:model": map[string]any{"state": "stale"}, "codex_turn_ticket:injected": map[string]any{"state": "spoofed"}, "new_admin_setting": true}}
-	extra, err := lockAndMergeAccountProbeExtra(context.Background(), client, account, nil, nil)
+	extra, err := lockAndMergeAccountProbeExtra(context.Background(), client, account, service.AccountBillingSettingsUpdate{})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"state": "latest-database-ticket"}, extra["codex_turn_ticket:model"])
 	require.NotContains(t, extra, "codex_turn_ticket:injected")
@@ -42,9 +42,9 @@ func TestLockAndMergeAccountExtraDegradesOnUnparsableExtra(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT.*FOR NO KEY UPDATE`).
 		WithArgs(int64(41), service.PlatformOpenAI, service.AccountTypeOAuth, `{"access_token":"test"}`, nil).
 		WillReturnRows(sqlmock.NewRows(openCodeGoMergeMockColumnsWithExtra()).
-			AddRow(true, false, true, nil, nil, nil, nil, nil, nil, false, nil, nil, nil, nil, []byte(`[1,2,3]`)))
+			AddRow(true, false, true, nil, nil, nil, nil, nil, nil, false, nil, nil, nil, nil, nil, []byte(`[1,2,3]`)))
 	account := &service.Account{ID: 41, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"access_token": "test"}, Extra: map[string]any{"codex_turn_ticket:injected": map[string]any{"state": "spoofed"}, "new_admin_setting": true}}
-	extra, err := lockAndMergeAccountProbeExtra(context.Background(), client, account, nil, nil)
+	extra, err := lockAndMergeAccountProbeExtra(context.Background(), client, account, service.AccountBillingSettingsUpdate{})
 	require.NoError(t, err, "unparsable extra must not fail the account update")
 	require.Equal(t, true, extra["new_admin_setting"])
 	// 降级也绝不能让管理端伪造的门票键落库。

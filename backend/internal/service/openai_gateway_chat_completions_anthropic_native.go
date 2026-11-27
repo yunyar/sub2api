@@ -46,7 +46,7 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 
 	// 1. Parse Chat Completions request
 	var ccReq apicompat.ChatCompletionsRequest
-	if err := json.Unmarshal(body, &ccReq); err != nil {
+	if err := parseChatRequestForBridge(body, account.Platform, &ccReq); err != nil {
 		writeChatCompletionsError(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return nil, fmt.Errorf("parse chat completions request: %w", err)
 	}
@@ -99,6 +99,9 @@ func (s *OpenAIGatewayService) forwardChatCompletionsViaNativeAnthropic(
 	// 与 /v1/messages 直通路径相同的 pre-filter。
 	anthropicBody = StripEmptyTextBlocks(anthropicBody)
 	anthropicBody = FilterWebSearchHistoryBlocks(anthropicBody, upstreamModel)
+	if IsPlaygroundChat(ctx) {
+		anthropicBody = addMessageCacheBreakpoints(anthropicBody)
+	}
 	anthropicBody = enforceCacheControlLimit(anthropicBody)
 
 	apiKey := strings.TrimSpace(account.GetOpenAIProtocolAPIKey())

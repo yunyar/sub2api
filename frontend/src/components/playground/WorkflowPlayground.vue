@@ -543,7 +543,7 @@ async function runCurrent(instruction = ''): Promise<boolean> {
     } else if (chatContext) {
       let content = ''
       let replacedImages = false
-      await playgroundAPI.streamChat({ route, model, messages: chatContext, signal: request.controller.signal, onDelta: delta => {
+      await playgroundAPI.streamChat({ route, conversationId: request.conversationId, model, messages: chatContext, signal: request.controller.signal, onDelta: delta => {
         if (!isCurrentRequest(request)) return
         content += delta
         if (!content.trim()) return

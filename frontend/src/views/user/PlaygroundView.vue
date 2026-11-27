@@ -129,7 +129,14 @@
                     </div>
                   </div>
                   <template v-else>
-                    <div class="user-bubble">{{ message.content }}</div>
+                    <div class="user-bubble">
+                      <div v-if="currentUploads.has(message.id)" class="mb-2 flex flex-wrap gap-2">
+                        <button v-for="image in currentUploads.get(message.id)" :key="image.id" type="button" class="cursor-zoom-in overflow-hidden rounded-lg" :aria-label="`${t('playground.preview')}: ${image.prompt}`" @click="preview = image">
+                          <img :src="image.url" :alt="image.prompt" class="h-24 w-24 object-cover" />
+                        </button>
+                      </div>
+                      {{ userBubbleText(message) }}
+                    </div>
                     <div v-if="!busy && !submitting" class="user-message-actions">
                       <button type="button" class="text-xs text-gray-400 hover:text-primary-500 dark:text-dark-400" @click="startEdit(message)">{{ t('common.edit') }}</button>
                     </div>
@@ -334,7 +341,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -343,7 +350,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import { userGroupsAPI } from '@/api/groups'
 import Icon from '@/components/icons/Icon.vue'
 import { autoRoutingAPI, type AvailableAutoGroupProfile } from '@/api/autoRouting'
-import { PlaygroundImageGenerationError, playgroundAPI, playgroundAttachmentLimitError, playgroundModelSupportsEndpoint, type PlaygroundAutoRoutingConfig, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
+import { PlaygroundImageGenerationError, playgroundAPI, playgroundAttachmentLimitError, playgroundImageInputBytes, playgroundModelSupportsEndpoint, type PlaygroundAutoRoutingConfig, type PlaygroundImage, type PlaygroundModel, type PlaygroundMessage, type PlaygroundMultimodalMessage, type PlaygroundRequestRoute } from '@/api/playground'
 import { playgroundHistory, type Conversation, type ConversationMessage, type ConversationRouting } from '@/api/playgroundHistory'
 import { useAppStore, useAuthStore } from '@/stores'
 import type { Group } from '@/types'
@@ -362,7 +369,7 @@ import WorkflowPlayground from '@/components/playground/WorkflowPlayground.vue'
 type PlaygroundKind = 'chat' | 'image'
 type StoredMessage = ConversationMessage & { model?: string; kind?: PlaygroundKind }
 type PlaygroundConversation = Omit<Conversation, 'messages'> & { messages: StoredMessage[] }
-type ImageEntry = { id: string; conversationId: string; messageId: number; url: string; prompt: string; expiresAt: number; objectUrl?: boolean }
+type ImageEntry = { id: string; conversationId: string; messageId: number; url: string; prompt: string; expiresAt: number; objectUrl?: boolean; source?: 'upload'; uploadIndex?: number }
 type TextAttachment = { id: string; name: string; kind: 'text'; text: string; size: number }
 type ImageAttachment = { id: string; name: string; kind: 'image'; dataUrl: string; size: number }
 type PlaygroundAttachment = TextAttachment | ImageAttachment
@@ -371,6 +378,7 @@ defineOptions({ name: 'PlaygroundView' })
 
 const maxMessageBytes = 1024 * 1024
 const maxConversationBytes = 4 * 1024 * 1024
+const localImageTTL = 10 * 60 * 1000
 const textAttachmentExtensions = new Set([
   'txt', 'md', 'markdown', 'csv', 'json', 'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'vue',
   'html', 'htm', 'css', 'scss', 'sass', 'less', 'py', 'go', 'rs', 'java', 'kt', 'swift',
@@ -458,6 +466,7 @@ const imageQuality = ref('auto')
 const imageCount = ref(1)
 const imageMode = ref<PlaygroundMode>('chat')
 const images = ref<ImageEntry[]>([])
+const restoringImagesFor = shallowRef<RequestContext | null>(null)
 const preview = ref<ImageEntry | null>(null)
 const viewport = ref<HTMLElement | null>(null)
 const draggingFiles = ref(false)
@@ -482,7 +491,8 @@ const streaming = computed(() => streamingCount.value > 0)
 const activeRequestCount = computed(() => streamingCount.value + generatingCount.value)
 const busy = computed(() => streaming.value || generating.value || saving.value)
 const hasBalance = computed(() => Number(authStore.user?.balance ?? 0) > 0)
-const canSend = computed(() => hasBalance.value && !submitting.value && !loadingAttachments.value && !loadingModels.value && Boolean((draft.value.trim() || attachments.value.length) && currentRequestRoute.value))
+const restoringImages = computed(() => restoringImagesFor.value?.conversationId === current.value.id)
+const canSend = computed(() => hasBalance.value && !submitting.value && !restoringImages.value && !loadingAttachments.value && !loadingModels.value && Boolean((draft.value.trim() || attachments.value.length) && currentRequestRoute.value))
 const accountId = computed(() => authStore.user?.id ?? null)
 const imageCountResolution = computed(() => resolvePlaygroundImageCount('', imageCount.value))
 const chatModels = computed(() => models.value.filter((model) =>
@@ -493,7 +503,21 @@ const imageModels = computed(() => models.value.filter((model) =>
   playgroundModelSupportsEndpoint(model, 'images_edit', isPlaygroundImageModel(model.id))
 ))
 const normalConversations = computed(() => conversations.value.filter((conversation) => conversation.kind !== 'workflow'))
-const currentImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && (!image.expiresAt || image.expiresAt > now.value)))
+const currentConversationImages = computed(() => images.value.filter(image => image.conversationId === current.value.id && (!image.expiresAt || image.expiresAt > now.value)))
+const currentImages = computed(() => currentConversationImages.value.filter(image => image.source !== 'upload'))
+const currentUploads = computed(() => {
+  const uploads = new Map<number, ImageEntry[]>()
+  for (const image of currentConversationImages.value) {
+    if (image.source !== 'upload') continue
+    const messageImages = uploads.get(image.messageId)
+    if (messageImages) messageImages.push(image)
+    else uploads.set(image.messageId, [image])
+  }
+  for (const messageImages of uploads.values()) {
+    messageImages.sort((first, second) => (first.uploadIndex ?? 0) - (second.uploadIndex ?? 0))
+  }
+  return uploads
+})
 const selectedImageReference = computed(() => currentImages.value.find(image => image.id === imageReferenceId.value))
 const activeRouteSource = computed(() => activeTab.value === 'workflow' ? workflowPresets.value : current.value)
 const selectedAutoProfile = computed(() => {
@@ -905,6 +929,41 @@ function expandedUserContent(prompt: string, snapshot: PlaygroundAttachment[], k
     .map(attachment => `\n\n[Image: ${attachment.name}]`)
   return `${text}${textSections.join('')}${imageReferences.join('')}`
 }
+function userBubbleText(message: StoredMessage) {
+  const uploads = currentUploads.value.get(message.id)
+  if (!uploads) return message.content
+  let content = message.content
+  for (const { prompt: name } of uploads) {
+    const marker = `\n\n[Image: ${name}]`
+    const index = content.lastIndexOf(marker)
+    if (index >= 0) content = content.slice(0, index) + content.slice(index + marker.length)
+  }
+  return content
+}
+function chatHistoryWithImages(messages: StoredMessage[], messageId: number, newImages: ImageAttachment[]) {
+  let imageCount = newImages.length
+  let imageBytes = newImages.reduce((total, image) => total + image.size, 0)
+  const history: Array<PlaygroundMessage | PlaygroundMultimodalMessage> = []
+  for (const message of [...messages].reverse()) {
+    if (message.role === 'assistant' && !message.content.trim()) continue
+    let urls: string[] = []
+    if (message.id === messageId) {
+      urls = newImages.map(image => image.dataUrl)
+    } else if (message.role === 'user') {
+      const uploads = currentUploads.value.get(message.id) ?? []
+      const bytes = uploads.reduce((total, image) => total + playgroundImageInputBytes(image.url), 0)
+      if (!playgroundAttachmentLimitError(imageCount + uploads.length, imageBytes + bytes)) {
+        urls = uploads.map(image => image.url)
+        imageCount += uploads.length
+        imageBytes += bytes
+      }
+    }
+    history.push(urls.length
+      ? { role: message.role, content: [{ type: 'text', text: message.content }, ...urls.map(url => ({ type: 'image_url' as const, image_url: { url } }))] }
+      : { role: message.role, content: message.content })
+  }
+  return history.reverse()
+}
 function historyLimitError(conversation: PlaygroundConversation) {
   if (conversation.messages.some(message => new TextEncoder().encode(message.content).byteLength > maxMessageBytes)) {
     return t('playground.historyMessageTooLarge')
@@ -950,25 +1009,54 @@ async function restoreImages(conversationId: string) {
   const context = requestContext()
   const restoredAccountId = context.accountId
   if (restoredAccountId === null) return
-  let cached
-  try { cached = await playgroundImageCache.listConversation(restoredAccountId, conversationId) }
-  catch {
+  restoringImagesFor.value = context
+  try {
+    const cached = await playgroundImageCache.listConversation(restoredAccountId, conversationId)
+    const existingIDs = new Set(images.value.map(image => image.id))
+    const available = cached.filter(image => !image.stepId && !existingIDs.has(image.id) && (!image.expiresAt || image.expiresAt > Date.now()))
+    const restored = await Promise.all(available.map(async image => ({
+      ...image,
+      dataUrl: image.source === 'upload' ? bytesToDataUrl(new Uint8Array(await image.blob.arrayBuffer()), image.blob.type) : ''
+    })))
+    if (!isCurrentRequest(context) || restoringImagesFor.value !== context) return
+    images.value.push(...restored.map(image => ({
+      id: image.id,
+      conversationId: image.conversationId,
+      messageId: image.messageId,
+      url: image.dataUrl || URL.createObjectURL(image.blob),
+      objectUrl: image.source !== 'upload',
+      prompt: image.prompt,
+      expiresAt: image.expiresAt ?? 0,
+      source: image.source,
+      uploadIndex: image.uploadIndex
+    })))
+  } catch {
     if (isCurrentRequest(context)) cacheError.value = t('playground.imageCacheRestoreFailed')
-    return
+  } finally {
+    if (restoringImagesFor.value === context) restoringImagesFor.value = null
   }
-  if (!isCurrentRequest(context)) return
-  const existing = images.value.filter(image => image.conversationId === conversationId)
-  releaseImages(existing)
-  images.value = images.value.filter(image => image.conversationId !== conversationId)
-  images.value.push(...cached.filter(image => !image.expiresAt || image.expiresAt > Date.now()).map(image => ({
-    id: image.id,
-    conversationId: image.conversationId,
-    messageId: image.messageId,
-    url: URL.createObjectURL(image.blob),
-    objectUrl: true,
-    prompt: image.prompt,
-    expiresAt: image.expiresAt ?? 0
-  })))
+}
+async function rememberUploads(uploads: ImageAttachment[], messageId: number, context: RequestContext) {
+  const entries = uploads.map((image, uploadIndex) => ({
+    id: createPlaygroundId(),
+    conversationId: context.conversationId,
+    messageId,
+    url: image.dataUrl,
+    prompt: image.name,
+    expiresAt: Date.now() + localImageTTL,
+    source: 'upload' as const,
+    uploadIndex
+  }))
+  images.value.push(...entries)
+  if (context.accountId === null) return
+  try {
+    await Promise.all(entries.map(async ({ url, ...entry }) => {
+      const blob = await playgroundImageBlob(url)
+      if (isCurrentRequest(context)) await playgroundImageCache.put({ ...entry, accountId: String(context.accountId), blob })
+    }))
+  } catch {
+    if (isCurrentRequest(context)) cacheError.value = t('playground.uploadCacheFailed')
+  }
 }
 async function cacheGeneratedImage(image: Omit<ImageEntry, 'objectUrl'>, context = requestContext()): Promise<ImageEntry> {
   const imageAccountId = context.accountId
@@ -1131,7 +1219,7 @@ async function loadModels(route: PlaygroundRequestRoute | null, target: 'standar
   finally { if (request === modelRequest) loadingModels.value = false }
 }
 function startEdit(message: StoredMessage) {
-  if (busy.value || submitting.value) return
+  if (busy.value || submitting.value || restoringImages.value) return
   editingMessageId.value = message.id
   // 附件展开的内容（文本附件正文、图片标记）不放进编辑框
   editingText.value = message.content.replace(/\n\n--- [^\n]+ ---\n[\s\S]*$/, '').replace(/(\n\n\[Image: [^\]]+\])+$/, '')
@@ -1181,11 +1269,15 @@ function isImageRevisionPrompt(prompt: string): boolean {
 async function send(edit?: { fromId: StoredMessage['id']; content: string }) {
   if (!hasBalance.value) { error.value = t('playground.insufficientBalance'); return }
   if (edit
-    ? (!edit.content.trim() || busy.value || submitting.value || loadingModels.value || !currentRequestRoute.value)
+    ? (!edit.content.trim() || busy.value || submitting.value || restoringImages.value || loadingModels.value || !currentRequestRoute.value)
     : (!canSend.value || submitting.value)) return
   if (current.value.expiresAt && current.value.expiresAt <= Date.now()) { newConversation(); error.value = t('playground.expired'); return }
   const prompt = edit ? edit.content.trim() : draft.value.trim()
-  const attachmentSnapshot = edit ? [] : attachments.value.map(attachment => ({ ...attachment }))
+  const attachmentSnapshot: PlaygroundAttachment[] = edit
+    ? (currentUploads.value.get(edit.fromId) ?? []).map(image => ({
+      id: image.id, name: image.prompt, kind: 'image', dataUrl: image.url, size: playgroundImageInputBytes(image.url)
+    }))
+    : attachments.value.map(attachment => ({ ...attachment }))
   const imageSnapshot = attachmentSnapshot.filter((attachment): attachment is ImageAttachment => attachment.kind === 'image')
   const textSnapshot = attachmentSnapshot.filter((attachment): attachment is TextAttachment => attachment.kind === 'text')
   const context = requestContext()
@@ -1251,20 +1343,10 @@ async function send(edit?: { fromId: StoredMessage['id']; content: string }) {
   })) as PlaygroundConversation
   const sizeError = historyLimitError(initialSnapshot)
   if (sizeError) { error.value = sizeError; return }
-  const history: Array<PlaygroundMessage | PlaygroundMultimodalMessage> = initialSnapshot.messages
-    .filter(message => message.role !== 'assistant' || message.content.trim())
-    .map(message => ({ role: message.role, content: message.content }))
-  if (imageSnapshot.length && kind === 'chat') {
-    history[history.length - 1] = {
-      role: 'user',
-      content: [
-        { type: 'text', text: userContent },
-        ...imageSnapshot.map(image => ({ type: 'image_url' as const, image_url: { url: image.dataUrl } }))
-      ]
-    }
-  }
   const outgoingSystemPrompt = [systemPrompt, artifactGenerationInstruction].filter(Boolean).join('\n\n')
-  const chatContext = kind === 'chat' ? selectPlaygroundContext(history, outgoingSystemPrompt, modelCapability) : null
+  const chatContext = kind === 'chat'
+    ? selectPlaygroundContext(chatHistoryWithImages(initialSnapshot.messages, userId, imageSnapshot), outgoingSystemPrompt, modelCapability)
+    : null
   if (kind === 'chat' && !chatContext) {
     error.value = t('playground.contextTooLarge')
     return
@@ -1310,6 +1392,7 @@ async function send(edit?: { fromId: StoredMessage['id']; content: string }) {
     removeAttachments(attachmentSnapshot.map(attachment => attachment.id))
   }
   error.value = ''
+  if (imageSnapshot.length) void rememberUploads(imageSnapshot, userId, context)
   if (kind === 'image') {
     generatingCount.value += 1
     const generationPromptText = prompt || t('playground.editAttachedImage')
@@ -1323,7 +1406,7 @@ async function send(edit?: { fromId: StoredMessage['id']; content: string }) {
       const deliveredImageURLs = new Set<string>()
       const saveImage = async (image: PlaygroundImage) => {
         if (!isCurrentRequest(context)) return
-        const generatedImage: ImageEntry = { id: createPlaygroundId(), conversationId, messageId: assistantId, url: image.url, prompt: generationPrompt, expiresAt: Date.now() + 600000 }
+        const generatedImage: ImageEntry = { id: createPlaygroundId(), conversationId, messageId: assistantId, url: image.url, prompt: generationPrompt, expiresAt: Date.now() + localImageTTL }
         if (deliveredImageURLs.has(generatedImage.url)) return
         deliveredImageURLs.add(generatedImage.url)
         images.value.push(generatedImage)
@@ -1398,6 +1481,7 @@ async function send(edit?: { fromId: StoredMessage['id']; content: string }) {
     try {
       await playgroundAPI.streamChat({
         route,
+        conversationId,
         model,
         messages: chatContext,
         temperature,
